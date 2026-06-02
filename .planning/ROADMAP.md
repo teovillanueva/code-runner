@@ -93,7 +93,7 @@ Plans:
   5. The entire abuse suite runs on Linux CI (not just macOS dev) and is wired as the gate that must pass before any new language is added.
 **Plans**: 2 plans
 Plans:
-- [ ] 04-01-PLAN.md — Adversarial abuse suite (fork bomb, OOM, infinite loop, idle, EOF, giant output + CPU-evasion) through the full worker path, build-tagged + `make abuse`, run green on cgroup v2
+- [x] 04-01-PLAN.md — Adversarial abuse suite (fork bomb, OOM, infinite loop, idle, EOF, giant output + CPU-evasion) through the full worker path, build-tagged + `make abuse`, run green on cgroup v2
 - [ ] 04-02-PLAN.md — Linux CI workflow (.github/workflows/abuse.yml) running `make abuse` on ubuntu-latest + README gate note tying the language fan-out to a green abuse run
 
 ### Phase 5: Statelessness & Scale
@@ -144,7 +144,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
-| 4. Abuse Suite & Safety Validation | 0/2 | Not started | - |
+| 4. Abuse Suite & Safety Validation | 1/2 | In Progress|  |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
 | 6. Language Fan-out | 0/TBD | Not started | - |
 | 7. OSS Release & Deployment | 0/TBD | Not started | - |

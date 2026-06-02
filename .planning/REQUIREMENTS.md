@@ -120,12 +120,12 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Abuse Tests (built EARLY)
 
-- [ ] **TEST-01**: A fork bomb is contained by `--pids-limit` (the sandbox is killed cleanly)
-- [ ] **TEST-02**: An OOM program is killed by the memory cap without taking down the worker
-- [ ] **TEST-03**: An infinite loop is killed by the wall-clock timeout
-- [ ] **TEST-04**: A program blocked on stdin is killed by the idle timeout
-- [ ] **TEST-05**: `/stdin/close` (EOF) is delivered and a program reading to EOF terminates correctly
-- [ ] **TEST-06**: A giant-output program is truncated with `truncated=true` and does not exhaust memory
+- [x] **TEST-01**: A fork bomb is contained by `--pids-limit` (the sandbox is killed cleanly)
+- [x] **TEST-02**: An OOM program is killed by the memory cap without taking down the worker
+- [x] **TEST-03**: An infinite loop is killed by the wall-clock timeout
+- [x] **TEST-04**: A program blocked on stdin is killed by the idle timeout
+- [x] **TEST-05**: `/stdin/close` (EOF) is delivered and a program reading to EOF terminates correctly
+- [x] **TEST-06**: A giant-output program is truncated with `truncated=true` and does not exhaust memory
 - [ ] **TEST-07**: The abuse suite runs on Linux CI (not only macOS dev) so real cgroup OOM/CPU behavior is exercised
 - [ ] **TEST-08**: The abuse suite is built early — immediately after the Python end-to-end path — and gates the language fan-out
 
@@ -243,12 +243,12 @@ Each v1 requirement maps to exactly one phase.
 | DEV-01 | Phase 3 | Complete |
 | DEV-02 | Phase 3 | Complete |
 | DEV-03 | Phase 3 | Complete |
-| TEST-01 | Phase 4 | Pending |
-| TEST-02 | Phase 4 | Pending |
-| TEST-03 | Phase 4 | Pending |
-| TEST-04 | Phase 4 | Pending |
-| TEST-05 | Phase 4 | Pending |
-| TEST-06 | Phase 4 | Pending |
+| TEST-01 | Phase 4 | Complete |
+| TEST-02 | Phase 4 | Complete |
+| TEST-03 | Phase 4 | Complete |
+| TEST-04 | Phase 4 | Complete |
+| TEST-05 | Phase 4 | Complete |
+| TEST-06 | Phase 4 | Complete |
 | TEST-07 | Phase 4 | Pending |
 | TEST-08 | Phase 4 | Pending |
 | OSS-01 | Phase 1 | Pending |
