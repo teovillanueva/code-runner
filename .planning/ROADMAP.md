@@ -71,7 +71,13 @@ Plans:
   4. The worker keeps the Python process alive with pipes open and publishes `stage`, `stdout`/`stderr`, and a terminal `result` event on `private-run-<jobId>`; per-request `limits` override the manifest `defaultLimits`.
   5. The Python 3.12 package runs `python main.py` with numpy/pandas/requests baked in, driven entirely by its manifest with no hardcoding.
   6. `docker compose up` brings up api + worker + redis + soketi + a stub upstream app; the stub and a documented script drive a full interactive execute end-to-end; all config is env-only (no config or secret-returning endpoints, soketi secret never persisted in Redis).
-**Plans**: TBD
+**Plans**: 5 plans
+Plans:
+- [ ] 03-01-PLAN.md — Go Redis layer: go-redis client, real pub/sub StdinTransport (stdin:/ctrl:), job store + BRPOP queue consumer (Wave 1)
+- [ ] 03-02-PLAN.md — Worker run loop: claim → create → start-handshake/warm-up → session.RunInteractive (publisher sinks + stdin routing) → single teardown; guarded full-Python integration test (Wave 2)
+- [ ] 03-03-PLAN.md — Python 3.12 image: python:3.12-slim + numpy/pandas/requests, non-root, PYTHONUNBUFFERED unbuffered streaming (Wave 1)
+- [ ] 03-04-PLAN.md — Hono API: all /v1/* endpoints, constant-time bearer auth, generated-zod validation, jobId+channel gen, LPUSH+spec/status, PUBLISH stdin/control, 429 rate/byte-cap, optional channel-auth (Wave 1)
+- [ ] 03-05-PLAN.md — docker-compose + stub upstream + scripts/e2e.sh + README quickstart; blocking human-verify of the live interactive demo (Wave 3)
 **UI hint**: yes
 
 ### Phase 4: Abuse Suite & Safety Validation
@@ -134,7 +140,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 |-------|----------------|--------|-----------|
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
-| 3. Interactive Python End-to-End | 0/TBD | Not started | - |
+| 3. Interactive Python End-to-End | 0/5 | Not started | - |
 | 4. Abuse Suite & Safety Validation | 0/TBD | Not started | - |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
 | 6. Language Fan-out | 0/TBD | Not started | - |
