@@ -90,7 +90,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **LANG-05**: The Python 3.12 package runs `python main.py` with numpy/pandas/requests baked into the image
 - [x] **LANG-06**: The Rust package compiles with `rustc -O main.rs -o /tmp/prog` (compile stage with its own limits) then runs the produced binary
 - [ ] **LANG-07**: The R 4.4 package runs `Rscript main.R` with common libs baked in
-- [ ] **LANG-08**: The SQLite 3 package runs SQL against an ephemeral in-memory DB, supporting both a `.sql` file and an interactive `sqlite3` shell reading from stdin — validating that "language = image + compile? + run" holds for something that is not a general-purpose language
+- [x] **LANG-08**: The SQLite 3 package runs SQL against an ephemeral in-memory DB, supporting both a `.sql` file and an interactive `sqlite3` shell reading from stdin — validating that "language = image + compile? + run" holds for something that is not a general-purpose language
 
 ### Scale & Statelessness
 
@@ -228,7 +228,7 @@ Each v1 requirement maps to exactly one phase.
 | LANG-05 | Phase 3 | Complete |
 | LANG-06 | Phase 6 | Complete |
 | LANG-07 | Phase 6 | Pending |
-| LANG-08 | Phase 6 | Pending |
+| LANG-08 | Phase 6 | Complete |
 | SCALE-01 | Phase 5 | Complete |
 | SCALE-02 | Phase 5 | Complete |
 | SCALE-03 | Phase 5 | Complete |
