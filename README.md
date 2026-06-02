@@ -126,6 +126,26 @@ Private soketi channel authorization (`private-run-<jobId>`) is the **upstream a
 
 For local demos, this service provides an optional helper at `POST /v1/channel-auth` (enabled via `ENABLE_CHANNEL_AUTH=true`). The stub uses this helper. The soketi secret is read from env only and is **never written to Redis or returned by any endpoint**.
 
+## Scaling & Statelessness
+
+Both the API and workers are **stateless** — all shared state lives in Redis. This makes horizontal scaling trivial.
+
+**Local multi-worker dev:**
+```bash
+docker compose up --scale worker=2
+```
+Two worker instances share the same Redis queue. Jobs are distributed via `BRPOP` (first worker to claim wins); stdin frames route only to the owning worker via `PUBLISH`/`SUBSCRIBE` ownership.
+
+**Global backpressure:** `POST /v1/execute` returns HTTP 429 when `LLEN(jobs:queue) >= MAX_QUEUE_DEPTH` (default 256). Clients receive a clear retry message; work is never silently dropped.
+
+**Autoscaling:** Scale worker nodes by queue depth. On Fly.io, use [`fly-autoscaler`](https://github.com/superfly/fly-autoscaler) with `LLEN jobs:queue` as the metric:
+```
+FAS_CREATED_MACHINE_COUNT = "min(50, max(1, qdepth / 2))"
+```
+On Kubernetes, use [KEDA](https://keda.sh) with the Redis scaler or an HPA custom metric.
+
+See **[docs/scaling.md](docs/scaling.md)** for the full scaling model: worker-node topology, per-node slot cap, fly-autoscaler LLEN example, scale-to-zero caveats, and the native-Redis requirement.
+
 ## Architecture
 
 See `.planning/research/ARCHITECTURE.md` for the full architecture. Key points:
