@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Sandbox Hardening & Runner** - Go `DockerSocketRunner`: full hardening flags, three clocks, tree-kill, output caps, idempotent `sync.Once` cleanup (completed 2026-06-02)
 - [x] **Phase 3: Interactive Python End-to-End** - Hono API (all `/v1/*`), Redis queue + stdin/control routing, worker session, soketi publisher, Python package, docker compose dev stack — full interactive demo works (completed 2026-06-02)
 - [x] **Phase 4: Abuse Suite & Safety Validation** - Fork bomb, OOM, infinite loop, idle, EOF, giant output on Linux CI — gates the language fan-out (completed 2026-06-02)
-- [ ] **Phase 5: Statelessness & Scale** - Slot capacity, backpressure 429, reliable claim, dead-worker reaper, N replicas, autoscaling-by-queue-depth + scale-to-zero design, native-Redis worker constraint
+- [x] **Phase 5: Statelessness & Scale** - Slot capacity, backpressure 429, reliable claim, dead-worker reaper, N replicas, autoscaling-by-queue-depth + scale-to-zero design, native-Redis worker constraint (completed 2026-06-02)
 - [ ] **Phase 6: Language Fan-out** - Rust (compile stage), R 4.4, SQLite 3 (interactive SQL shell) added as manifest + Dockerfile, zero core changes
 - [ ] **Phase 7: OSS Release & Deployment** - README quickstart, API contract, add-a-language guide, deployment-per-target, channel-auth documentation
 
@@ -110,7 +110,7 @@ Plans:
 **Plans**: 3 plans
 Plans:
 - [x] 05-01-PLAN.md — Worker slot semaphore (acquire-before-claim) + ephemeral workerId + Redis heartbeat/owned-jobs substrate + new keys/config + concurrency-cap test
-- [ ] 05-02-PLAN.md — Label-based dead-worker reaper (removes orphaned containers + anonymous volumes, frees slots, marks jobs error) wired into every worker + integration test
+- [x] 05-02-PLAN.md — Label-based dead-worker reaper (removes orphaned containers + anonymous volumes, frees slots, marks jobs error) wired into every worker + integration test
 - [x] 05-03-PLAN.md — API job-admission 429 (queue-depth backpressure) + autoscale-by-queue-depth/scale-to-zero docs (docs/scaling.md + README) + docker compose --scale worker=2 smoke
 
 ### Phase 6: Language Fan-out
@@ -149,6 +149,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
 | 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
-| 5. Statelessness & Scale | 2/3 | In Progress|  |
+| 5. Statelessness & Scale | 3/3 | Complete   | 2026-06-02 |
 | 6. Language Fan-out | 0/TBD | Not started | - |
 | 7. OSS Release & Deployment | 0/TBD | Not started | - |

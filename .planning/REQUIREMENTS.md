@@ -97,7 +97,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **SCALE-01**: The API and workers are stateless and run as N replicas
 - [x] **SCALE-02**: A worker only claims a job when it has a free sandbox slot; each worker enforces a max concurrent-live-sandbox count derived from CPU/RAM; capacity is counted in live sandboxes, not request bursts
 - [x] **SCALE-03**: Queue depth and full-capacity conditions propagate back as backpressure (`429`) rather than silently dropping work
-- [ ] **SCALE-04**: Worker death mid-session does not leak host containers — a label-based reaper removes orphaned sandboxes and reclaims their slots
+- [x] **SCALE-04**: Worker death mid-session does not leak host containers — a label-based reaper removes orphaned sandboxes and reclaims their slots
 - [x] **SCALE-05**: The system is designed for autoscaling by queue depth where the **scaling unit is the worker node** (each launches its sandboxes internally and hosts N concurrent ones), and the worker fleet can scale to zero on an empty queue — not a microVM per execution. The mechanism is documented per deploy target.
 
 ### Configuration & Secrets (env-only)
@@ -232,7 +232,7 @@ Each v1 requirement maps to exactly one phase.
 | SCALE-01 | Phase 5 | Complete |
 | SCALE-02 | Phase 5 | Complete |
 | SCALE-03 | Phase 5 | Complete |
-| SCALE-04 | Phase 5 | Pending |
+| SCALE-04 | Phase 5 | Complete |
 | SCALE-05 | Phase 5 | Complete |
 | CFG-01 | Phase 3 | Complete |
 | CFG-02 | Phase 3 | Complete |
