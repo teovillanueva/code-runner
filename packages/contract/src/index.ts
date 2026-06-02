@@ -4,6 +4,10 @@
 export * from "../gen/ts/types.js";
 export * from "../gen/ts/schemas.js";
 
+// Shared manifest loader + resolver — lets the Hono API list and resolve
+// languages with zero hardcoded identifiers.
+export * from "./manifest.js";
+
 // Channel + Redis key conventions live alongside the contract so both the API
 // and (via documentation) the worker agree on them.
 export const channelForJob = (jobId: string): string => `private-run-${jobId}`;

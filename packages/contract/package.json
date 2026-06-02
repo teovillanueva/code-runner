@@ -14,7 +14,7 @@
     "generate": "node scripts/generate.mjs",
     "check": "node scripts/generate.mjs && git diff --exit-code -- gen schema || (echo '\\n✗ contract drift: regenerate with `pnpm contract` and commit' && exit 1)",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/"
+    "test": "node --experimental-strip-types --test 'test/**/*.ts'"
   },
   "devDependencies": {
     "json-schema-to-typescript": "^15.0.4",
