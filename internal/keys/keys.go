@@ -47,3 +47,31 @@ func StdinChannel(jobID string) string {
 func ControlChannel(jobID string) string {
 	return fmt.Sprintf("ctrl:%s", jobID)
 }
+
+// ── Worker-internal keys (reaper-consumed, not API-readable) ──────────────────
+
+// WorkerHeartbeatKey returns the Redis key for a worker's heartbeat.  The key
+// is set with a TTL by the worker on each heartbeat interval; it disappears
+// automatically after the worker stops.  The reaper (plan 05-02) checks for
+// workers whose heartbeat key has expired.
+//
+// Format: worker:<id>:heartbeat
+func WorkerHeartbeatKey(workerID string) string {
+	return fmt.Sprintf("worker:%s:heartbeat", workerID)
+}
+
+// WorkerJobsKey returns the Redis key for the set of jobIDs currently owned by
+// a worker.  The worker adds a jobID on Create and removes it in teardown.  The
+// reaper reads this set to recover orphaned jobs when a worker dies.
+//
+// Format: worker:<id>:jobs
+func WorkerJobsKey(workerID string) string {
+	return fmt.Sprintf("worker:%s:jobs", workerID)
+}
+
+// CapacityFree is a best-effort global counter of free sandbox slots across all
+// workers.  Workers INCR/DECR it on slot acquire/release.  This is a secondary
+// capacity signal; the authoritative admission gate is the queue depth (LLEN
+// jobs:queue, used in plan 05-03).  Counter drift is acceptable — it must not
+// be used for hard admission decisions.
+const CapacityFree = "capacity:free"

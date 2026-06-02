@@ -57,6 +57,16 @@ type Config struct {
 	// received within this window after /execute, the slot is reclaimed and
 	// the container is removed. Env: WORKER_WARMUP_MS (default: 30000)
 	WarmupMs int
+
+	// HeartbeatIntervalMs is how often the worker writes its heartbeat key to
+	// Redis (in milliseconds).  Env: WORKER_HEARTBEAT_INTERVAL_MS (default: 5000)
+	HeartbeatIntervalMs int
+
+	// HeartbeatTTLMs is the TTL (in milliseconds) applied to the heartbeat key
+	// each time it is written.  It should be several times the interval so that
+	// one or two missed beats do not falsely trigger the reaper.
+	// Env: WORKER_HEARTBEAT_TTL_MS (default: 20000)
+	HeartbeatTTLMs int
 }
 
 // RequiresNativeRedis returns true unconditionally, encoding the CFG-04
@@ -82,12 +92,14 @@ func (c Config) RequiresNativeRedis() bool {
 // Full env-var parsing (e.g. via caarlos0/env) is wired in Phase 2/3.
 func Default() Config {
 	return Config{
-		RedisURL:     "redis://localhost:6379",
-		SoketiHost:   "soketi",
-		SoketiPort:   6001,
-		SoketiUseTLS: false,
-		MaxSandboxes: 8,
-		DockerHost:   "unix:///var/run/docker.sock",
-		WarmupMs:     30000,
+		RedisURL:            "redis://localhost:6379",
+		SoketiHost:          "soketi",
+		SoketiPort:          6001,
+		SoketiUseTLS:        false,
+		MaxSandboxes:        8,
+		DockerHost:          "unix:///var/run/docker.sock",
+		WarmupMs:            30000,
+		HeartbeatIntervalMs: 5000,
+		HeartbeatTTLMs:      20000,
 	}
 }
