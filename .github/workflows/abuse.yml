@@ -1,0 +1,58 @@
+# abuse.yml — Linux cgroup-v2 safety gate (TEST-07)
+#
+# This workflow is the REQUIRED safety gate that must be green before any new
+# language is added in the language fan-out (Phase 6: Rust, R, SQLite — TEST-08).
+# It runs the adversarial abuse suite on ubuntu-latest (real Linux cgroup v2)
+# where OOM kills and CPU throttling behave identically to production, proving
+# that the sandbox hardening works beyond macOS Docker Desktop.
+#
+# Branch protection: enable "abuse / abuse" as a required status check on main
+# so that fan-out PRs (Phase 6) cannot merge until this workflow is green.
+
+name: abuse
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: abuse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  abuse:
+    name: abuse
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6381:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      TEST_REDIS_URL: redis://localhost:6381
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build executor/python:3.12 image
+        run: make python-image
+
+      - name: Run abuse suite
+        run: make abuse
