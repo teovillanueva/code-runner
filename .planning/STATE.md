@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Completed 01-03-PLAN.md — worker boot, manifest load at boot, TS manifest loader.
-last_updated: "2026-06-02T21:45:00Z"
-last_activity: 2026-06-02 — 01-03: Worker boot entrypoint + shared TS manifest loader (LANG-01, LANG-03, RUN-01, STDIN-04)
+status: verifying
+stopped_at: "Completed 01-03-PLAN.md — worker boot + TS manifest loader. Phase 1 complete. Commits: 8789d4c, cb5e93b."
+last_updated: "2026-06-02T20:07:32.315Z"
+last_activity: 2026-06-02
 progress:
   total_phases: 7
-  completed_phases: 0
-  total_plans: 3
-  completed_plans: 3
-  percent: 4
+  completed_phases: 1
+  total_plans: 7
+  completed_plans: 4
+  percent: 14
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 
 Phase: 1 of 7 (Foundation & Wire Contract)
 Plan: 03 of 03 in current phase (Phase 1) — COMPLETE
-Status: Phase 1 complete
-Last activity: 2026-06-02 — 01-03: Worker boot entrypoint + shared TS manifest loader (LANG-01, LANG-03, RUN-01, STDIN-04)
+Status: Phase complete — ready for verification
+Last activity: 2026-06-02
 
-Progress: [░░░░░░░░░░] 4%
+Progress: [██████░░░░] 57%
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 4%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 02-sandbox-hardening-runner P01 | 25 | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,9 @@ Recent decisions affecting current work:
 - [01-02]: Config.RequiresNativeRedis() is a method (not a constant) to remain testable and support future URL-based validation.
 - [01-03]: manifest.ts uses .ts extensions + allowImportingTsExtensions to enable direct Node.js execution via --experimental-strip-types without a build step.
 - [01-03]: Zod schema infers string[] for run field; cast to Manifest is safe since zod validates min(1) constraint at runtime.
+- [Phase ?]: CPUUsageFunc injection: internal/session has no docker/docker import; plan 02-03 injects the real cgroup reader via func(ctx)(int,error)
+- [Phase ?]: tools/tools.go with //go:build tools pins Phase 2 deps before production code imports them, avoiding go.mod contention across wave-2 plans
+- [Phase ?]: sync.Once + done channel teardown: terminate() writes Result then closes done; clock goroutines select on done to preserve single-receiver invariant
 
 ### Pending Todos
 
@@ -96,6 +100,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-02
+Last session: 2026-06-02T20:07:32.306Z
 Stopped at: Completed 01-03-PLAN.md — worker boot + TS manifest loader. Phase 1 complete. Commits: 8789d4c, cb5e93b.
 Resume file: None

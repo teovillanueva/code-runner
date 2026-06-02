@@ -64,10 +64,10 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Resource Limits (three clocks + caps)
 
-- [ ] **LIM-01**: A wall-clock timeout kills the entire session unconditionally when exceeded
-- [ ] **LIM-02**: An idle timeout kills the sandbox when no stdout and no stdin is received within the window
-- [ ] **LIM-03**: A CPU (cgroup) limit kills the sandbox on accumulated real compute, defeating use of interactive mode to smuggle heavy work past the wall clock
-- [ ] **LIM-04**: stdout/stderr bytes are capped — output is truncated and `truncated=true` is reported, and the worker keeps draining the pipe so the process never blocks
+- [x] **LIM-01**: A wall-clock timeout kills the entire session unconditionally when exceeded
+- [x] **LIM-02**: An idle timeout kills the sandbox when no stdout and no stdin is received within the window
+- [x] **LIM-03**: A CPU (cgroup) limit kills the sandbox on accumulated real compute, defeating use of interactive mode to smuggle heavy work past the wall clock
+- [x] **LIM-04**: stdout/stderr bytes are capped — output is truncated and `truncated=true` is reported, and the worker keeps draining the pipe so the process never blocks
 
 ### Real-time Output (soketi)
 
@@ -78,8 +78,8 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Lifecycle / Cleanup
 
-- [ ] **LIFE-01**: On any terminal event (any timeout, result, or kill) the worker unsubscribes `stdin:<jobId>`, closes pipes, removes the sandbox, and frees the slot
-- [ ] **LIFE-02**: Cleanup is idempotent and runs exactly once across all terminal paths (no double-cleanup, no leaked containers/subscriptions/slots)
+- [x] **LIFE-01**: On any terminal event (any timeout, result, or kill) the worker unsubscribes `stdin:<jobId>`, closes pipes, removes the sandbox, and frees the slot
+- [x] **LIFE-02**: Cleanup is idempotent and runs exactly once across all terminal paths (no double-cleanup, no leaked containers/subscriptions/slots)
 
 ### Language Packages (manifest-driven)
 
@@ -211,16 +211,16 @@ Each v1 requirement maps to exactly one phase.
 | HARD-03 | Phase 2 | Pending |
 | HARD-04 | Phase 2 | Pending |
 | HARD-05 | Phase 2 | Pending |
-| LIM-01 | Phase 2 | Pending |
-| LIM-02 | Phase 2 | Pending |
-| LIM-03 | Phase 2 | Pending |
-| LIM-04 | Phase 2 | Pending |
+| LIM-01 | Phase 2 | Complete |
+| LIM-02 | Phase 2 | Complete |
+| LIM-03 | Phase 2 | Complete |
+| LIM-04 | Phase 2 | Complete |
 | OUT-01 | Phase 3 | Pending |
 | OUT-02 | Phase 3 | Pending |
 | OUT-03 | Phase 3 | Pending |
 | OUT-04 | Phase 2 | Pending |
-| LIFE-01 | Phase 2 | Pending |
-| LIFE-02 | Phase 2 | Pending |
+| LIFE-01 | Phase 2 | Complete |
+| LIFE-02 | Phase 2 | Complete |
 | LANG-01 | Phase 1 | Pending |
 | LANG-02 | Phase 1 | Pending |
 | LANG-03 | Phase 1 | Pending |
