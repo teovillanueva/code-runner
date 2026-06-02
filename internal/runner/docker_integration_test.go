@@ -96,6 +96,19 @@ func TestIntegrationHardeningFlags(t *testing.T) {
 	assert.Contains(t, hc.Tmpfs["/tmp"], "size=",
 		"HARD-02: Tmpfs /tmp options must include a size= cap")
 
+	// HARD-02: /workspace is an anonymous Docker volume (mount.TypeVolume) so
+	// CopyToContainer can inject files before ContainerStart and the container
+	// process sees them. The anonymous volume is removed via RemoveVolumes=true
+	// on Kill/Cleanup to prevent host-disk residue.
+	foundWorkspaceVolume := false
+	for _, m := range hc.Mounts {
+		if m.Target == "/workspace" && string(m.Type) == "volume" {
+			foundWorkspaceVolume = true
+		}
+	}
+	assert.True(t, foundWorkspaceVolume,
+		"HARD-02: HostConfig.Mounts must contain a volume entry for '/workspace' (enables pre-start file injection)")
+
 	// HARD-03: Memory == MemorySwap (no swap); both > 0
 	assert.Greater(t, hc.Memory, int64(0),
 		"HARD-03: Memory must be > 0")

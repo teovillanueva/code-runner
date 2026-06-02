@@ -23,6 +23,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -171,10 +172,42 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 		// HARD-01: no network access — no SSRF, no Redis/soketi/metadata reach
 		NetworkMode: "none",
 
-		// HARD-02: read-only root + size-capped tmpfs scratch space
+		// HARD-02: read-only root + size-capped tmpfs scratch space.
+		//
+		// /tmp  — scratch space for Python/other runtimes (byte-code cache etc.)
+		//         Declared in HostConfig.Tmpfs (legacy map form) with noexec.
+		//
+		// /workspace — anonymous Docker volume that is writable even with
+		//         ReadonlyRootfs=true. We use mount.TypeVolume (not tmpfs) for
+		//         /workspace because Docker's CopyToContainer respects volume
+		//         contents across ContainerCreate → ContainerStart. If /workspace
+		//         were a tmpfs, Docker would overwrite it with an empty tmpfs on
+		//         container start, discarding any files we copied before start.
+		//         With a volume, files copied via CopyToContainer before start are
+		//         visible to the running process (preserving the start-handshake
+		//         contract: files in place before the process reads them).
+		//
+		//         The anonymous volume is removed on Cleanup/Kill via
+		//         RemoveOptions{RemoveVolumes:true} so no host-disk residue
+		//         survives the job. HARD-02 is preserved: ReadonlyRootfs remains
+		//         true; only /tmp (tmpfs) and /workspace (volume) are writable.
 		ReadonlyRootfs: true,
 		Tmpfs: map[string]string{
 			"/tmp": tmpfsOpts,
+		},
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeVolume,
+				Target: sandboxWorkDir,
+				// Empty Source → Docker creates an anonymous volume scoped to
+				// this container. It is auto-removed when the container is removed
+				// with RemoveVolumes=true (see Kill and Cleanup below).
+				VolumeOptions: &mount.VolumeOptions{
+					Labels: map[string]string{
+						"code-runner.jobId": spec.JobId,
+					},
+				},
+			},
 		},
 
 		// HARD-03: memory cap with swap disabled (Memory == MemorySwap)
@@ -204,10 +237,14 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 	containerID := resp.ID
 
 	// ── Copy source files into workspace before starting ────────────────────
+	// CopyToContainer works before ContainerStart because /workspace is an
+	// anonymous Docker volume (TypeVolume). Unlike tmpfs, volume contents
+	// survive the container create→start transition and are visible to the
+	// running process.
 	if len(spec.Files) > 0 {
 		if err := r.copyFilesToContainer(ctx, containerID, spec.Files); err != nil {
-			// Clean up the container we just created — ignore removal error
-			_ = r.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+			// Clean up: remove container AND its anonymous volume.
+			_ = r.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true, RemoveVolumes: true})
 			return nil, fmt.Errorf("docker: copy files: %w", err)
 		}
 	}
@@ -223,7 +260,7 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 		Stderr: true,
 	})
 	if err != nil {
-		_ = r.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+		_ = r.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true, RemoveVolumes: true})
 		return nil, fmt.Errorf("docker: ContainerAttach: %w", err)
 	}
 
@@ -243,7 +280,7 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 	// ── Start container ──────────────────────────────────────────────────────
 	if err := r.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		attachResp.Close()
-		_ = r.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true})
+		_ = r.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true, RemoveVolumes: true})
 		return nil, fmt.Errorf("docker: ContainerStart: %w", err)
 	}
 
@@ -364,10 +401,15 @@ func (s *dockerSandbox) Wait(ctx context.Context) (Result, error) {
 // followed by ContainerRemove(force). Never kills a bare PID (RUN-04).
 // Errors from ContainerKill are tolerated (container may already be stopped);
 // errors from ContainerRemove are returned.
+// RemoveVolumes=true removes the anonymous /workspace volume so no host-disk
+// residue survives the job.
 func (s *dockerSandbox) Kill(ctx context.Context) error {
 	// ContainerKill sends SIGKILL; ignore not-found errors (already killed).
 	_ = s.cli.ContainerKill(ctx, s.containerID, "KILL")
-	return s.cli.ContainerRemove(ctx, s.containerID, container.RemoveOptions{Force: true})
+	return s.cli.ContainerRemove(ctx, s.containerID, container.RemoveOptions{
+		Force:         true,
+		RemoveVolumes: true,
+	})
 }
 
 // Cleanup releases all resources exactly once (idempotent via sync.Once).
@@ -384,9 +426,11 @@ func (s *dockerSandbox) Cleanup() error {
 		_ = s.stdoutR.Close()
 		_ = s.stderrR.Close()
 
-		// Force-remove container. Ignore not-found: Kill may have removed it.
+		// Force-remove container (and its anonymous /workspace volume).
+		// RemoveVolumes=true removes the anonymous volume so no host-disk
+		// residue survives the job. Ignore not-found: Kill may have removed it.
 		removeErr := s.cli.ContainerRemove(context.Background(), s.containerID,
-			container.RemoveOptions{Force: true})
+			container.RemoveOptions{Force: true, RemoveVolumes: true})
 		if removeErr != nil && !isNotFound(removeErr) {
 			cleanupErr = fmt.Errorf("docker: Cleanup ContainerRemove: %w", removeErr)
 		}

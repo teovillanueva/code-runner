@@ -493,6 +493,174 @@ func TestIntegration_BatchPythonJob(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TestIntegration_FileBasedPythonJob
+// Proves the file-injection path: submits main.py as a wire.FileInput and
+// runs it via ["python", "main.py"] — NOT inline python -c.
+// This is the production path that was blocked by ReadonlyRootfs before the
+// /workspace tmpfs fix.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestIntegration_FileBasedPythonJob(t *testing.T) {
+	redisClient := dialTestRedis(t)
+	defer redisClient.Close() //nolint:errcheck
+	dockerCli := requireDockerAndImage(t)
+	defer dockerCli.Close() //nolint:errcheck
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	store := jobstore.New(redisClient)
+	transport := stdintransport.NewRedis(redisClient)
+
+	cfg := config.Default()
+	cfg.RedisURL = os.Getenv("TEST_REDIS_URL")
+	if cfg.RedisURL == "" {
+		cfg.RedisURL = "redis://localhost:6381"
+	}
+
+	dockerRunner, err := runnerPkg.NewDockerSocketRunner(cfg, integrationSeccompProfilePath())
+	require.NoError(t, err, "NewDockerSocketRunner")
+
+	it := newIntegrationTriggerer()
+	pub := publisher.NewForTest(it)
+
+	workerCfg := worker.Config{
+		MaxSandboxes: 2,
+		WarmupMs:     10000,
+		ClaimTimeout: 2 * time.Second,
+	}
+
+	w := worker.New(store, transport, dockerRunner, pub, workerCfg)
+
+	// The key difference from the existing tests: source code is supplied as a
+	// real file (wire.FileInput), not inlined in the run command.
+	// The manifest run command is ["python", "main.py"] — resolves relative to
+	// the /workspace tmpfs where CopyToContainer places the file.
+	mainPyContent := "name=input()\nprint(f\"hi {name}\")\n"
+
+	jobID := fmt.Sprintf("integration-file-based-%d", time.Now().UnixNano())
+	spec := wire.JobSpec{
+		JobId:    jobID,
+		Language: "python",
+		Version:  "3.12",
+		Image:    "executor/python:3.12",
+		// Run main.py from the /workspace tmpfs — NOT python -c
+		Run:         []string{"python", "main.py"},
+		Channel:     fmt.Sprintf("private-run-%s", jobID),
+		Interactive: true,
+		Files: []wire.FileInput{
+			{Name: "main.py", Content: mainPyContent},
+		},
+		Limits: wire.Limits{
+			WallTimeMs: 30000,
+			IdleMs:     10000,
+			CpuMs:      15000,
+			MemoryMb:   128,
+			Pids:       64,
+			OutputKb:   512,
+		},
+	}
+
+	require.NoError(t, store.WriteSpec(ctx, spec))
+	require.NoError(t, store.Enqueue(ctx, jobID))
+
+	// Run the worker loop in a goroutine.
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		w.Run(ctx)
+	}()
+
+	// Wait for the "queued" stage event.
+	ok := it.waitFor(15*time.Second, func(evs []integrationEvent) bool {
+		for _, ev := range evs {
+			if ev.event == "stage" {
+				var se wire.StageEvent
+				if json.Unmarshal(ev.data, &se) == nil && se.Phase == wire.StagePhaseQueued {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	require.True(t, ok, "timed out waiting for 'queued' stage event")
+
+	// Brief pause for Redis pub/sub subscription establishment.
+	time.Sleep(200 * time.Millisecond)
+
+	// Send "start" control message.
+	startPayload, _ := json.Marshal(wire.ControlMessage{Type: wire.ControlTypeStart})
+	require.NoError(t, redisClient.Publish(ctx, fmt.Sprintf("ctrl:%s", jobID), startPayload).Err())
+
+	// Wait for "running" stage.
+	ok = it.waitFor(15*time.Second, func(evs []integrationEvent) bool {
+		for _, ev := range evs {
+			if ev.event == "stage" {
+				var se wire.StageEvent
+				if json.Unmarshal(ev.data, &se) == nil && se.Phase == wire.StagePhaseRunning {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	require.True(t, ok, "timed out waiting for 'running' stage event")
+
+	// Give Python a moment to reach input().
+	time.Sleep(500 * time.Millisecond)
+
+	// Send stdin: "world\n"
+	require.NoError(t, redisClient.Publish(ctx, fmt.Sprintf("stdin:%s", jobID), "world\n").Err())
+
+	// Assert stdout contains "hi world" — proving main.py ran from the file.
+	ok = it.waitFor(15*time.Second, func(evs []integrationEvent) bool {
+		for _, ev := range evs {
+			if ev.event == "stdout" {
+				var oe wire.OutputChunkEvent
+				if json.Unmarshal(ev.data, &oe) == nil {
+					if strings.Contains(oe.Chunk, "hi world") {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	})
+	require.True(t, ok, "timed out waiting for stdout containing 'hi world' from file-based main.py")
+
+	// Assert terminal result exitCode 0.
+	ok = it.waitFor(15*time.Second, func(evs []integrationEvent) bool {
+		for _, ev := range evs {
+			if ev.event == "result" {
+				var re wire.ResultEvent
+				if json.Unmarshal(ev.data, &re) == nil && re.ExitCode != nil && *re.ExitCode == 0 {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	require.True(t, ok, "timed out waiting for terminal result with exitCode=0")
+
+	// Cancel the worker loop.
+	cancel()
+	select {
+	case <-workerDone:
+	case <-time.After(10 * time.Second):
+		t.Error("worker did not stop after context cancel")
+	}
+
+	// Assert no container leak.
+	assertNoContainerLeak(t, dockerCli, jobID)
+
+	// Print captured events.
+	t.Logf("File-based job events (%d total):", len(it.allEvents()))
+	for _, ev := range it.allEvents() {
+		t.Logf("  [%s] %s: %s", ev.channel, ev.event, ev.data)
+	}
+}
+
 // stdoutChunks is a test utility that collects all stdout chunk content.
 func stdoutChunks(evs []integrationEvent) string {
 	var buf bytes.Buffer
