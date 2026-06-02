@@ -61,6 +61,10 @@ down: ## Tear down the local dev stack
 test-redis: ## Run Redis-dependent integration tests (requires TEST_REDIS_URL or local Redis on :6379)
 	go test ./internal/redisx/... ./internal/stdintransport/... ./internal/jobstore/... -run Redis -v -count=1
 
+.PHONY: test-worker
+test-worker: ## Run guarded worker integration tests (requires Docker + redis:7 on port 6381 + executor/python:3.12)
+	go test -tags=worker_integration -timeout 300s ./internal/worker/... -run Integration -v
+
 .PHONY: e2e
 e2e: ## Run the end-to-end interactive demo against the local stack
 	./scripts/e2e.sh

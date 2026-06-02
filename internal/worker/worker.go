@@ -181,26 +181,13 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec) {
 	jobID := spec.JobId
 	log := slog.With("jobID", jobID)
 
-	// 1. Publish "queued" stage + write queued status.
-	if err := w.pub.Stage(jobID, wire.StagePhaseQueued); err != nil {
-		log.Warn("worker: publish queued stage failed", "err", err)
-	}
-	if w.store != nil {
-		if err := w.store.WriteStatus(ctx, wire.JobStatus{
-			JobId:    jobID,
-			Language: spec.Language,
-			Version:  spec.Version,
-			Channel:  spec.Channel,
-			State:    wire.JobStateQueued,
-		}); err != nil {
-			log.Warn("worker: WriteStatus queued failed", "err", err)
-		}
-	}
-
-	// 2. Subscribe stdin:<id> and ctrl:<id> BEFORE creating the sandbox so no
-	//    stdin/ctrl messages are lost between create and subscribe.
+	// 1. Subscribe stdin:<id> and ctrl:<id> FIRST, before publishing "queued".
+	//    This guarantees that the subscriptions are active before any external
+	//    client can see the "queued" event and immediately send "start". If we
+	//    published "queued" first and subscribed after, there is a race window
+	//    where "start" is lost (PITFALLS §7 / start-handshake race).
 	//    Handlers write to a buffered channel so they never block the delivery
-	//    goroutine (PITFALLS §7).
+	//    goroutine.
 	stdinCh := make(chan []byte, 256)
 	ctrlCh := make(chan wire.ControlMessage, 32)
 
@@ -230,6 +217,24 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec) {
 		log.Error("worker: SubscribeControl failed", "err", err)
 		stdinSub.Close() //nolint:errcheck
 		return
+	}
+
+	// 2. NOW publish "queued" stage + write queued status. Subscriptions are
+	//    active, so any "start" that arrives immediately after the client sees
+	//    "queued" will be delivered to ctrlCh (no race window).
+	if err := w.pub.Stage(jobID, wire.StagePhaseQueued); err != nil {
+		log.Warn("worker: publish queued stage failed", "err", err)
+	}
+	if w.store != nil {
+		if err := w.store.WriteStatus(ctx, wire.JobStatus{
+			JobId:    jobID,
+			Language: spec.Language,
+			Version:  spec.Version,
+			Channel:  spec.Channel,
+			State:    wire.JobStateQueued,
+		}); err != nil {
+			log.Warn("worker: WriteStatus queued failed", "err", err)
+		}
 	}
 
 	// 3. Create the sandbox. The container is started by Create (docker.go calls
