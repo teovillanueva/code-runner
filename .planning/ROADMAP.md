@@ -123,7 +123,12 @@ Plans:
   2. The R 4.4 package runs `Rscript main.R` with common libs baked in, driven by its manifest.
   3. The SQLite 3 package runs SQL against an ephemeral in-memory DB, supporting both a `.sql` file and an interactive `sqlite3` shell reading from stdin.
   4. Each language is added purely as `languages/<lang-version>/{manifest.json, Dockerfile}` and the abuse suite (Phase 4 gate) passes for the new images.
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+- [ ] 06-01-PLAN.md — Task 0: generic manifest-driven compile stage (extend Sandbox seam + worker run path + stub + generic gate test + Wave-2 Makefile targets) — the ONLY core change
+- [ ] 06-02-PLAN.md — Rust 1.83 package (rustc -O compile + produced-binary run) + e2e compile/run + compile-error test
+- [ ] 06-03-PLAN.md — R 4.4 package (Rscript main.R, common libs, unbuffered streaming, null compile) + e2e Rscript + interactive stdin test
+- [ ] 06-04-PLAN.md — SQLite 3 package (alpine+sqlite, :memory: SQL, .sql file + interactive shell, clean EOF) + e2e file + interactive SELECT test
 
 ### Phase 7: OSS Release & Deployment
 **Goal**: Ship the open-source release: a README that gets a self-hoster from clone to a running interactive execute, documents the API contract and how to add a language, covers deployment per target, and documents the upstream channel-auth responsibility (with the optional non-core helper noted).
@@ -150,5 +155,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
 | 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
 | 5. Statelessness & Scale | 3/3 | Complete   | 2026-06-02 |
-| 6. Language Fan-out | 0/TBD | Not started | - |
+| 6. Language Fan-out | 0/4 | Not started | - |
 | 7. OSS Release & Deployment | 0/TBD | Not started | - |
