@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -53,7 +54,7 @@ const defaultTmpfsSizeMb = 64
 type DockerSocketRunner struct {
 	cli            *client.Client
 	cfg            config.Config
-	seccompProfile string // absolute path to profiles/seccomp/runner.json
+	seccompProfile string // inline JSON content of the seccomp profile (not a path)
 }
 
 // NewDockerSocketRunner creates a DockerSocketRunner. It connects to the Docker
@@ -61,8 +62,15 @@ type DockerSocketRunner struct {
 // with cfg.DockerHost. cfg.SandboxRuntime is used as the OCI runtime for
 // container creation (e.g. "runsc" for gVisor); empty string uses daemon default.
 //
-// seccompProfilePath must be the ABSOLUTE path to profiles/seccomp/runner.json
-// as readable by dockerd (the daemon reads this file, not the worker process).
+// seccompProfilePath must be the path to profiles/seccomp/runner.json readable
+// by the worker process. The file is read at construction time and its JSON
+// content is embedded inline in SecurityOpt at container creation time. This
+// is the correct behaviour for the moby SDK: the Docker daemon (which may run
+// inside a VM on macOS/Docker Desktop) cannot access host filesystem paths, so
+// the JSON must be sent inline rather than as a path. The Docker CLI does the
+// same: it reads the file and embeds the JSON before sending to the daemon.
+//
+// Passing an empty string disables the seccomp override (daemon default applies).
 func NewDockerSocketRunner(cfg config.Config, seccompProfilePath string) (*DockerSocketRunner, error) {
 	opts := []client.Opt{
 		client.FromEnv,
@@ -76,10 +84,22 @@ func NewDockerSocketRunner(cfg config.Config, seccompProfilePath string) (*Docke
 		return nil, fmt.Errorf("docker: create client: %w", err)
 	}
 
+	// Read the seccomp profile JSON inline. The moby SDK sends SecurityOpt values
+	// verbatim to the daemon; the daemon expects the raw JSON, not a path.
+	// (Contrast with the Docker CLI which also reads the file before sending.)
+	var seccompJSON string
+	if seccompProfilePath != "" {
+		data, readErr := os.ReadFile(seccompProfilePath)
+		if readErr != nil {
+			return nil, fmt.Errorf("docker: read seccomp profile %q: %w", seccompProfilePath, readErr)
+		}
+		seccompJSON = string(data)
+	}
+
 	return &DockerSocketRunner{
 		cli:            cli,
 		cfg:            cfg,
-		seccompProfile: seccompProfilePath,
+		seccompProfile: seccompJSON,
 	}, nil
 }
 
@@ -122,8 +142,10 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 	tmpfsOpts := fmt.Sprintf("rw,noexec,nosuid,size=%dm", tmpfsSizeMb)
 
 	// ── Seccomp security options (HARD-05) ──────────────────────────────────
-	// NOTE: dockerd reads the seccomp profile path, not the worker. The path
-	// must be resolvable by the Docker daemon at container creation time.
+	// r.seccompProfile holds the raw JSON content (read at construction time).
+	// The moby SDK expects the JSON inline, not a filesystem path, because the
+	// Docker daemon may run in a VM (Docker Desktop / macOS) and cannot access
+	// the host's filesystem paths directly.
 	securityOpts := []string{"no-new-privileges"}
 	if r.seccompProfile != "" {
 		securityOpts = append(securityOpts, "seccomp="+r.seccompProfile)
