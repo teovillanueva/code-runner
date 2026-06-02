@@ -134,3 +134,27 @@ See `.planning/research/ARCHITECTURE.md` for the full architecture. Key points:
 - **Language images must be built on the host**: `make python-image` (or `make build-images` for all)
 - **Worker talks only to Redis + soketi**: no direct API ↔ worker HTTP calls
 - **Start handshake**: `POST /start` only after the client has subscribed to the soketi channel
+
+## Safety Gate
+
+The adversarial abuse suite (`internal/worker/abuse_test.go`, build tag `abuse`) is the **required safety gate before any language is added** in the language fan-out phase (Phase 6: Rust, R, SQLite, etc.).
+
+The suite drives 7 hostile Python jobs through the full worker path on real Linux cgroup v2, exercising OOM kills, CPU throttling, wall-time expiry, idle timeout, pid exhaustion, output truncation, and clean-exit containment. Behavior on macOS Docker Desktop diverges from production Linux; the CI gate closes that gap.
+
+**CI workflow** (`.github/workflows/abuse.yml`):
+
+- Runs on every pull request and on push to `main` (ubuntu-latest — real cgroup v2).
+- Builds `executor/python:3.12` via `make python-image`, starts redis:7, then runs `make abuse`.
+- Adding a new language reuses this same harness — the gate must pass for the new image before the PR merges.
+- Repo owners should enable **"abuse / abuse"** as a required status check on `main` (branch protection) so fan-out PRs cannot merge unless the abuse run is green.
+
+**Run locally** (requires Docker with cgroup v2, redis:7, and `executor/python:3.12`):
+
+```bash
+# One-time setup
+make python-image
+docker run -d -p 6381:6379 redis:7
+
+# Run the suite
+make abuse
+```
