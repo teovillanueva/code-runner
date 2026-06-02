@@ -1,0 +1,18 @@
+{
+  "language": "rust",
+  "version": "1.83",
+  "aliases": ["rs"],
+  "image": "executor/rust:1.83",
+  "entrypoint": "main.rs",
+  "compile": ["rustc", "-O", "main.rs", "-o", "/tmp/prog"],
+  "run": ["/tmp/prog"],
+  "interactive": true,
+  "defaultLimits": {
+    "wallTimeMs": 120000,
+    "idleMs": 15000,
+    "cpuMs": 60000,
+    "memoryMb": 512,
+    "pids": 128,
+    "outputKb": 1024
+  }
+}
