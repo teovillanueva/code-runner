@@ -1,0 +1,18 @@
+{
+  "language": "python",
+  "version": "3.12",
+  "aliases": ["py", "py3"],
+  "image": "executor/python:3.12",
+  "entrypoint": "main.py",
+  "compile": null,
+  "run": ["python", "main.py"],
+  "interactive": true,
+  "defaultLimits": {
+    "wallTimeMs": 30000,
+    "idleMs": 10000,
+    "cpuMs": 15000,
+    "memoryMb": 128,
+    "pids": 64,
+    "outputKb": 512
+  }
+}
