@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: "Completed 01-03-PLAN.md — worker boot + TS manifest loader. Phase 1 complete. Commits: 8789d4c, cb5e93b."
-last_updated: "2026-06-02T21:00:02.433Z"
+last_updated: "2026-06-02T21:22:32.348Z"
 last_activity: 2026-06-02
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 11
   percent: 29
 ---
 
@@ -30,7 +30,7 @@ Plan: 03 of 03 in current phase (Phase 1) — COMPLETE
 Status: Phase complete — ready for verification
 Last activity: 2026-06-02
 
-Progress: [████████░░] 83%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [████████░░] 83%
 | Phase 02-sandbox-hardening-runner P02 | 10m | 2 tasks | 3 files |
 | Phase 02-sandbox-hardening-runner P03 | 8 | 3 tasks | 4 files |
 | Phase 03-interactive-python-e2e P03 | 12 | 2 tasks | 2 files |
+| Phase 03-interactive-python-e2e P02 | 21 | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,7 @@ Recent decisions affecting current work:
 - [Phase ?]: triggerer interface enables unit testing without live soketi
 - [Phase ?]: Stdout+Stderr share per-job seq (one ordered stream)
 - [Phase ?]: DockerSocketRunner import cycle resolution
+- [Phase ?]: Subscribe stdin/ctrl BEFORE publishing queued stage to eliminate start-handshake race window
 
 ### Pending Todos
 
@@ -107,6 +109,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-02T21:00:02.424Z
+Last session: 2026-06-02T21:22:32.339Z
 Stopped at: Completed 01-03-PLAN.md — worker boot + TS manifest loader. Phase 1 complete. Commits: 8789d4c, cb5e93b.
 Resume file: None

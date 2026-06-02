@@ -37,20 +37,20 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **RUN-03**: The runner attaches and demuxes stdout/stderr separately and forwards them to the session
 - [x] **RUN-04**: `kill` destroys the whole container (process tree), never just a PID
 - [x] **WRK-01**: The worker consumes jobs from the Redis queue
-- [ ] **WRK-02**: The worker subscribes to `stdin:<jobId>` only for jobs it owns and writes chunks to the process pipe — no service discovery
-- [ ] **WRK-03**: The worker keeps the process alive with stdin/stdout/stderr pipes open (interactive session, not batch-ephemeral)
-- [ ] **WRK-04**: The worker is stateless and coupled to the rest of the system only through Redis (jobs + stdin) and soketi (output); it never calls the API
+- [x] **WRK-02**: The worker subscribes to `stdin:<jobId>` only for jobs it owns and writes chunks to the process pipe — no service discovery
+- [x] **WRK-03**: The worker keeps the process alive with stdin/stdout/stderr pipes open (interactive session, not batch-ephemeral)
+- [x] **WRK-04**: The worker is stateless and coupled to the rest of the system only through Redis (jobs + stdin) and soketi (output); it never calls the API
 
 ### Interactive Session & Handshake
 
-- [ ] **SESS-01**: The start-handshake holds: `/execute` creates `jobId`+`channel` and returns before the process starts; the process only starts on `/start` (no early prompt is lost)
-- [ ] **SESS-02**: Batch (no-stdin) execution works as the degenerate case of the interactive model
-- [ ] **SESS-03**: A warm-up timeout reclaims the slot and tears down the sandbox if `/start` never arrives after `/execute`
+- [x] **SESS-01**: The start-handshake holds: `/execute` creates `jobId`+`channel` and returns before the process starts; the process only starts on `/start` (no early prompt is lost)
+- [x] **SESS-02**: Batch (no-stdin) execution works as the degenerate case of the interactive model
+- [x] **SESS-03**: A warm-up timeout reclaims the slot and tears down the sandbox if `/start` never arrives after `/execute`
 
 ### stdin Routing
 
 - [x] **STDIN-01**: stdin is routed without service discovery: the API `PUBLISH`es to `stdin:<jobId>` and the owning worker writes it to the process pipe
-- [ ] **STDIN-02**: `/stdin/close` delivers EOF to the process exactly once
+- [x] **STDIN-02**: `/stdin/close` delivers EOF to the process exactly once
 - [x] **STDIN-03**: Control messages (start/kill) route to the owning worker via a per-job control channel
 - [ ] **STDIN-04**: The stdin transport sits behind an interface so Redis pub/sub (MVP) can be swapped for Redis Streams (`XREAD BLOCK`) later without core changes
 
@@ -71,9 +71,9 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Real-time Output (soketi)
 
-- [ ] **OUT-01**: The worker publishes `stage {phase: queued|compiling|running}` events on `private-run-<jobId>`
-- [ ] **OUT-02**: The worker streams `stdout {chunk}` and `stderr {chunk}` events
-- [ ] **OUT-03**: The worker publishes a terminal `result {exitCode, signal, timedOut, idleTimedOut, truncated, durationMs}` event
+- [x] **OUT-01**: The worker publishes `stage {phase: queued|compiling|running}` events on `private-run-<jobId>`
+- [x] **OUT-02**: The worker streams `stdout {chunk}` and `stderr {chunk}` events
+- [x] **OUT-03**: The worker publishes a terminal `result {exitCode, signal, timedOut, idleTimedOut, truncated, durationMs}` event
 - [x] **OUT-04**: The worker triggers soketi **directly** via the Pusher protocol, batched and chunked to stay within soketi's event-size limit, using credentials from env
 
 ### Lifecycle / Cleanup
@@ -196,14 +196,14 @@ Each v1 requirement maps to exactly one phase.
 | RUN-03 | Phase 2 | Complete |
 | RUN-04 | Phase 2 | Complete |
 | WRK-01 | Phase 3 | Complete |
-| WRK-02 | Phase 3 | Pending |
-| WRK-03 | Phase 3 | Pending |
-| WRK-04 | Phase 3 | Pending |
-| SESS-01 | Phase 3 | Pending |
-| SESS-02 | Phase 3 | Pending |
-| SESS-03 | Phase 3 | Pending |
+| WRK-02 | Phase 3 | Complete |
+| WRK-03 | Phase 3 | Complete |
+| WRK-04 | Phase 3 | Complete |
+| SESS-01 | Phase 3 | Complete |
+| SESS-02 | Phase 3 | Complete |
+| SESS-03 | Phase 3 | Complete |
 | STDIN-01 | Phase 3 | Complete |
-| STDIN-02 | Phase 3 | Pending |
+| STDIN-02 | Phase 3 | Complete |
 | STDIN-03 | Phase 3 | Complete |
 | STDIN-04 | Phase 1 | Pending |
 | HARD-01 | Phase 2 | Complete |
@@ -215,9 +215,9 @@ Each v1 requirement maps to exactly one phase.
 | LIM-02 | Phase 2 | Complete |
 | LIM-03 | Phase 2 | Complete |
 | LIM-04 | Phase 2 | Complete |
-| OUT-01 | Phase 3 | Pending |
-| OUT-02 | Phase 3 | Pending |
-| OUT-03 | Phase 3 | Pending |
+| OUT-01 | Phase 3 | Complete |
+| OUT-02 | Phase 3 | Complete |
+| OUT-03 | Phase 3 | Complete |
 | OUT-04 | Phase 2 | Complete |
 | LIFE-01 | Phase 2 | Complete |
 | LIFE-02 | Phase 2 | Complete |
