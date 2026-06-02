@@ -309,8 +309,8 @@ func TestIntegration_InteractivePythonJob(t *testing.T) {
 	// Give the Python process a moment to reach input().
 	time.Sleep(500 * time.Millisecond)
 
-	// Send stdin: "world\n"
-	require.NoError(t, redisClient.Publish(ctx, fmt.Sprintf("stdin:%s", jobID), "world\n").Err())
+	// Send stdin: "world\n" — must use JSON StdinMessage format.
+	publishStdinRaw(t, ctx, redisClient, jobID, "world\n")
 
 	// Wait for a stdout event containing "hi world".
 	ok = it.waitFor(15*time.Second, func(evs []integrationEvent) bool {
@@ -610,8 +610,8 @@ func TestIntegration_FileBasedPythonJob(t *testing.T) {
 	// Give Python a moment to reach input().
 	time.Sleep(500 * time.Millisecond)
 
-	// Send stdin: "world\n"
-	require.NoError(t, redisClient.Publish(ctx, fmt.Sprintf("stdin:%s", jobID), "world\n").Err())
+	// Send stdin: "world\n" — must use JSON StdinMessage format.
+	publishStdinRaw(t, ctx, redisClient, jobID, "world\n")
 
 	// Assert stdout contains "hi world" — proving main.py ran from the file.
 	ok = it.waitFor(15*time.Second, func(evs []integrationEvent) bool {
@@ -659,6 +659,17 @@ func TestIntegration_FileBasedPythonJob(t *testing.T) {
 	for _, ev := range it.allEvents() {
 		t.Logf("  [%s] %s: %s", ev.channel, ev.event, ev.data)
 	}
+}
+
+// publishStdinRaw publishes a stdin chunk to the given jobID using the correct
+// JSON-encoded StdinMessage format expected by the Redis stdin transport.
+// The Redis transport (redis.go Subscribe) decodes StdinMessage JSON; raw bytes
+// are silently dropped (bug discovered in Phase 4 abuse suite).
+func publishStdinRaw(t *testing.T, ctx context.Context, rc *redis.Client, jobID, chunk string) {
+	t.Helper()
+	msg, err := json.Marshal(wire.StdinMessage{Chunk: chunk})
+	require.NoError(t, err, "marshal StdinMessage")
+	require.NoError(t, rc.Publish(ctx, fmt.Sprintf("stdin:%s", jobID), msg).Err(), "Publish stdin")
 }
 
 // stdoutChunks is a test utility that collects all stdout chunk content.

@@ -34,9 +34,14 @@ import (
 // DockerSocketRunner provides but are not on the interface. The worker uses
 // a type assertion so it can get CPUReader/Limits without importing the Docker
 // SDK in this package.
+//
+// CPUReader returns runner.CPUUsageFunc (a type alias for the raw func type)
+// which is the same underlying type as session.CPUUsageFunc. Using the alias
+// here ensures the type assertion sb.(DockerSandbox) succeeds at runtime, since
+// *dockerSandbox.CPUReader() returns the alias type — not the named type.
 type DockerSandbox interface {
 	runner.Sandbox
-	CPUReader() session.CPUUsageFunc
+	CPUReader() runner.CPUUsageFunc
 	Limits() wire.Limits
 }
 
@@ -333,7 +338,10 @@ parkLoop:
 	}
 
 	// 6. Derive CPUUsageFunc from the sandbox if it supports it.
-	var cpuFn session.CPUUsageFunc
+	// Use runner.CPUUsageFunc (a type alias) to match *dockerSandbox.CPUReader()'s
+	// return type; the alias is assignable to session.CPUUsageFunc because they
+	// share the same underlying function signature.
+	var cpuFn runner.CPUUsageFunc
 	if ds, ok := sb.(DockerSandbox); ok {
 		cpuFn = ds.CPUReader()
 	} else {

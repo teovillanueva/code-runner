@@ -42,8 +42,8 @@ test-go: ## Run Go tests
 	go test ./...
 
 .PHONY: abuse
-abuse: ## Run the abuse/safety test suite (requires Docker)
-	go test -tags=abuse -timeout 600s ./apps/worker/... -run Abuse -v
+abuse: ## Run the adversarial abuse/safety suite (requires Docker cgroup v2 + redis:7 on port 6381 + executor/python:3.12)
+	go test -tags=abuse -timeout 600s ./internal/worker/... -run Abuse -v
 
 .PHONY: test-docker
 test-docker: ## Run guarded Docker integration tests (requires Docker daemon)

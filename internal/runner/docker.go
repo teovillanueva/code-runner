@@ -162,6 +162,13 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 		AttachStdout: true,
 		AttachStderr: true,
 		OpenStdin:    true,
+		StdinOnce:    true, // Close stdin when the single attached client disconnects.
+		// Without StdinOnce=true, the container's stdin pipe stays open after the
+		// attach connection closes (OpenStdin=true + StdinOnce=false is the Docker
+		// default: stdin remains open for re-attachment). With StdinOnce=true, Docker
+		// Engine closes the container's stdin pipe (delivering EOF) when our attach
+		// session ends — which is the correct behaviour for single-session interactive
+		// runs where stdin_close → EOF → clean exit is the expected code path.
 		Labels: map[string]string{
 			"code-runner.jobId": spec.JobId,
 		},
@@ -284,10 +291,33 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 		return nil, fmt.Errorf("docker: ContainerStart: %w", err)
 	}
 
+	// ── Stdin pipe ───────────────────────────────────────────────────────────
+	// Create an internal io.Pipe for stdin. Writes go to the pipe writer (stdinW);
+	// a goroutine copies from the pipe reader to attachResp.Conn (the actual Docker
+	// attach connection). When stdinW.Close() is called (to signal EOF), the copy
+	// goroutine sees io.EOF from the pipe reader. It then waits stdinEOFFlushDelay
+	// to let the container process produce its final stdout, then closes the attach
+	// connection.
+	//
+	// This indirection is required on macOS Docker Desktop where closing the attach
+	// connection immediately closes both read and write directions (the Unix socket
+	// proxy does not support TCP half-close). By delaying the connection close, we
+	// ensure stdcopy.StdCopy has time to forward the process's last output bytes.
+	stdinR, stdinW := io.Pipe()
+	go func() {
+		io.Copy(attachResp.Conn, stdinR) //nolint:errcheck
+		stdinR.Close()                   //nolint:errcheck
+		// Flush window: give the container process time to write its final output
+		// before we close the read direction of the attach connection.
+		time.Sleep(stdinEOFFlushDelay)
+		attachResp.Conn.Close() //nolint:errcheck
+	}()
+
 	sb := &dockerSandbox{
 		cli:         r.cli,
 		containerID: containerID,
 		attachResp:  attachResp,
+		stdinW:      stdinW,
 		stdoutR:     stdoutR,
 		stderrR:     stderrR,
 		spec:        spec,
@@ -326,12 +356,24 @@ func (r *DockerSocketRunner) copyFilesToContainer(ctx context.Context, container
 
 // ── dockerSandbox ─────────────────────────────────────────────────────────────
 
+// stdinEOFFlushDelay is the time to wait after stdin is closed before closing
+// the attach connection. This gives the container process time to produce its
+// final output after receiving EOF on stdin.
+//
+// On macOS Docker Desktop (Unix socket proxy), closing the attach connection
+// also closes the read direction, discarding any stdout the process emits after
+// reading EOF. A 500ms delay ensures that stdout (e.g. a Python print() after
+// stdin.read()) is forwarded through stdcopy.StdCopy before the connection tears
+// down. 500ms is generous: Python's print() + flush is nearly instant.
+const stdinEOFFlushDelay = 500 * time.Millisecond
+
 // dockerSandbox is the live handle to a single running container sandbox.
 // It implements the Sandbox interface.
 type dockerSandbox struct {
 	cli         *client.Client
 	containerID string
 	attachResp  types.HijackedResponse
+	stdinW      *io.PipeWriter  // write end of the stdin pipe (pump goroutine reads it)
 	stdoutR     *io.PipeReader
 	stderrR     *io.PipeReader
 	spec        wire.JobSpec
@@ -342,9 +384,14 @@ type dockerSandbox struct {
 }
 
 // Stdin returns the write end of the container's stdin pipe. Writing here
-// sends bytes to the container's stdin via the hijacked attach connection.
+// routes bytes to the container's stdin via the hijacked attach connection.
+//
+// The returned WriteCloser is always the same *io.PipeWriter that was created
+// once in Create() alongside the pump goroutine. Callers must not call Stdin()
+// more than once for write purposes; closeStdin() in the worker uses sync.Once
+// to guarantee exactly one Close() call.
 func (s *dockerSandbox) Stdin() io.WriteCloser {
-	return s.attachResp.Conn
+	return s.stdinW
 }
 
 // Stdout returns the demuxed stdout reader. Bytes here are plain stdout from
@@ -419,7 +466,16 @@ func (s *dockerSandbox) Kill(ctx context.Context) error {
 func (s *dockerSandbox) Cleanup() error {
 	var cleanupErr error
 	s.cleanupOnce.Do(func() {
-		// Close the hijacked attach connection (closes stdin pipe to container).
+		// Close the stdin pipe writer to unblock the pump goroutine.
+		// The pump goroutine will then close the attach connection after the
+		// flush delay. If the connection is already closed (e.g. by Kill), the
+		// pump goroutine's Close() call is a no-op.
+		if s.stdinW != nil {
+			_ = s.stdinW.Close()
+		}
+
+		// Close the hijacked attach connection immediately as well (the pump
+		// goroutine may have already closed it; Close is idempotent on net.Conn).
 		s.attachResp.Close()
 
 		// Close pipe readers — unblocks any goroutines reading Stdout/Stderr.
