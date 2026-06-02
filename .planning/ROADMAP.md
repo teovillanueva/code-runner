@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Foundation & Wire Contract** - Monorepo layout, JSON-Schema wire contract codegen + drift check, manifest schema/loader, `Runner` interface, OSS scaffolding — ends at a human approval gate before coding
 - [x] **Phase 2: Sandbox Hardening & Runner** - Go `DockerSocketRunner`: full hardening flags, three clocks, tree-kill, output caps, idempotent `sync.Once` cleanup (completed 2026-06-02)
-- [ ] **Phase 3: Interactive Python End-to-End** - Hono API (all `/v1/*`), Redis queue + stdin/control routing, worker session, soketi publisher, Python package, docker compose dev stack — full interactive demo works
+- [x] **Phase 3: Interactive Python End-to-End** - Hono API (all `/v1/*`), Redis queue + stdin/control routing, worker session, soketi publisher, Python package, docker compose dev stack — full interactive demo works (completed 2026-06-02)
 - [ ] **Phase 4: Abuse Suite & Safety Validation** - Fork bomb, OOM, infinite loop, idle, EOF, giant output on Linux CI — gates the language fan-out
 - [ ] **Phase 5: Statelessness & Scale** - Slot capacity, backpressure 429, reliable claim, dead-worker reaper, N replicas, autoscaling-by-queue-depth + scale-to-zero design, native-Redis worker constraint
 - [ ] **Phase 6: Language Fan-out** - Rust (compile stage), R 4.4, SQLite 3 (interactive SQL shell) added as manifest + Dockerfile, zero core changes
@@ -77,7 +77,7 @@ Plans:
 - [x] 03-02-PLAN.md — Worker run loop: claim → create → start-handshake/warm-up → session.RunInteractive (publisher sinks + stdin routing) → single teardown; guarded full-Python integration test (Wave 2)
 - [x] 03-03-PLAN.md — Python 3.12 image: python:3.12-slim + numpy/pandas/requests, non-root, PYTHONUNBUFFERED unbuffered streaming (Wave 1)
 - [x] 03-04-PLAN.md — Hono API: all /v1/* endpoints, constant-time bearer auth, generated-zod validation, jobId+channel gen, LPUSH+spec/status, PUBLISH stdin/control, 429 rate/byte-cap, optional channel-auth (Wave 1)
-- [ ] 03-05-PLAN.md — docker-compose + stub upstream + scripts/e2e.sh + README quickstart; blocking human-verify of the live interactive demo (Wave 3)
+- [x] 03-05-PLAN.md — docker-compose + stub upstream + scripts/e2e.sh + README quickstart; blocking human-verify of the live interactive demo (Wave 3)
 **UI hint**: yes
 
 ### Phase 4: Abuse Suite & Safety Validation
@@ -140,7 +140,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 |-------|----------------|--------|-----------|
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
-| 3. Interactive Python End-to-End | 4/5 | In Progress|  |
+| 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
 | 4. Abuse Suite & Safety Validation | 0/TBD | Not started | - |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
 | 6. Language Fan-out | 0/TBD | Not started | - |

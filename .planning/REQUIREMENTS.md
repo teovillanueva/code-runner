@@ -114,9 +114,9 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Dev Environment
 
-- [ ] **DEV-01**: `docker compose up` brings up the whole stack locally: api + worker (DockerSocketRunner) + redis + soketi + a stub upstream app
-- [ ] **DEV-02**: The stub upstream app drives an end-to-end interactive execute locally
-- [ ] **DEV-03**: A script/README walks through a punta-a-punta interactive execute against the local stack
+- [x] **DEV-01**: `docker compose up` brings up the whole stack locally: api + worker (DockerSocketRunner) + redis + soketi + a stub upstream app
+- [x] **DEV-02**: The stub upstream app drives an end-to-end interactive execute locally
+- [x] **DEV-03**: A script/README walks through a punta-a-punta interactive execute against the local stack
 
 ### Abuse Tests (built EARLY)
 
@@ -240,9 +240,9 @@ Each v1 requirement maps to exactly one phase.
 | CFG-04 | Phase 1 | Pending |
 | CHAN-01 | Phase 7 | Pending |
 | CHAN-02 | Phase 3 | Complete |
-| DEV-01 | Phase 3 | Pending |
-| DEV-02 | Phase 3 | Pending |
-| DEV-03 | Phase 3 | Pending |
+| DEV-01 | Phase 3 | Complete |
+| DEV-02 | Phase 3 | Complete |
+| DEV-03 | Phase 3 | Complete |
 | TEST-01 | Phase 4 | Pending |
 | TEST-02 | Phase 4 | Pending |
 | TEST-03 | Phase 4 | Pending |
