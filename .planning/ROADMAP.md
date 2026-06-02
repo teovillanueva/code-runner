@@ -13,7 +13,7 @@ code-runner is an open-source, self-hostable, Piston-style remote code execution
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Foundation & Wire Contract** - Monorepo layout, JSON-Schema wire contract codegen + drift check, manifest schema/loader, `Runner` interface, OSS scaffolding — ends at a human approval gate before coding
-- [ ] **Phase 2: Sandbox Hardening & Runner** - Go `DockerSocketRunner`: full hardening flags, three clocks, tree-kill, output caps, idempotent `sync.Once` cleanup
+- [x] **Phase 2: Sandbox Hardening & Runner** - Go `DockerSocketRunner`: full hardening flags, three clocks, tree-kill, output caps, idempotent `sync.Once` cleanup (completed 2026-06-02)
 - [ ] **Phase 3: Interactive Python End-to-End** - Hono API (all `/v1/*`), Redis queue + stdin/control routing, worker session, soketi publisher, Python package, docker compose dev stack — full interactive demo works
 - [ ] **Phase 4: Abuse Suite & Safety Validation** - Fork bomb, OOM, infinite loop, idle, EOF, giant output on Linux CI — gates the language fan-out
 - [ ] **Phase 5: Statelessness & Scale** - Slot capacity, backpressure 429, reliable claim, dead-worker reaper, N replicas, autoscaling-by-queue-depth + scale-to-zero design, native-Redis worker constraint
@@ -57,7 +57,7 @@ Plans:
 - [x] 02-01-PLAN.md — Phase 2 deps + restrictive seccomp profile + testable safety logic (three clocks, output pump, sync.Once teardown) in internal/session
 - [x] 02-02-PLAN.md — soketi/Pusher publisher (stage/stdout/stderr/result, env creds, <10KB chunking, monotonic seq) in internal/publisher
 - [x] 02-03-PLAN.md — DockerSocketRunner over the moby SDK: full hardening + attach/demux + tree-kill + idempotent cleanup + cgroup-v2 CPU reader
-- [ ] 02-04-PLAN.md — Guarded Docker integration tests: hardening inspect, three clocks, truncation, stdin round-trip, no-leak label check + make target
+- [x] 02-04-PLAN.md — Guarded Docker integration tests: hardening inspect, three clocks, truncation, stdin round-trip, no-leak label check + make target
 
 ### Phase 3: Interactive Python End-to-End
 **Goal**: Drive one language (Python 3.12) through the entire interactive path — Hono API, Redis routing, worker session with start-handshake, soketi output — so `/execute → subscribe → /start → stdin → result` works end-to-end against the local stack.
@@ -133,7 +133,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
-| 2. Sandbox Hardening & Runner | 3/4 | In Progress|  |
+| 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
 | 3. Interactive Python End-to-End | 0/TBD | Not started | - |
 | 4. Abuse Suite & Safety Validation | 0/TBD | Not started | - |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
