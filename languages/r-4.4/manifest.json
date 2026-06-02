@@ -1,0 +1,18 @@
+{
+  "language": "r",
+  "version": "4.4",
+  "aliases": ["rlang"],
+  "image": "executor/r:4.4",
+  "entrypoint": "main.R",
+  "compile": null,
+  "run": ["Rscript", "main.R"],
+  "interactive": true,
+  "defaultLimits": {
+    "wallTimeMs": 30000,
+    "idleMs": 10000,
+    "cpuMs": 15000,
+    "memoryMb": 256,
+    "pids": 64,
+    "outputKb": 512
+  }
+}
