@@ -15,6 +15,10 @@ export interface Config {
   soketiAppSecret: string;
   // optional channel-auth feature flag
   enableChannelAuth: boolean;
+  // Job-admission backpressure (SCALE-03): max depth of the job queue.
+  // POST /v1/execute returns 429 when LLEN(jobs:queue) >= maxQueueDepth.
+  // Set via MAX_QUEUE_DEPTH env var. Default: 256.
+  maxQueueDepth: number;
 }
 
 function requireEnv(name: string): string {
@@ -45,6 +49,7 @@ function loadConfig(): Config {
     soketiAppKey: process.env["SOKETI_APP_KEY"] ?? "code-runner-key",
     soketiAppSecret: process.env["SOKETI_APP_SECRET"] ?? "",
     enableChannelAuth: process.env["ENABLE_CHANNEL_AUTH"] === "true",
+    maxQueueDepth: parseInt(process.env["MAX_QUEUE_DEPTH"] ?? "256", 10),
   };
 }
 

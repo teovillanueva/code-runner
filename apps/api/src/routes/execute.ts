@@ -20,6 +20,8 @@ import {
 } from "@code-runner/contract";
 import { getRedis } from "../redis.ts";
 import { getManifests, resolveManifest } from "../manifests.ts";
+import { atCapacity, admissionError } from "../admission.ts";
+import { config } from "../config.ts";
 import type { LimitsOverride, Limits } from "@code-runner/contract";
 
 /**
@@ -86,6 +88,14 @@ export function registerExecuteRoutes(app: Hono): void {
           },
           400,
         );
+      }
+
+      // Job-admission backpressure: reject before writing anything to Redis (SCALE-03).
+      // Check AFTER manifest resolution so invalid requests get 400, not 429.
+      // The spec/status pipeline MUST NOT run on a rejected request.
+      if (await atCapacity()) {
+        const depth = await getRedis().llen(keys.jobQueue);
+        return c.json(admissionError(depth, config.maxQueueDepth), 429);
       }
 
       const jobId = randomUUID();
