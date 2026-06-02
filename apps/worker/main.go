@@ -125,9 +125,11 @@ func run(ctx context.Context) error {
 
 	// ── Worker ────────────────────────────────────────────────────────────────
 	workerCfg := worker.Config{
-		MaxSandboxes: cfg.MaxSandboxes,
-		WarmupMs:     cfg.WarmupMs,
-		ClaimTimeout: 5 * time.Second,
+		MaxSandboxes:        cfg.MaxSandboxes,
+		WarmupMs:            cfg.WarmupMs,
+		ClaimTimeout:        5 * time.Second,
+		HeartbeatIntervalMs: cfg.HeartbeatIntervalMs,
+		HeartbeatTTLMs:      cfg.HeartbeatTTLMs,
 	}
 
 	w := worker.New(store, transport, dockerRunner, pub, workerCfg)
@@ -135,6 +137,8 @@ func run(ctx context.Context) error {
 	slog.Info("worker loop starting",
 		"max_sandboxes", cfg.MaxSandboxes,
 		"warmup_ms", cfg.WarmupMs,
+		"heartbeat_interval_ms", cfg.HeartbeatIntervalMs,
+		"heartbeat_ttl_ms", cfg.HeartbeatTTLMs,
 	)
 
 	w.Run(ctx)
@@ -183,6 +187,16 @@ func configFromEnv() config.Config {
 	if v := os.Getenv("WORKER_WARMUP_MS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.WarmupMs = n
+		}
+	}
+	if v := os.Getenv("WORKER_HEARTBEAT_INTERVAL_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.HeartbeatIntervalMs = n
+		}
+	}
+	if v := os.Getenv("WORKER_HEARTBEAT_TTL_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.HeartbeatTTLMs = n
 		}
 	}
 

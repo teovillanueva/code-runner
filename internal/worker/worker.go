@@ -66,6 +66,12 @@ type Config struct {
 	// ClaimTimeout is how long BRPOP blocks waiting for a new job.
 	// Defaults to 5s if zero.
 	ClaimTimeout time.Duration
+	// HeartbeatIntervalMs is how often the worker writes its heartbeat key to
+	// Redis (in milliseconds).  Defaults to 5000 if zero.
+	HeartbeatIntervalMs int
+	// HeartbeatTTLMs is the TTL (in milliseconds) applied to the heartbeat key
+	// each time it is written.  Defaults to 20000 if zero.
+	HeartbeatTTLMs int
 }
 
 // Worker is the job execution run loop. It claims jobs from the jobstore, runs
@@ -77,6 +83,16 @@ type Worker struct {
 	pub       *publisher.Publisher
 	cfg       Config
 	slots     chan struct{} // semaphore: len(slots) = available capacity
+
+	// workerID is the ephemeral random identity for this worker instance.
+	// Generated once at construction via newWorkerID().
+	workerID string
+
+	// heartbeatInterval is how often the heartbeat key is refreshed.
+	heartbeatInterval time.Duration
+
+	// heartbeatTTL is the TTL applied to the heartbeat key on each write.
+	heartbeatTTL time.Duration
 }
 
 // New creates a Worker using the concrete *stdintransport.RedisTransport.
@@ -109,24 +125,45 @@ func NewWithTransport(
 	if cfg.ClaimTimeout <= 0 {
 		cfg.ClaimTimeout = 5 * time.Second
 	}
+	if cfg.HeartbeatIntervalMs <= 0 {
+		cfg.HeartbeatIntervalMs = 5000
+	}
+	if cfg.HeartbeatTTLMs <= 0 {
+		cfg.HeartbeatTTLMs = 20000
+	}
 	slots := make(chan struct{}, cfg.MaxSandboxes)
 	for i := 0; i < cfg.MaxSandboxes; i++ {
 		slots <- struct{}{}
 	}
 	return &Worker{
-		store:     store,
-		transport: transport,
-		runner:    r,
-		pub:       pub,
-		cfg:       cfg,
-		slots:     slots,
+		store:             store,
+		transport:         transport,
+		runner:            r,
+		pub:               pub,
+		cfg:               cfg,
+		slots:             slots,
+		workerID:          newWorkerID(),
+		heartbeatInterval: time.Duration(cfg.HeartbeatIntervalMs) * time.Millisecond,
+		heartbeatTTL:      time.Duration(cfg.HeartbeatTTLMs) * time.Millisecond,
 	}
+}
+
+// WorkerIDForTest returns the worker's ephemeral identity.  This is a
+// test-only accessor; production code should not depend on it.
+func (w *Worker) WorkerIDForTest() string {
+	return w.workerID
 }
 
 // Run is the main event loop. It blocks until ctx is cancelled. On each
 // iteration it acquires a slot, claims a job from the queue (BRPOP), and
-// handles the job in a goroutine that releases the slot on termination.
+// handles the job in a goroutine. The slot is released inside the single
+// sync.Once teardown in runJobFromSpec on every terminal path.
 func (w *Worker) Run(ctx context.Context) {
+	// Start heartbeat goroutine only when we have a real store to write to.
+	if w.store != nil {
+		w.startHeartbeat(ctx)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -155,10 +192,10 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 
-		// Handle the job in a goroutine. The goroutine releases the slot when done.
+		// Handle the job in a goroutine. The slot is released inside teardown
+		// (or on early-return paths) inside runJobFromSpec — NOT here.
 		go func(id string) {
-			defer w.releaseSlot()
-			w.runJob(ctx, id)
+			w.runJob(ctx, id, w.releaseSlot)
 		}(jobID)
 	}
 }
@@ -166,23 +203,30 @@ func (w *Worker) Run(ctx context.Context) {
 // HandleJobForTest is a test-only entry point that runs a job from a fully
 // resolved spec without going through the claim loop. It is called by
 // worker_test.go to drive individual job scenarios without Redis.
+// No slot is acquired, so a no-op release function is passed.
 func (w *Worker) HandleJobForTest(ctx context.Context, spec wire.JobSpec) {
-	w.runJobFromSpec(ctx, spec)
+	w.runJobFromSpec(ctx, spec, func() {}) // no-op slot release — no slot was acquired
 }
 
 // runJob reads the spec from Redis and delegates to runJobFromSpec.
-func (w *Worker) runJob(ctx context.Context, jobID string) {
+// releaseSlot is called exactly once inside runJobFromSpec on every terminal path.
+func (w *Worker) runJob(ctx context.Context, jobID string, releaseSlot func()) {
 	spec, err := w.store.ReadSpec(ctx, jobID)
 	if err != nil {
 		slog.Error("worker: ReadSpec failed", "jobID", jobID, "err", err)
+		releaseSlot() // release immediately — we never entered runJobFromSpec
 		return
 	}
-	w.runJobFromSpec(ctx, spec)
+	w.runJobFromSpec(ctx, spec, releaseSlot)
 }
 
 // runJobFromSpec is the per-job handler. It subscribes to stdin/ctrl, creates
 // the sandbox, parks at the start-handshake gate, then runs the session.
-func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec) {
+//
+// releaseSlot is called exactly once on every terminal path — either in the
+// single sync.Once teardown (after Create succeeds) or on early-return paths
+// before teardown is defined (Subscribe/SubscribeControl/Create failure).
+func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseSlot func()) {
 	jobID := spec.JobId
 	log := slog.With("jobID", jobID)
 
@@ -208,6 +252,7 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec) {
 	})
 	if err != nil {
 		log.Error("worker: Subscribe stdin failed", "err", err)
+		releaseSlot() // early return — slot was acquired but we can't proceed
 		return
 	}
 
@@ -221,6 +266,7 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec) {
 	if err != nil {
 		log.Error("worker: SubscribeControl failed", "err", err)
 		stdinSub.Close() //nolint:errcheck
+		releaseSlot() // early return — slot was acquired but we can't proceed
 		return
 	}
 
@@ -252,16 +298,36 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec) {
 		stdinSub.Close() //nolint:errcheck
 		ctrlSub.Close()  //nolint:errcheck
 		w.publishError(ctx, jobID, spec)
+		releaseSlot() // early return — sandbox never occupied a slot
 		return
 	}
 
-	// Single sync.Once teardown — called on every terminal path.
+	// Record ownership of this job in Redis (best-effort — log on error).
+	if w.store != nil {
+		if err := w.store.AddOwnedJob(ctx, w.workerID, jobID); err != nil {
+			log.Warn("worker: AddOwnedJob failed", "err", err)
+		}
+	}
+
+	// Single sync.Once teardown — called on every terminal path after Create.
+	// It releases the slot, removes the job from the owned-jobs set, cleans up
+	// the sandbox, publishes the result event, and writes the terminal status.
 	var teardownOnce sync.Once
 	teardown := func(result runner.Result, state wire.JobState) {
 		teardownOnce.Do(func() {
 			// Close subscriptions first to stop delivery goroutines.
 			stdinSub.Close() //nolint:errcheck
 			ctrlSub.Close()  //nolint:errcheck
+
+			// Remove from owned-jobs set (best-effort — log on error).
+			if w.store != nil {
+				if rmErr := w.store.RemoveOwnedJob(ctx, w.workerID, jobID); rmErr != nil {
+					log.Warn("worker: RemoveOwnedJob failed", "err", rmErr)
+				}
+			}
+
+			// Release the capacity slot — exactly once on every terminal path.
+			releaseSlot()
 
 			// Publish result event.
 			ev := toResultEvent(result)
@@ -420,7 +486,7 @@ parkLoop:
 		state = wire.JobStateError
 	}
 
-	// 10. Single teardown: publish result, write status, cleanup sandbox.
+	// 10. Single teardown: publish result, write status, cleanup sandbox, release slot.
 	teardown(result, state)
 }
 
