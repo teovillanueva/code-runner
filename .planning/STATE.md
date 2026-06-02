@@ -4,15 +4,15 @@
 
 See: .planning/PROJECT.md (updated 2026-06-02)
 
-**Core value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot.
-**Current focus:** Phase 1 — Foundation & Manifest Schema
+**Core value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible.
+**Current focus:** Phase 1 — Foundation & Wire Contract
 
 ## Current Position
 
-Phase: 1 of 7 (Foundation & Manifest Schema)
+Phase: 1 of 7 (Foundation & Wire Contract)
 Plan: 0 of TBD in current phase
 Status: Ready to plan
-Last activity: 2026-06-02 — Roadmap created (7 phases, all v1 requirements mapped)
+Last activity: 2026-06-02 — Roadmap revised for the polyglot monorepo / Hono API / shared-contract / OSS spec (7 phases, 83 requirements mapped)
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -42,21 +42,24 @@ Progress: [░░░░░░░░░░] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Roadmap]: Build bottom-up — prove interactive Python E2E (stdin + three clocks) before language fan-out
-- [Roadmap]: Lock load-bearing interfaces (Runner/Sandbox, Queue, StdinTransport) in Phase 1 so Docker→gVisor and pub/sub→Streams are later swaps, never core rewrites
-- [Roadmap]: Lifecycle/cleanup hardening (Phase 4) precedes scale work (Phase 5) — leaks compound under concurrency
-- [Roadmap]: DEV-01/02/03 (compose + TS stub + E2E script) land in Phase 3 where the first end-to-end run happens
+- [Phase 1]: Shared wire contract via JSON Schema codegen (TS types + zod validators + Go structs) with a CI drift check — one source of truth for the fragile polyglot seam.
+- [Phase 1]: Phase 1 ends at a human approval gate — propose the monorepo layout + wire contract + manifest schema and wait for explicit OK before any implementation.
+- [Phase 1/5]: Prod worker Redis must speak native pub/sub + blocking ops; Upstash is API-only (no TCP blocking SUBSCRIBE/BLPOP/XREAD BLOCK). Recommend a single native managed Redis/Valkey shared by API + worker.
+- [Phase 3]: Hono on Node (`@hono/node-server`), `ioredis` (TS) + `go-redis` (Go); constant-time bearer auth.
+- [Phase 4]: Abuse suite is built early (right after Python E2E) and gates the language fan-out; must run on Linux CI for real cgroup OOM/CPU behavior.
 
 ### Pending Todos
+
+[From .planning/todos/pending/ — ideas captured during sessions]
 
 None yet.
 
 ### Blockers/Concerns
 
-- Phase 2 needs deeper research during planning: seccomp allowlist per language, moby v28 HostConfig field names, cgroup v1/v2 detection
-- Phase 3 needs empirical validation: per-language output buffering under non-TTY pipes
-- Phase 5 needs a decision: LMOVE reliable-list vs Stream consumer group; heartbeat TTL sizing
-- Abuse suite must run on Linux CI, not only macOS dev (cgroup v2-in-VM hides v1 prod behavior)
+[Issues that affect future work]
+
+- Phase 1 cannot proceed to implementation until the human approves the layout + contract + manifest schema (explicit gate).
+- FlyMachinesRunner interactive-streaming fit + per-execution latency/cost is unvalidated (v2; benchmark before relying on it).
 
 ## Deferred Items
 
@@ -64,10 +67,13 @@ Items acknowledged and carried forward from previous milestone close:
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| *(none)* | | | |
+| Runtime | gVisorRunner / FlyMachinesRunner behind the Runner interface | v2 | 2026-06-02 |
+| Transport | Redis Streams + `XREAD BLOCK` guaranteed stdin delivery | v2 | 2026-06-02 |
+| Packages | Offline crate/CRAN vendoring for Rust/R third-party libs | v2 | 2026-06-02 |
+| Scale | `fly-autoscaler` queue-depth scaling + scale-to-zero impl | v2 | 2026-06-02 |
 
 ## Session Continuity
 
 Last session: 2026-06-02
-Stopped at: ROADMAP.md and STATE.md created; REQUIREMENTS.md traceability updated
+Stopped at: Revised ROADMAP.md + STATE.md and rewrote REQUIREMENTS.md traceability for the new 7-phase structure (83/83 requirements mapped).
 Resume file: None

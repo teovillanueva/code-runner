@@ -170,17 +170,108 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Populated during roadmap creation — each v1 requirement maps to exactly one phase.
+Each v1 requirement maps to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (all v1 REQ-IDs) | TBD | Pending |
+| API-01 | Phase 3 | Pending |
+| API-02 | Phase 3 | Pending |
+| API-03 | Phase 3 | Pending |
+| API-04 | Phase 3 | Pending |
+| API-05 | Phase 3 | Pending |
+| API-06 | Phase 3 | Pending |
+| API-07 | Phase 3 | Pending |
+| API-08 | Phase 3 | Pending |
+| API-09 | Phase 3 | Pending |
+| API-10 | Phase 3 | Pending |
+| API-11 | Phase 3 | Pending |
+| CONT-01 | Phase 1 | Pending |
+| CONT-02 | Phase 1 | Pending |
+| CONT-03 | Phase 1 | Pending |
+| CONT-04 | Phase 1 | Pending |
+| CONT-05 | Phase 1 | Pending |
+| CONT-06 | Phase 1 | Pending |
+| RUN-01 | Phase 1 | Pending |
+| RUN-02 | Phase 2 | Pending |
+| RUN-03 | Phase 2 | Pending |
+| RUN-04 | Phase 2 | Pending |
+| WRK-01 | Phase 3 | Pending |
+| WRK-02 | Phase 3 | Pending |
+| WRK-03 | Phase 3 | Pending |
+| WRK-04 | Phase 3 | Pending |
+| SESS-01 | Phase 3 | Pending |
+| SESS-02 | Phase 3 | Pending |
+| SESS-03 | Phase 3 | Pending |
+| STDIN-01 | Phase 3 | Pending |
+| STDIN-02 | Phase 3 | Pending |
+| STDIN-03 | Phase 3 | Pending |
+| STDIN-04 | Phase 1 | Pending |
+| HARD-01 | Phase 2 | Pending |
+| HARD-02 | Phase 2 | Pending |
+| HARD-03 | Phase 2 | Pending |
+| HARD-04 | Phase 2 | Pending |
+| HARD-05 | Phase 2 | Pending |
+| LIM-01 | Phase 2 | Pending |
+| LIM-02 | Phase 2 | Pending |
+| LIM-03 | Phase 2 | Pending |
+| LIM-04 | Phase 2 | Pending |
+| OUT-01 | Phase 3 | Pending |
+| OUT-02 | Phase 3 | Pending |
+| OUT-03 | Phase 3 | Pending |
+| OUT-04 | Phase 2 | Pending |
+| LIFE-01 | Phase 2 | Pending |
+| LIFE-02 | Phase 2 | Pending |
+| LANG-01 | Phase 1 | Pending |
+| LANG-02 | Phase 1 | Pending |
+| LANG-03 | Phase 1 | Pending |
+| LANG-04 | Phase 3 | Pending |
+| LANG-05 | Phase 3 | Pending |
+| LANG-06 | Phase 6 | Pending |
+| LANG-07 | Phase 6 | Pending |
+| LANG-08 | Phase 6 | Pending |
+| SCALE-01 | Phase 5 | Pending |
+| SCALE-02 | Phase 5 | Pending |
+| SCALE-03 | Phase 5 | Pending |
+| SCALE-04 | Phase 5 | Pending |
+| SCALE-05 | Phase 5 | Pending |
+| CFG-01 | Phase 3 | Pending |
+| CFG-02 | Phase 3 | Pending |
+| CFG-03 | Phase 3 | Pending |
+| CFG-04 | Phase 1 | Pending |
+| CHAN-01 | Phase 7 | Pending |
+| CHAN-02 | Phase 3 | Pending |
+| DEV-01 | Phase 3 | Pending |
+| DEV-02 | Phase 3 | Pending |
+| DEV-03 | Phase 3 | Pending |
+| TEST-01 | Phase 4 | Pending |
+| TEST-02 | Phase 4 | Pending |
+| TEST-03 | Phase 4 | Pending |
+| TEST-04 | Phase 4 | Pending |
+| TEST-05 | Phase 4 | Pending |
+| TEST-06 | Phase 4 | Pending |
+| TEST-07 | Phase 4 | Pending |
+| TEST-08 | Phase 4 | Pending |
+| OSS-01 | Phase 1 | Pending |
+| OSS-02 | Phase 1 | Pending |
+| DOCS-01 | Phase 7 | Pending |
+| DOCS-02 | Phase 7 | Pending |
+| DOCS-03 | Phase 7 | Pending |
+| DOCS-04 | Phase 7 | Pending |
 
 **Coverage:**
-- v1 requirements: 68 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 68 ⚠️ (resolved by roadmapper)
+- v1 requirements: 83 total (the prior "68" header figure was stale from the pre-revision spec; the revised set has 83 REQ-IDs)
+- Mapped to phases: 83 ✓
+- Unmapped: 0
+
+**Per-phase counts:**
+- Phase 1 (Foundation & Wire Contract): 14 — CONT-01..06, LANG-01, LANG-02, LANG-03, RUN-01, STDIN-04, CFG-04, OSS-01, OSS-02
+- Phase 2 (Sandbox Hardening & Runner): 15 — RUN-02, RUN-03, RUN-04, HARD-01..05, LIM-01..04, OUT-04, LIFE-01, LIFE-02
+- Phase 3 (Interactive Python End-to-End): 33 — API-01..11, WRK-01..04, SESS-01..03, STDIN-01..03, OUT-01..03, LANG-04, LANG-05, CFG-01..03, CHAN-02, DEV-01..03
+- Phase 4 (Abuse Suite & Safety Validation): 8 — TEST-01..08
+- Phase 5 (Statelessness & Scale): 5 — SCALE-01..05
+- Phase 6 (Language Fan-out): 3 — LANG-06, LANG-07, LANG-08
+- Phase 7 (OSS Release & Deployment): 5 — DOCS-01..04, CHAN-01
 
 ---
 *Requirements defined: 2026-06-02*
-*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets)*
+*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets) — traceability rewritten for the 7-phase revised roadmap*

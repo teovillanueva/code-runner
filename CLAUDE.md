@@ -3,23 +3,24 @@
 
 **code-runner**
 
-An internal, horizontally-scalable remote code execution service (Piston-style) written in Go. It accepts code + interactive stdin from an existing public TypeScript API (over a private network), runs the code inside ephemeral hardened sandboxes, and streams stdout/stderr/results in real time to clients via soketi (a Pusher-compatible server). It is **never exposed to the internet directly** — all trusted input arrives through the TS API; soketi is output-only toward the client.
+An **open-source (MIT), self-hostable** remote code execution service (Piston-style): it receives code, runs it in an isolated hardened sandbox with **live interactive stdin**, and streams output in real time. It is dockerized and horizontally scalable.
 
-It exists to safely run untrusted user code in multiple languages (Python, Rust, R, SQLite to start) with **live interactive sessions** (stdin kept open), strict resource limits, and an extensibility model where adding a language is "drop a folder + an image" with no core changes.
+It is an **internal service** — never exposed to the internet directly. In front of it sits the user's own backend (any stack) that consumes it by authenticating with a bearer token. Real-time output reaches the browser via **soketi** (Pusher-compatible): the worker publishes output events; soketi is **output-only** toward the client. All trusted input (code, stdin, control) enters through our API; nothing trusted enters via soketi.
 
-**Core Value:** Run untrusted code in a hardened, resource-bounded sandbox with a **live interactive stdin session** and reliable real-time output — without ever leaking a container, a subscription, or a session slot.
+It is a **polyglot monorepo by design** — each component uses the right tool: a thin Hono/TypeScript HTTP gateway, a Go worker that orchestrates sandboxes and keeps sessions alive, manifest-driven language packages, and a shared wire contract.
+
+**Core Value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible (add a language = add a folder + an image).
 
 ### Constraints
 
-- **Tech stack**: Executor API + workers in **Go** — non-negotiable.
-- **Tech stack**: **Redis** for both the job queue and the per-job interactive stdin channel.
-- **Tech stack**: **soketi** (Pusher-compatible) for real-time output; publish via the Pusher HTTP API.
-- **Architecture**: Executor API and workers must be **stateless** → scalable to N replicas. Capacity counted in concurrent live sandboxes (an interactive session holds a slot until it expires), not in request bursts.
-- **Security**: Internal-only; never internet-facing. Full sandbox hardening applied to every execution. Restrictive seccomp profile.
-- **Architecture**: **No Docker-in-Docker.** Worker talks to the host container runtime via mounted socket (dev). Runner behind an interface for future gVisor swap.
-- **Extensibility**: Adding a language = add folder + pre-built image, zero core changes. No languages hardcoded in Go.
-- **Dev**: Whole system runs with `docker compose up`, including a TS API stub.
-- **Reliability**: stdin delivery via Redis pub/sub for MVP; Redis Streams + `XREAD BLOCK` left as an upgrade option for guaranteed delivery.
+- **Stack (definitive)**: `apps/api` = **Hono (TypeScript)** thin gateway; `apps/worker` = **Go** (native container/process ecosystem); `packages/contract` = shared wire contract; `languages/` = language packages.
+- **Redis** for the job queue + stdin pub/sub channel. **soketi** for real-time output (worker triggers directly via the Pusher protocol).
+- **Auth/config by env vars, not endpoints**: `EXECUTOR_API_TOKEN` (constant-time bearer in Hono middleware), `REDIS_URL`, `SOKETI_HOST/PORT/USE_TLS/APP_ID/APP_KEY/APP_SECRET`. soketi creds read by the worker (to trigger) and the API (if it signs channel auth).
+- **Stateless** API + workers → N replicas. Capacity counted in concurrent live sandboxes (a session holds a slot until it expires). Design for autoscaling by queue depth + scale-to-zero.
+- **No Docker-in-Docker.** Worker → host runtime via mounted socket (dev). **Runner behind an interface** so the sandbox backend can swap: `DockerSocketRunner` (dev) → `gVisorRunner` (k8s `RuntimeClass=gvisor`) → `FlyMachinesRunner` (Firecracker) without touching logic.
+- **Extensibility**: add a language = folder + pre-built image, zero core changes; no languages hardcoded.
+- **Open source**: MIT, self-hostable, `.env.example`, README quickstart + add-a-language guide.
+- **Reliability**: stdin via Redis pub/sub for MVP; Redis Streams + `XREAD BLOCK` documented as the guaranteed-delivery upgrade.
 <!-- GSD:project-end -->
 
 <!-- GSD:stack-start source:research/STACK.md -->
