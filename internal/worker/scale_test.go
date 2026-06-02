@@ -118,6 +118,13 @@ func (cs *countingSandbox) Limits() wire.Limits {
 	return wire.Limits{}
 }
 
+// Compile satisfies the updated runner.Sandbox interface by delegating to the
+// inner sandbox. countingSandbox is used only for scale/concurrency tests that
+// do not exercise the compile path — the inner stub always returns exit 0.
+func (cs *countingSandbox) Compile(ctx context.Context, argv []string, stderrFn func([]byte)) (runnerPkg.CompileResult, error) {
+	return cs.inner.Compile(ctx, argv, stderrFn)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Infrastructure helpers (scale-test-specific)
 // ─────────────────────────────────────────────────────────────────────────────
