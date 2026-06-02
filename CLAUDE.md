@@ -187,3 +187,23 @@ Do not make direct repo edits outside a GSD workflow unless the user explicitly 
 > Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
 > This section is managed by `generate-claude-profile` -- do not edit manually.
 <!-- GSD:profile-end -->
+
+## Environment & Build Notes (autonomous run)
+
+This is a **polyglot monorepo**: `apps/api` (Hono/TS), `apps/worker` (Go), `packages/contract` (JSON Schema → generated TS+zod+Go), `languages/` (manifest+Dockerfile per language).
+
+**Toolchain on this machine (macOS arm64):**
+- `go` (1.26.x) is on PATH at `/opt/homebrew/bin/go`. Single root module: `github.com/teovillanueva/code-runner`.
+- `node` (22/24), `pnpm` (10.x) on PATH. JS deps already installed (`pnpm install`).
+- `docker` (Docker Desktop, **cgroup v2**, runc) daemon is reachable — sandboxes, integration and abuse tests can run locally. The abuse suite is also wired to Linux CI.
+- `go-jsonschema` (atombender) is installed at `$(go env GOPATH)/bin` (NOT on default PATH); the contract codegen script finds it via that fallback.
+
+**Contract is the fragile seam — never hand-edit `packages/contract/gen/**`.**
+- Regenerate: `pnpm contract` (TS types, zod validators, Go structs). Drift gate: `make contract-check` (regenerates + `git diff --exit-code`).
+- The single source of truth is `packages/contract/schema/wire.schema.json`. To change the wire format, edit the schema and regenerate.
+- TS consumers import from `@code-runner/contract`; the Go worker imports `github.com/teovillanueva/code-runner/packages/contract/gen/go/wire`.
+- Shared Redis keys / channels / soketi event names are exported from `@code-runner/contract` (`keys`, `channelForJob`, `stdinChannel`, `controlChannel`, `events`) — the Go worker must mirror these in `internal/keys`.
+
+**Phase 1 foundation is already committed** (scaffold + contract codegen + Makefile + LICENSE + .env.example). Remaining Phase 1 work: manifest loader (Go + TS, reads `languages/*/manifest.json` at boot), `Runner`/`Sandbox` + `StdinTransport` interface skeletons, manifest validation, unit tests. Build on the existing files; do not recreate them.
+
+**Conventions:** atomic commits per milestone; end commit messages with the Co-Authored-By trailer; push to `origin` (`git@github.com:teovillanueva/code-runner.git`). Run builds/tests after each phase (`go build ./...`, `go test ./...`, `pnpm -r test`). Prefer std `net/http`+chi, `go-redis/v9`, moby Docker SDK v28, `pusher-http-go/v5` per `.planning/research/`.
