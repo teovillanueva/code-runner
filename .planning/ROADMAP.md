@@ -91,7 +91,10 @@ Plans:
   3. A program blocked on stdin is killed by the idle timeout, and a program reading to EOF terminates correctly after `/stdin/close`.
   4. A giant-output program is truncated with `truncated=true` and does not exhaust memory (the worker keeps draining).
   5. The entire abuse suite runs on Linux CI (not just macOS dev) and is wired as the gate that must pass before any new language is added.
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 04-01-PLAN.md — Adversarial abuse suite (fork bomb, OOM, infinite loop, idle, EOF, giant output + CPU-evasion) through the full worker path, build-tagged + `make abuse`, run green on cgroup v2
+- [ ] 04-02-PLAN.md — Linux CI workflow (.github/workflows/abuse.yml) running `make abuse` on ubuntu-latest + README gate note tying the language fan-out to a green abuse run
 
 ### Phase 5: Statelessness & Scale
 **Goal**: Make the API and workers safely horizontally scalable — slot-bounded capacity, backpressure instead of dropped work, reliable claim, a reaper that prevents container/slot leaks on worker death, and a documented autoscaling/scale-to-zero design under the native-Redis-for-worker constraint.
@@ -141,7 +144,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
-| 4. Abuse Suite & Safety Validation | 0/TBD | Not started | - |
+| 4. Abuse Suite & Safety Validation | 0/2 | Not started | - |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
 | 6. Language Fan-out | 0/TBD | Not started | - |
 | 7. OSS Release & Deployment | 0/TBD | Not started | - |
