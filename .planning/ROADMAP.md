@@ -52,7 +52,12 @@ Plans:
   4. `kill` destroys the whole container (process tree), never a single PID, and the worker keeps draining stdout/stderr while truncating at the byte cap so the process never blocks (`truncated=true` reported).
   5. The worker triggers soketi directly via the Pusher protocol using env credentials, batched/chunked under soketi's event-size limit.
   6. A single idempotent `sync.Once` teardown runs exactly once across every terminal path (wall/idle/CPU/kill/exit/output-cap), unsubscribing, closing pipes, removing the container, and freeing the slot — no leaked containers, subscriptions, or slots.
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+- [ ] 02-01-PLAN.md — Phase 2 deps + restrictive seccomp profile + testable safety logic (three clocks, output pump, sync.Once teardown) in internal/session
+- [ ] 02-02-PLAN.md — soketi/Pusher publisher (stage/stdout/stderr/result, env creds, <10KB chunking, monotonic seq) in internal/publisher
+- [ ] 02-03-PLAN.md — DockerSocketRunner over the moby SDK: full hardening + attach/demux + tree-kill + idempotent cleanup + cgroup-v2 CPU reader
+- [ ] 02-04-PLAN.md — Guarded Docker integration tests: hardening inspect, three clocks, truncation, stdin round-trip, no-leak label check + make target
 
 ### Phase 3: Interactive Python End-to-End
 **Goal**: Drive one language (Python 3.12) through the entire interactive path — Hono API, Redis routing, worker session with start-handshake, soketi output — so `/execute → subscribe → /start → stdin → result` works end-to-end against the local stack.
@@ -128,7 +133,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
-| 2. Sandbox Hardening & Runner | 0/TBD | Not started | - |
+| 2. Sandbox Hardening & Runner | 0/4 | Not started | - |
 | 3. Interactive Python End-to-End | 0/TBD | Not started | - |
 | 4. Abuse Suite & Safety Validation | 0/TBD | Not started | - |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
