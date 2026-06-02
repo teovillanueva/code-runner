@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: "Completed 01-03-PLAN.md — worker boot + TS manifest loader. Phase 1 complete. Commits: 8789d4c, cb5e93b."
-last_updated: "2026-06-02T23:03:11.039Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-06-02T23:20:19.751Z"
 last_activity: 2026-06-02
 progress:
   total_phases: 7
   completed_phases: 4
-  total_plans: 14
-  completed_plans: 14
+  total_plans: 17
+  completed_plans: 15
   percent: 57
 ---
 
@@ -30,7 +30,7 @@ Plan: 03 of 03 in current phase (Phase 1) — COMPLETE
 Status: Phase complete — ready for verification
 Last activity: 2026-06-02
 
-Progress: [██████████] 100%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [██████████] 100%
 | Phase 02-sandbox-hardening-runner P03 | 8 | 3 tasks | 4 files |
 | Phase 03-interactive-python-e2e P03 | 12 | 2 tasks | 2 files |
 | Phase 03-interactive-python-e2e P02 | 21 | 3 tasks | 9 files |
+| Phase 05-statelessness-scale P03 | 20m | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Stdout+Stderr share per-job seq (one ordered stream)
 - [Phase ?]: DockerSocketRunner import cycle resolution
 - [Phase ?]: Subscribe stdin/ctrl BEFORE publishing queued stage to eliminate start-handshake race window
+- [Phase ?]: Admission gate placed after manifest resolution: invalid requests get 400 not 429; LLEN-based queue depth is the authoritative MVP gate for 429
 
 ### Pending Todos
 
@@ -109,6 +111,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-02T23:03:11.030Z
-Stopped at: Completed 01-03-PLAN.md — worker boot + TS manifest loader. Phase 1 complete. Commits: 8789d4c, cb5e93b.
+Last session: 2026-06-02T23:20:19.742Z
+Stopped at: Completed 05-03-PLAN.md
 Resume file: None
