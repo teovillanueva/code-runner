@@ -88,7 +88,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A worker claims a job only when it has a free sandbox slot; capacity is counted in concurrent live sandboxes (derived from CPU/RAM), not request bursts, using a reliable claim mechanism.
   3. Queue depth and full-capacity conditions surface as backpressure (`429`) rather than silently dropping work.
   4. Worker death mid-session leaves no orphaned host containers: a label-based reaper removes them and reclaims their slots.
-  5. The repo documents the autoscaling-by-queue-depth and scale-to-zero mechanism per deploy target, including the requirement that the worker's Redis speak native pub/sub + blocking ops (Upstash is API-only, not worker-viable).
+  5. The repo documents the autoscaling-by-queue-depth and scale-to-zero mechanism per deploy target — where the scaling unit is the **worker node** (which launches its sandboxes internally and hosts N concurrent ones), not a microVM per execution — including the requirement that the worker's Redis speak native pub/sub + blocking ops (Upstash is API-only, not worker-viable); the `FlyMachinesRunner` microVM-per-execution model is noted as a v2 option.
 **Plans**: TBD
 
 ### Phase 6: Language Fan-out

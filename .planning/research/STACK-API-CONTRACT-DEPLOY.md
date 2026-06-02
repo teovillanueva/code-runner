@@ -6,6 +6,8 @@
 **Versions verified against:** npm registry, Go module proxy (`proxy.golang.org`), and official docs on the research date — not training data.
 **Overall confidence:** HIGH on versions and the two flagged risk verdicts (Upstash pub/sub, Fly runner model); MEDIUM where empirical validation is still required (noted inline).
 
+> **Decision note (post-research):** Where this file presents `FlyMachinesRunner` (microVM-per-execution via the Fly Machines API) as the Fly mapping, the **adopted decision** (see `PROJECT.md` › Key Decisions) is to keep the core model as "the worker launches the sandbox **internally** via the `Runner`," deploy prod as **long-lived worker nodes** scaled to/from zero by queue depth (scaling unit = the node, which hosts N sandboxes), and use **gVisor (`--runtime=runsc`)** as the primary hardening upgrade. `FlyMachinesRunner` is deferred to **v2** because per-execution Machine creation adds seconds of latency and its interactive-stdin streaming is unproven. The Upstash-pub/sub verdict below stands unchanged.
+
 ---
 
 ## 0. Headline verdicts (read these first)

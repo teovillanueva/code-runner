@@ -98,7 +98,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [ ] **SCALE-02**: A worker only claims a job when it has a free sandbox slot; each worker enforces a max concurrent-live-sandbox count derived from CPU/RAM; capacity is counted in live sandboxes, not request bursts
 - [ ] **SCALE-03**: Queue depth and full-capacity conditions propagate back as backpressure (`429`) rather than silently dropping work
 - [ ] **SCALE-04**: Worker death mid-session does not leak host containers — a label-based reaper removes orphaned sandboxes and reclaims their slots
-- [ ] **SCALE-05**: The system is designed for autoscaling by queue depth and scale-to-zero (documented mechanism per deploy target)
+- [ ] **SCALE-05**: The system is designed for autoscaling by queue depth where the **scaling unit is the worker node** (each launches its sandboxes internally and hosts N concurrent ones), and the worker fleet can scale to zero on an empty queue — not a microVM per execution. The mechanism is documented per deploy target.
 
 ### Configuration & Secrets (env-only)
 
@@ -135,7 +135,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [ ] **OSS-02**: A `.env.example` documents every env var
 - [ ] **DOCS-01**: The README has a quickstart: how to run the stack locally
 - [ ] **DOCS-02**: The README documents the API contract (`/v1/*` endpoints + wire events)
-- [ ] **DOCS-03**: The README documents deployment per target: dev (docker compose), prod (Fly Machines/Firecracker workers + native Redis + soketi; API anywhere), and future k8s `RuntimeClass=gvisor`
+- [ ] **DOCS-03**: The README documents deployment per target: dev (docker compose); prod (long-lived **worker nodes** on Fly or any Linux host that launch sandboxes internally, scaled to/from zero by queue depth, with **gVisor** `--runtime=runsc` for extra isolation; native-protocol Redis + soketi; API anywhere); and the **v2** `FlyMachinesRunner` microVM-per-execution option with its latency/streaming trade-offs noted
 - [ ] **DOCS-04**: The README documents how to add a new language (the package model guide)
 
 ## v2 Requirements
@@ -144,7 +144,7 @@ Deferred to a future release. Tracked but not in the current roadmap.
 
 ### Runtime & Delivery
 
-- **V2-01**: `gVisorRunner` (k8s `RuntimeClass=gvisor`) behind the `Runner` interface
+- **V2-01**: gVisor isolation as the primary hardening upgrade — the same internal runner with `--runtime=runsc` (Docker) or k8s `RuntimeClass=gvisor`; no change to the "worker launches the sandbox internally" model
 - **V2-02**: `FlyMachinesRunner` (Firecracker microVM per execution via the Fly Machines API) behind the `Runner` interface, with an interactive-streaming + latency/cost benchmark spike
 - **V2-03**: Redis Streams + `XREAD BLOCK` for guaranteed stdin delivery (replacing pub/sub) — also the path if a serverless Redis without TCP pub/sub must be supported
 - **V2-04**: Offline crate/CRAN vendoring so Rust/R can use third-party packages without violating `--network=none`
@@ -274,4 +274,4 @@ Each v1 requirement maps to exactly one phase.
 
 ---
 *Requirements defined: 2026-06-02*
-*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets) — traceability rewritten for the 7-phase revised roadmap*
+*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets) — traceability rewritten for the 7-phase revised roadmap; deployment-model refinement (internal-launch worker nodes, scaling unit = node, FlyMachinesRunner → v2)*

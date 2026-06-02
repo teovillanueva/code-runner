@@ -60,8 +60,8 @@ Run untrusted code in a hardened, resource-bounded sandbox with a live interacti
 - **Stack (definitive)**: `apps/api` = **Hono (TypeScript)** thin gateway; `apps/worker` = **Go** (native container/process ecosystem); `packages/contract` = shared wire contract; `languages/` = language packages.
 - **Redis** for the job queue + stdin pub/sub channel. **soketi** for real-time output (worker triggers directly via the Pusher protocol).
 - **Auth/config by env vars, not endpoints**: `EXECUTOR_API_TOKEN` (constant-time bearer in Hono middleware), `REDIS_URL`, `SOKETI_HOST/PORT/USE_TLS/APP_ID/APP_KEY/APP_SECRET`. soketi creds read by the worker (to trigger) and the API (if it signs channel auth).
-- **Stateless** API + workers → N replicas. Capacity counted in concurrent live sandboxes (a session holds a slot until it expires). Design for autoscaling by queue depth + scale-to-zero.
-- **No Docker-in-Docker.** Worker → host runtime via mounted socket (dev). **Runner behind an interface** so the sandbox backend can swap: `DockerSocketRunner` (dev) → `gVisorRunner` (k8s `RuntimeClass=gvisor`) → `FlyMachinesRunner` (Firecracker) without touching logic.
+- **Stateless** API + workers → N replicas. Capacity counted in concurrent live sandboxes (a session holds a slot until it expires). Autoscaling is by **queue depth**, where the **scaling unit is the worker node** (each hosts N concurrent sandboxes) and the worker fleet can scale to zero on an empty queue — not a microVM per execution.
+- **No Docker-in-Docker.** The worker **always launches the sandbox internally** via the local container runtime (mounted socket) — that model never changes. **Runner behind an interface** so only the backend swaps: `DockerSocketRunner` (dev + prod default) → the same runner with `--runtime=runsc` (**gVisor**, the primary hardening upgrade, still internal) → `FlyMachinesRunner` (microVM-per-execution via the Fly API) as a **v2** option with seconds-of-latency + unproven interactive-streaming trade-offs.
 - **Extensibility**: add a language = folder + pre-built image, zero core changes; no languages hardcoded.
 - **Open source**: MIT, self-hostable, `.env.example`, README quickstart + add-a-language guide.
 - **Reliability**: stdin via Redis pub/sub for MVP; Redis Streams + `XREAD BLOCK` documented as the guaranteed-delivery upgrade.
@@ -74,8 +74,9 @@ Run untrusted code in a hardened, resource-bounded sandbox with a live interacti
 | Shared wire contract via **JSON Schema codegen** (TS types + Go structs) | The poliglota seam is the fragile point; one source of truth + CI drift check beats a prose "canonical doc" | — Pending |
 | Codegen tools: `json-schema-to-typescript` + `json-schema-to-zod` (validators) + `omissis/go-jsonschema` | Generated validators (not hand-written) keep Hono validation in lockstep with the schema; maintained Go generator | — Pending |
 | **Prod Redis must speak native protocol (pub/sub + blocking ops)** — Upstash is NOT viable for the worker | Research verdict: Upstash has no TCP blocking SUBSCRIBE/BLPOP; the API is Upstash-safe but the worker isn't. Recommend a single native managed Redis/Valkey shared by both. ⚠️ Spec named Upstash — flagged for override | ⚠️ Revisit |
-| Runner behind an interface (`Runner`) | Swap Docker → gVisor → Firecracker without core changes | — Pending |
-| `FlyMachinesRunner` = worker calls Fly Machines API to create one ephemeral Firecracker Machine per execution | Cleanest mapping to the Runner interface; ship Docker runner first, benchmark interactive streaming later | — Pending |
+| Runner behind an interface (`Runner`) | Swap the sandbox backend (Docker socket / gVisor runtime / Fly) without changing the "worker launches it internally" model | — Pending |
+| Core sandbox model = worker launches it **internally** via `Runner`; prod = long-lived **worker nodes** scaled to/from zero by queue depth, with gVisor (`--runtime=runsc`) for extra isolation | Lowest latency and the only proven path for interactive stdin (local pipes); the scaling unit is the worker node (hosts N sandboxes), not the execution — like Piston/Judge0 | — Pending |
+| `FlyMachinesRunner` (microVM-per-execution via the Fly Machines API) deferred to **v2** | Gives per-exec Firecracker isolation but costs seconds of create latency and has unproven interactive streaming; unnecessary when gVisor on a worker node already gives strong isolation | ⚠️ v2 |
 | Channel auth is the upstream app's job (optional non-core helper) | Keeps the core minimal; documented HMAC pattern; helper behind the token is optional | — Pending |
 | Abuse tests built EARLY (after Python E2E, before fan-out) | Per user; safety guarantees are the verification backbone and must gate language additions | — Pending |
 | Hono on Node (`@hono/node-server`), not Bun | Maximizes self-hostability for an OSS project | — Pending |
@@ -99,4 +100,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets)*
+*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets) and deployment-model refinement (internal-launch worker nodes + queue-depth scaling; FlyMachinesRunner → v2)*
