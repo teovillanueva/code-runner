@@ -1,0 +1,19 @@
+{
+  "name": "@code-runner/stub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Interactive E2E driver — plays the role of the upstream app for local demos.",
+  "scripts": {
+    "start": "node --experimental-strip-types src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@code-runner/contract": "workspace:*",
+    "pusher-js": "8.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.2"
+  }
+}

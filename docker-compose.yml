@@ -1,0 +1,170 @@
+# code-runner local dev stack
+#
+# Topology:
+#   redis    — job queue + stdin/ctrl pub/sub + job meta
+#   soketi   — Pusher-compatible WebSocket server (output fan-out only)
+#   api      — Hono gateway (validate, enqueue, relay stdin/control)
+#   worker   — Go worker (claim jobs, launch sandboxes, stream output)
+#   stub     — Node/TS interactive E2E driver (run on demand)
+#
+# IMPORTANT: The worker mounts the HOST Docker socket (/var/run/docker.sock)
+# so it can launch sandboxes via the host daemon — NO Docker-in-Docker.
+#
+# IMPORTANT: The Python sandbox image (executor/python:3.12) must be built on
+# the host daemon BEFORE the worker can run Python jobs.
+# Build it with:   make python-image
+# This image is NOT built here because it lives on the host runtime that the
+# worker's mounted socket points at; building it in compose would put it inside
+# the compose network's build context only.
+#
+# The soketi APP_SECRET is read from env and passed to soketi + worker/api
+# directly. It is NEVER written to Redis or returned by any endpoint (CFG-02/03).
+
+services:
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - code-runner
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── soketi ───────────────────────────────────────────────────────────────────
+  # Pusher-compatible WebSocket server. The worker publishes events here via the
+  # Pusher HTTP API (no soketi secret ever touches Redis or client requests).
+  # Channel auth (private-run-<jobId>) is the upstream app's responsibility;
+  # the stub uses the API's optional channel-auth helper (ENABLE_CHANNEL_AUTH=true).
+  soketi:
+    image: quay.io/soketi/soketi:latest-16-alpine
+    restart: unless-stopped
+    environment:
+      SOKETI_DEFAULT_APP_ID: ${SOKETI_APP_ID:-code-runner}
+      SOKETI_DEFAULT_APP_KEY: ${SOKETI_APP_KEY:-code-runner-key}
+      SOKETI_DEFAULT_APP_SECRET: ${SOKETI_APP_SECRET:-code-runner-secret}
+      SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "false"
+      SOKETI_DEBUG: "0"
+    ports:
+      - "${SOKETI_PORT:-6001}:6001"
+    networks:
+      - code-runner
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:6001/', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  # ── API ───────────────────────────────────────────────────────────────────────
+  # Hono gateway. Validates requests, enqueues jobs, relays stdin/control.
+  # Never talks to the worker directly — coupling is Redis-only.
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      EXECUTOR_API_TOKEN: ${EXECUTOR_API_TOKEN:-dev-insecure-token-change-me}
+      REDIS_URL: redis://redis:6379
+      API_PORT: ${API_PORT:-8080}
+      SOKETI_HOST: soketi
+      SOKETI_PORT: 6001
+      SOKETI_USE_TLS: "false"
+      SOKETI_APP_ID: ${SOKETI_APP_ID:-code-runner}
+      SOKETI_APP_KEY: ${SOKETI_APP_KEY:-code-runner-key}
+      SOKETI_APP_SECRET: ${SOKETI_APP_SECRET:-code-runner-secret}
+      ENABLE_CHANNEL_AUTH: "true"
+      # The languages dir inside the container (bound via the build context)
+      LANGUAGES_DIR: /app/languages
+    ports:
+      - "${API_PORT:-8080}:${API_PORT:-8080}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      soketi:
+        condition: service_healthy
+    networks:
+      - code-runner
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:${API_PORT:-8080}/health', (r) => { let d=''; r.on('data', c=>d+=c); r.on('end', ()=>{ try{ const j=JSON.parse(d); process.exit(j.status==='ok'?0:1); }catch(e){ process.exit(1); } }); }).on('error', ()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ── Worker ───────────────────────────────────────────────────────────────────
+  # Go worker. Claims jobs from Redis, launches sandboxes via the HOST Docker
+  # daemon (mounted socket — no DinD), streams output to soketi.
+  #
+  # Socket mount: /var/run/docker.sock:/var/run/docker.sock
+  #   The worker is a CLIENT of the host daemon, not running its own Docker.
+  #   This means executor/python:3.12 must exist on the HOST daemon.
+  #   Run `make python-image` on the host before `make e2e`.
+  #
+  # Languages dir: ./languages is mounted read-only so the worker can load
+  #   manifests (language definitions) from the same source tree.
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      SOKETI_HOST: soketi
+      SOKETI_PORT: 6001
+      SOKETI_USE_TLS: "false"
+      SOKETI_APP_ID: ${SOKETI_APP_ID:-code-runner}
+      SOKETI_APP_KEY: ${SOKETI_APP_KEY:-code-runner-key}
+      SOKETI_APP_SECRET: ${SOKETI_APP_SECRET:-code-runner-secret}
+      WORKER_MAX_SANDBOXES: ${WORKER_MAX_SANDBOXES:-8}
+      DOCKER_HOST: ${DOCKER_HOST:-unix:///var/run/docker.sock}
+      WORKER_WARMUP_MS: ${WORKER_WARMUP_MS:-30000}
+      LANGUAGES_DIR: /app/languages
+      SECCOMP_PROFILE_PATH: /app/profiles/seccomp/runner.json
+    volumes:
+      # Mount the HOST docker socket (no Docker-in-Docker).
+      # The worker is a client of the host container runtime.
+      # executor/python:3.12 MUST be built on the host first (`make python-image`).
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      redis:
+        condition: service_healthy
+      soketi:
+        condition: service_healthy
+    networks:
+      - code-runner
+
+  # ── Stub ─────────────────────────────────────────────────────────────────────
+  # Interactive E2E driver. Plays the role of the upstream app:
+  #   POST /v1/execute → subscribe soketi → POST /start → send stdin → assert result.
+  # Run on demand (not auto-started with the stack):
+  #   docker compose run --rm stub
+  stub:
+    build:
+      context: .
+      dockerfile: apps/stub/Dockerfile
+    environment:
+      EXECUTOR_API_TOKEN: ${EXECUTOR_API_TOKEN:-dev-insecure-token-change-me}
+      API_BASE_URL: http://api:${API_PORT:-8080}
+      SOKETI_APP_KEY: ${SOKETI_APP_KEY:-code-runner-key}
+      SOKETI_APP_SECRET: ${SOKETI_APP_SECRET:-code-runner-secret}
+      SOKETI_HOST: soketi
+      SOKETI_PORT: 6001
+      SOKETI_USE_TLS: "false"
+      # Channel auth endpoint on the API (CHAN-02 helper)
+      CHANNEL_AUTH_URL: http://api:${API_PORT:-8080}/v1/channel-auth
+    depends_on:
+      api:
+        condition: service_healthy
+      soketi:
+        condition: service_healthy
+    networks:
+      - code-runner
+    profiles:
+      - stub
+
+networks:
+  code-runner:
+    driver: bridge

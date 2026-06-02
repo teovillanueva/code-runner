@@ -65,6 +65,14 @@ test-redis: ## Run Redis-dependent integration tests (requires TEST_REDIS_URL or
 test-worker: ## Run guarded worker integration tests (requires Docker + redis:7 on port 6381 + executor/python:3.12)
 	go test -tags=worker_integration -timeout 300s ./internal/worker/... -run Integration -v
 
+.PHONY: python-image
+python-image: ## Build the Python 3.12 sandbox image on the host Docker daemon
+	docker build -t executor/python:3.12 languages/python-3.12
+
+.PHONY: build-images
+build-images: python-image ## Build all language sandbox images on the host daemon
+	@echo "All language images built."
+
 .PHONY: e2e
 e2e: ## Run the end-to-end interactive demo against the local stack
 	./scripts/e2e.sh

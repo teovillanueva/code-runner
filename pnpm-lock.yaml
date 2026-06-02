@@ -45,6 +45,22 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@22.19.19)
 
+  apps/stub:
+    dependencies:
+      '@code-runner/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
+      pusher-js:
+        specifier: 8.4.0
+        version: 8.4.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   packages/contract:
     devDependencies:
       json-schema-to-typescript:
@@ -682,6 +698,9 @@ packages:
     resolution: {integrity: sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw==}
     engines: {node: '>=14'}
     hasBin: true
+
+  pusher-js@8.4.0:
+    resolution: {integrity: sha512-wp3HqIIUc1GRyu1XrP6m2dgyE9MoCsXVsWNlohj0rjSkLf+a0jLvEyVubdg58oMk7bhjBWnFClgp8jfAa6Ak4Q==}
 
   pusher@5.3.3:
     resolution: {integrity: sha512-wxXNGeAPT6vcwCBMGDFfJp6YXtUD0WRurb4fJgU/nbA0rNfcOcSZmba9j4zM8ywmORst1fXpHRUsgB1r/ssTmw==}
@@ -1322,6 +1341,10 @@ snapshots:
       source-map-js: 1.2.1
 
   prettier@3.8.3: {}
+
+  pusher-js@8.4.0:
+    dependencies:
+      tweetnacl: 1.0.3
 
   pusher@5.3.3:
     dependencies:
