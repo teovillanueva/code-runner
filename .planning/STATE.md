@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: verifying
 stopped_at: "Completed 01-03-PLAN.md — worker boot + TS manifest loader. Phase 1 complete. Commits: 8789d4c, cb5e93b."
-last_updated: "2026-06-02T20:07:32.315Z"
+last_updated: "2026-06-02T20:12:50.727Z"
 last_activity: 2026-06-02
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 7
-  completed_plans: 4
+  completed_plans: 5
   percent: 14
 ---
 
@@ -30,7 +30,7 @@ Plan: 03 of 03 in current phase (Phase 1) — COMPLETE
 Status: Phase complete — ready for verification
 Last activity: 2026-06-02
 
-Progress: [██████░░░░] 57%
+Progress: [███████░░░] 71%
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [██████░░░░] 57%
 
 *Updated after each plan completion*
 | Phase 02-sandbox-hardening-runner P01 | 25 | 3 tasks | 9 files |
+| Phase 02-sandbox-hardening-runner P02 | 10m | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,9 @@ Recent decisions affecting current work:
 - [Phase ?]: CPUUsageFunc injection: internal/session has no docker/docker import; plan 02-03 injects the real cgroup reader via func(ctx)(int,error)
 - [Phase ?]: tools/tools.go with //go:build tools pins Phase 2 deps before production code imports them, avoiding go.mod contention across wave-2 plans
 - [Phase ?]: sync.Once + done channel teardown: terminate() writes Result then closes done; clock goroutines select on done to preserve single-receiver invariant
+- [Phase ?]: maxEventBytes = 8 KB for soketi chunking
+- [Phase ?]: triggerer interface enables unit testing without live soketi
+- [Phase ?]: Stdout+Stderr share per-job seq (one ordered stream)
 
 ### Pending Todos
 
@@ -100,6 +104,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-02T20:07:32.306Z
+Last session: 2026-06-02T20:12:50.718Z
 Stopped at: Completed 01-03-PLAN.md — worker boot + TS manifest loader. Phase 1 complete. Commits: 8789d4c, cb5e93b.
 Resume file: None

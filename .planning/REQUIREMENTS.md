@@ -74,7 +74,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [ ] **OUT-01**: The worker publishes `stage {phase: queued|compiling|running}` events on `private-run-<jobId>`
 - [ ] **OUT-02**: The worker streams `stdout {chunk}` and `stderr {chunk}` events
 - [ ] **OUT-03**: The worker publishes a terminal `result {exitCode, signal, timedOut, idleTimedOut, truncated, durationMs}` event
-- [ ] **OUT-04**: The worker triggers soketi **directly** via the Pusher protocol, batched and chunked to stay within soketi's event-size limit, using credentials from env
+- [x] **OUT-04**: The worker triggers soketi **directly** via the Pusher protocol, batched and chunked to stay within soketi's event-size limit, using credentials from env
 
 ### Lifecycle / Cleanup
 
@@ -218,7 +218,7 @@ Each v1 requirement maps to exactly one phase.
 | OUT-01 | Phase 3 | Pending |
 | OUT-02 | Phase 3 | Pending |
 | OUT-03 | Phase 3 | Pending |
-| OUT-04 | Phase 2 | Pending |
+| OUT-04 | Phase 2 | Complete |
 | LIFE-01 | Phase 2 | Complete |
 | LIFE-02 | Phase 2 | Complete |
 | LANG-01 | Phase 1 | Pending |
