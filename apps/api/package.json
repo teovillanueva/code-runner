@@ -1,0 +1,28 @@
+{
+  "name": "@code-runner/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hono API gateway for the code-runner service.",
+  "scripts": {
+    "dev": "node --experimental-strip-types src/server.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@code-runner/contract": "workspace:*",
+    "@hono/node-server": "2.0.4",
+    "@hono/zod-validator": "0.8.0",
+    "hono": "4.12.23",
+    "hono-rate-limiter": "0.5.3",
+    "ioredis": "5.11.0",
+    "pusher": "5.3.3",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.0"
+  }
+}
