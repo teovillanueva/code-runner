@@ -387,7 +387,46 @@ parkLoop:
 		}
 	}
 
-	// 5. On start: publish "running" stage + write running status.
+	// 5a. Generic compile pre-step (manifest-argv-driven, no language branching).
+	//     Runs only when spec.Compile is non-nil. Must execute BEFORE the
+	//     StagePhaseRunning publish so the client sees: compiling → running.
+	//     The compile step runs under the same wall/CPU/idle clocks and tree-kill
+	//     as the run step: we call sb.Compile with the live session context (ctx),
+	//     which is cancelled by Kill/Cleanup on clock expiry — a compile-bomb is
+	//     tree-killed exactly like a run-bomb.
+	if spec.Compile != nil {
+		if err := w.pub.Stage(jobID, wire.StagePhaseCompiling); err != nil {
+			log.Warn("worker: publish compiling stage failed", "err", err)
+		}
+
+		compileResult, compileErr := sb.Compile(ctx, []string(*spec.Compile), func(b []byte) {
+			if pubErr := w.pub.Stderr(jobID, string(b)); pubErr != nil {
+				log.Warn("worker: publish compile stderr failed", "err", pubErr)
+			}
+		})
+
+		// On compile failure (non-zero exit OR infrastructure error), publish a
+		// terminal result and return — the run argv MUST NOT execute.
+		compileExitCode := compileResult.ExitCode
+		if compileErr != nil || compileExitCode != 0 {
+			if compileErr != nil {
+				// Infrastructure failure (Docker exec error, context cancelled):
+				// treat as non-zero exit.
+				log.Warn("worker: compile step error", "err", compileErr)
+				if compileExitCode == 0 {
+					compileExitCode = 1 // normalise infrastructure errors to exit 1
+				}
+			}
+			// Build a Result with the compile exit code so the client receives
+			// the correct non-zero exit in the terminal event.
+			failResult := runner.Result{ExitCode: &compileExitCode, DurationMs: compileResult.DurationMs}
+			teardown(failResult, wire.JobStateError)
+			return
+		}
+		// Compile succeeded (exit 0) — fall through to StagePhaseRunning.
+	}
+
+	// 5b. On start (or after successful compile): publish "running" stage + write running status.
 	if err := w.pub.Stage(jobID, wire.StagePhaseRunning); err != nil {
 		log.Warn("worker: publish running stage failed", "err", err)
 	}

@@ -73,9 +73,25 @@ reaper-test: ## Run reaper integration tests (requires Docker daemon + redis:7 o
 python-image: ## Build the Python 3.12 sandbox image on the host Docker daemon
 	docker build -t executor/python:3.12 languages/python-3.12
 
+.PHONY: rust-image
+rust-image: ## Build the Rust 1.83 sandbox image on the host Docker daemon (Wave 2)
+	docker build -t executor/rust:1.83 languages/rust-1.83
+
+.PHONY: r-image
+r-image: ## Build the R 4.4 sandbox image on the host Docker daemon (Wave 2)
+	docker build -t executor/r:4.4 languages/r-4.4
+
+.PHONY: sqlite-image
+sqlite-image: ## Build the SQLite 3 sandbox image on the host Docker daemon (Wave 2)
+	docker build -t executor/sqlite:3 languages/sqlite-3
+
 .PHONY: build-images
-build-images: python-image ## Build all language sandbox images on the host daemon
+build-images: python-image rust-image r-image sqlite-image ## Build all language sandbox images on the host daemon
 	@echo "All language images built."
+
+.PHONY: langfanout
+langfanout: ## Run language fan-out integration tests (requires Docker + all language images + redis:7 on port 6386)
+	go test -tags=langfanout -timeout 600s ./internal/worker/... -run LangFanout -v
 
 .PHONY: e2e
 e2e: ## Run the end-to-end interactive demo against the local stack
