@@ -5,6 +5,8 @@
 **Researched:** 2026-06-02
 **Confidence:** HIGH
 
+> **⚠ Updated after spec revision (2026-06-02).** The project is now a polyglot monorepo: the HTTP API is **ours, in Hono/TypeScript** (not a pre-existing Go service), with a **shared wire contract** (`packages/contract`, JSON Schema → TS + Go) and OSS + deployment targets. This file's **Go-worker** stack guidance (Runner, three clocks, soketi publish, Redis routing, manifests, pitfalls) **remains authoritative**. For the new pieces — Hono API, contract codegen, and deploy targets (Fly Machines/Firecracker, gVisor, the Upstash-pub/sub verdict) — see **`STACK-API-CONTRACT-DEPLOY.md`**. Notable verdict: **Upstash Redis cannot serve the worker** (no TCP blocking `SUBSCRIBE`/`BLPOP`); use a native managed Redis/Valkey shared by API + worker.
+
 ## Executive Summary
 
 code-runner is an internal, horizontally-scalable sandboxed code execution engine written in Go. It follows the Piston model (manifest-driven language packages, pre-baked images, compile/run split) but adds the genuinely hard requirement competitors skip: a **live interactive stdin session** with a start-handshake and three independent clocks. The system decomposes into two stateless Go binaries (Executor API + Worker) decoupled entirely through Redis, with output pushed to clients via soketi/Pusher. It is explicitly not a public SaaS — the TS API is the only trusted caller, which eliminates auth/quota complexity and lets the service focus on correctness, safety, and interactive latency.

@@ -1,49 +1,58 @@
 # Requirements: code-runner
 
 **Defined:** 2026-06-02
-**Core Value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot.
+**Core Value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible.
 
 ## v1 Requirements
 
 Requirements for the initial release. Each maps to roadmap phases.
 
-### Executor API (internal contract)
+### API Gateway (Hono / TypeScript)
 
-- [ ] **API-01**: TS API can submit a job via `POST /execute` with `{jobId, channel, language, version, files[], limits?}` and receive `202 {jobId, status:"queued"}` before the process starts
-- [ ] **API-02**: TS API can start a queued job's process via `POST /run/:jobId/start` (only after the client has subscribed)
-- [ ] **API-03**: TS API can write to a running process's stdin via `POST /run/:jobId/stdin {chunk}`
-- [ ] **API-04**: TS API can signal EOF on stdin via `POST /run/:jobId/stdin/close`
-- [ ] **API-05**: TS API can terminate a session via `POST /run/:jobId/kill`
-- [ ] **API-06**: API rejects requests for unknown `jobId`, unknown `language`/`version`, or malformed payloads with clear error responses
-- [ ] **API-07**: API enforces a stdin rate limit per job and returns `429` when the pending-stdin byte cap is exceeded (backpressure)
-- [ ] **API-08**: Executor API trusts only requests on the private network (shared-secret/bearer between TS API and Executor, configurable)
+- [ ] **API-01**: `POST /v1/execute` with `{language, version, files[], limits?}` returns `202 {jobId, channel, status:"queued"}`; the API generates `jobId`+`channel` and returns before the process starts
+- [ ] **API-02**: `POST /v1/jobs/:id/start` starts the process (only valid after the client has subscribed)
+- [ ] **API-03**: `POST /v1/jobs/:id/stdin {chunk}` writes to the process stdin
+- [ ] **API-04**: `POST /v1/jobs/:id/stdin/close` closes stdin (EOF)
+- [ ] **API-05**: `POST /v1/jobs/:id/kill` terminates the session
+- [ ] **API-06**: `GET /v1/jobs/:id` returns the job status
+- [ ] **API-07**: `GET /v1/languages` lists available languages, sourced from the manifests
+- [ ] **API-08**: A Hono middleware authenticates the upstream caller with `EXECUTOR_API_TOKEN` using a constant-time comparison and rejects missing/invalid tokens
+- [ ] **API-09**: The API validates requests against the shared contract and returns clear errors for malformed payloads, unknown `language`/`version`, and unknown `jobId`
+- [ ] **API-10**: The API enforces a per-job stdin rate limit and a pending-stdin byte cap, returning `429` on overflow (backpressure)
+- [ ] **API-11**: The API is stateless and communicates with the worker **only** via Redis (enqueue job, `PUBLISH` stdin/control, read job status) — it never calls the worker directly
 
-### Job Queue (Redis)
+### Shared Wire Contract (`packages/contract`)
 
-- [ ] **QUEUE-01**: Submitted jobs are enqueued in Redis and consumed by workers, decoupling reception from execution
-- [ ] **QUEUE-02**: A worker only claims a job when it has a free sandbox slot (capacity-aware backpressure)
-- [ ] **QUEUE-03**: Queue depth and full-capacity conditions propagate back as `429`/backpressure rather than silently dropping work
+- [ ] **CONT-01**: A single canonical JSON Schema defines every wire message exchanged between the API and the worker
+- [ ] **CONT-02**: TypeScript types are generated from the schema and consumed by the Hono API (not hand-written)
+- [ ] **CONT-03**: Runtime validators (zod) are generated from the schema so API validation stays in lockstep with the contract
+- [ ] **CONT-04**: Go structs (with JSON tags) are generated from the schema and consumed by the worker
+- [ ] **CONT-05**: A CI/script drift check regenerates the artifacts and fails on any diff
+- [ ] **CONT-06**: The contract covers the job spec, stdin chunk, control messages (start/kill/stdin-close), and output events (stage/stdout/stderr/result)
+
+### Worker & Runner (Go)
+
+- [ ] **RUN-01**: A `Runner`/`Sandbox` interface abstracts "create hardened sandbox, attach pipes, enforce limits, kill, cleanup" so the backend can swap (Docker → gVisor → Firecracker) without touching core logic
+- [ ] **RUN-02**: A `DockerSocketRunner` launches an ephemeral container per execution via the mounted host socket (no Docker-in-Docker)
+- [ ] **RUN-03**: The runner attaches and demuxes stdout/stderr separately and forwards them to the session
+- [ ] **RUN-04**: `kill` destroys the whole container (process tree), never just a PID
+- [ ] **WRK-01**: The worker consumes jobs from the Redis queue
+- [ ] **WRK-02**: The worker subscribes to `stdin:<jobId>` only for jobs it owns and writes chunks to the process pipe — no service discovery
+- [ ] **WRK-03**: The worker keeps the process alive with stdin/stdout/stderr pipes open (interactive session, not batch-ephemeral)
+- [ ] **WRK-04**: The worker is stateless and coupled to the rest of the system only through Redis (jobs + stdin) and soketi (output); it never calls the API
 
 ### Interactive Session & Handshake
 
-- [ ] **SESS-01**: A job follows the start-handshake: `/execute` creates `jobId`+`channel` and returns before the process starts; the process only starts on `/run/:jobId/start` (no early prompt is lost)
-- [ ] **SESS-02**: The sandbox keeps the process alive with stdin/stdout/stderr pipes open, awaiting interactive input (not batch-ephemeral)
-- [ ] **SESS-03**: Batch (no-stdin) execution works as the degenerate case of the interactive model
-- [ ] **SESS-04**: A warm-up timeout reclaims the slot if `/start` never arrives after `/execute`
+- [ ] **SESS-01**: The start-handshake holds: `/execute` creates `jobId`+`channel` and returns before the process starts; the process only starts on `/start` (no early prompt is lost)
+- [ ] **SESS-02**: Batch (no-stdin) execution works as the degenerate case of the interactive model
+- [ ] **SESS-03**: A warm-up timeout reclaims the slot and tears down the sandbox if `/start` never arrives after `/execute`
 
 ### stdin Routing
 
-- [ ] **STDIN-01**: stdin is routed without service discovery: Executor `PUBLISH`es to `stdin:<jobId>` and the owning worker (subscribed only to its live jobs) writes it to the process pipe
-- [ ] **STDIN-02**: stdin/close publishes a control signal that closes the process's stdin (EOF) exactly once
+- [ ] **STDIN-01**: stdin is routed without service discovery: the API `PUBLISH`es to `stdin:<jobId>` and the owning worker writes it to the process pipe
+- [ ] **STDIN-02**: `/stdin/close` delivers EOF to the process exactly once
 - [ ] **STDIN-03**: Control messages (start/kill) route to the owning worker via a per-job control channel
-- [ ] **STDIN-04**: stdin transport sits behind an interface so Redis pub/sub (MVP) can be swapped for Redis Streams later without core changes
-
-### Runner / Sandbox
-
-- [ ] **RUN-01**: A `Runner`/`Sandbox` interface abstracts "create hardened sandbox, attach pipes, enforce limits, kill, cleanup" so the runtime can change without touching core logic
-- [ ] **RUN-02**: The Docker-hardened runner launches an ephemeral container per execution by talking to the host container runtime via a mounted socket (no Docker-in-Docker)
-- [ ] **RUN-03**: The runner attaches and demuxes stdout/stderr separately and forwards them to the session
-- [ ] **RUN-04**: `kill` destroys the whole container (process tree), never just a PID
+- [ ] **STDIN-04**: The stdin transport sits behind an interface so Redis pub/sub (MVP) can be swapped for Redis Streams (`XREAD BLOCK`) later without core changes
 
 ### Sandbox Hardening
 
@@ -51,22 +60,21 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [ ] **HARD-02**: Every sandbox runs `--read-only` with a size-capped tmpfs `/tmp` workspace
 - [ ] **HARD-03**: Memory is capped with `--memory` == `--memory-swap` (no swap)
 - [ ] **HARD-04**: Every sandbox runs with `--pids-limit` and `--cpus` set
-- [ ] **HARD-05**: Every sandbox runs with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, and a restrictive seccomp profile
+- [ ] **HARD-05**: Every sandbox runs with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, and a restrictive seccomp profile, as a non-root user
 
 ### Resource Limits (three clocks + caps)
 
 - [ ] **LIM-01**: A wall-clock timeout kills the entire session unconditionally when exceeded
 - [ ] **LIM-02**: An idle timeout kills the sandbox when no stdout and no stdin is received within the window
 - [ ] **LIM-03**: A CPU (cgroup) limit kills the sandbox on accumulated real compute, defeating use of interactive mode to smuggle heavy work past the wall clock
-- [ ] **LIM-04**: stdout/stderr bytes are capped — output is truncated and `truncated=true` is reported
-- [ ] **LIM-05**: Pending-stdin bytes are capped to apply backpressure (surfaced as `429` at the API)
+- [ ] **LIM-04**: stdout/stderr bytes are capped — output is truncated and `truncated=true` is reported, and the worker keeps draining the pipe so the process never blocks
 
 ### Real-time Output (soketi)
 
-- [ ] **OUT-01**: The worker publishes `stage {phase: queued|compiling|running}` events to soketi on `private-run-<jobId>`
-- [ ] **OUT-02**: The worker streams `stdout {chunk}` and `stderr {chunk}` events to soketi
+- [ ] **OUT-01**: The worker publishes `stage {phase: queued|compiling|running}` events on `private-run-<jobId>`
+- [ ] **OUT-02**: The worker streams `stdout {chunk}` and `stderr {chunk}` events
 - [ ] **OUT-03**: The worker publishes a terminal `result {exitCode, signal, timedOut, idleTimedOut, truncated, durationMs}` event
-- [ ] **OUT-04**: Output is published via the Pusher HTTP API, batched and chunked to stay within soketi event-size limits
+- [ ] **OUT-04**: The worker triggers soketi **directly** via the Pusher protocol, batched and chunked to stay within soketi's event-size limit, using credentials from env
 
 ### Lifecycle / Cleanup
 
@@ -75,42 +83,60 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Language Packages (manifest-driven)
 
-- [ ] **LANG-01**: Adding a language is adding a `languages/<lang-version>/` folder with `manifest.json` + `Dockerfile` — no Go core changes
-- [ ] **LANG-02**: `manifest.json` declares `language, version, aliases, image, entrypoint, compile (nullable), run, defaultLimits{wallTimeMs,idleMs,cpuMs,memoryMb,pids,outputKb}, interactive`
-- [ ] **LANG-03**: The core loads all manifests at boot and exposes the available languages; no languages are hardcoded in Go
+- [ ] **LANG-01**: Adding a language is adding a `languages/<lang-version>/` folder with `manifest.json` + `Dockerfile` — no changes to the Go worker or the API
+- [ ] **LANG-02**: `manifest.json` declares `language, version, aliases, image, entrypoint, compile (nullable), run, interactive, defaultLimits{wallTimeMs,idleMs,cpuMs,memoryMb,pids,outputKb}`
+- [ ] **LANG-03**: The core loads all manifests at boot and exposes the available languages; no languages are hardcoded in Go or the API
 - [ ] **LANG-04**: Per-request `limits` override a manifest's `defaultLimits`
-- [ ] **LANG-05**: Python 3.12 package runs `python main.py` with numpy/pandas/requests baked into the image
-- [ ] **LANG-06**: Rust package compiles with `rustc -O` (compile stage with its own limits) then runs the produced binary
-- [ ] **LANG-07**: R 4.4 package runs `Rscript main.R` with common libs baked in
-- [ ] **LANG-08**: SQLite 3 package runs SQL against an ephemeral in-memory DB, supporting both a `.sql` file and an interactive `sqlite3` shell reading from stdin
+- [ ] **LANG-05**: The Python 3.12 package runs `python main.py` with numpy/pandas/requests baked into the image
+- [ ] **LANG-06**: The Rust package compiles with `rustc -O main.rs -o /tmp/prog` (compile stage with its own limits) then runs the produced binary
+- [ ] **LANG-07**: The R 4.4 package runs `Rscript main.R` with common libs baked in
+- [ ] **LANG-08**: The SQLite 3 package runs SQL against an ephemeral in-memory DB, supporting both a `.sql` file and an interactive `sqlite3` shell reading from stdin — validating that "language = image + compile? + run" holds for something that is not a general-purpose language
 
 ### Scale & Statelessness
 
-- [ ] **SCALE-01**: Executor API and workers are stateless and run as N replicas
-- [ ] **SCALE-02**: Each worker enforces a max number of concurrent live sandboxes based on CPU/RAM; capacity is counted in live sandboxes, not request bursts
-- [ ] **SCALE-03**: Worker death mid-session does not leak host containers — a reaper cleans up orphaned labeled sandboxes
+- [ ] **SCALE-01**: The API and workers are stateless and run as N replicas
+- [ ] **SCALE-02**: A worker only claims a job when it has a free sandbox slot; each worker enforces a max concurrent-live-sandbox count derived from CPU/RAM; capacity is counted in live sandboxes, not request bursts
+- [ ] **SCALE-03**: Queue depth and full-capacity conditions propagate back as backpressure (`429`) rather than silently dropping work
+- [ ] **SCALE-04**: Worker death mid-session does not leak host containers — a label-based reaper removes orphaned sandboxes and reclaims their slots
+- [ ] **SCALE-05**: The system is designed for autoscaling by queue depth and scale-to-zero (documented mechanism per deploy target)
+
+### Configuration & Secrets (env-only)
+
+- [ ] **CFG-01**: All configuration is via env vars (`EXECUTOR_API_TOKEN`, `REDIS_URL`, `SOKETI_HOST/PORT/USE_TLS/APP_ID/APP_KEY/APP_SECRET`) — there are no configuration endpoints
+- [ ] **CFG-02**: No endpoint returns secrets, and the soketi secret is never persisted in Redis
+- [ ] **CFG-03**: soketi credentials are read from env by the worker (to trigger) and by the API (if it signs channel auth)
+- [ ] **CFG-04**: The chosen Redis must support native pub/sub and blocking operations for the worker (a managed serverless Redis that lacks TCP `SUBSCRIBE`/`BLPOP`, e.g. Upstash, is only usable for the API, not the worker)
+
+### Channel Authorization (upstream responsibility)
+
+- [ ] **CHAN-01**: The README documents how the upstream app authorizes the browser's private soketi channel using the app key/secret (HMAC)
+- [ ] **CHAN-02**: (Optional, non-core) The API may offer a channel-auth helper behind `EXECUTOR_API_TOKEN`, clearly marked as optional
 
 ### Dev Environment
 
-- [ ] **DEV-01**: `docker compose up` brings up the whole stack locally: executor, worker(s), redis, soketi, and a TS API stub
-- [ ] **DEV-02**: A TS API stub/mock implements enough of the public API's contract to drive an end-to-end interactive execute locally
+- [ ] **DEV-01**: `docker compose up` brings up the whole stack locally: api + worker (DockerSocketRunner) + redis + soketi + a stub upstream app
+- [ ] **DEV-02**: The stub upstream app drives an end-to-end interactive execute locally
 - [ ] **DEV-03**: A script/README walks through a punta-a-punta interactive execute against the local stack
 
-### Abuse Tests
+### Abuse Tests (built EARLY)
 
-- [ ] **TEST-01**: A fork bomb is contained by `--pids-limit` (test proves the sandbox survives/kills cleanly)
+- [ ] **TEST-01**: A fork bomb is contained by `--pids-limit` (the sandbox is killed cleanly)
 - [ ] **TEST-02**: An OOM program is killed by the memory cap without taking down the worker
 - [ ] **TEST-03**: An infinite loop is killed by the wall-clock timeout
 - [ ] **TEST-04**: A program blocked on stdin is killed by the idle timeout
-- [ ] **TEST-05**: stdin/close (EOF) is delivered and the program reading to EOF terminates correctly
+- [ ] **TEST-05**: `/stdin/close` (EOF) is delivered and a program reading to EOF terminates correctly
 - [ ] **TEST-06**: A giant-output program is truncated with `truncated=true` and does not exhaust memory
-- [ ] **TEST-07**: Abuse tests run on Linux CI (not only macOS dev) to exercise real cgroup behavior
+- [ ] **TEST-07**: The abuse suite runs on Linux CI (not only macOS dev) so real cgroup OOM/CPU behavior is exercised
+- [ ] **TEST-08**: The abuse suite is built early — immediately after the Python end-to-end path — and gates the language fan-out
 
-### Documentation
+### Open Source & Documentation
 
-- [ ] **DOCS-01**: README documents how to run the stack locally
-- [ ] **DOCS-02**: README documents the Executor internal API contract
-- [ ] **DOCS-03**: README documents how to add a new language (the package model guide)
+- [ ] **OSS-01**: The repo ships an MIT `LICENSE`
+- [ ] **OSS-02**: A `.env.example` documents every env var
+- [ ] **DOCS-01**: The README has a quickstart: how to run the stack locally
+- [ ] **DOCS-02**: The README documents the API contract (`/v1/*` endpoints + wire events)
+- [ ] **DOCS-03**: The README documents deployment per target: dev (docker compose), prod (Fly Machines/Firecracker workers + native Redis + soketi; API anywhere), and future k8s `RuntimeClass=gvisor`
+- [ ] **DOCS-04**: The README documents how to add a new language (the package model guide)
 
 ## v2 Requirements
 
@@ -118,10 +144,11 @@ Deferred to a future release. Tracked but not in the current roadmap.
 
 ### Runtime & Delivery
 
-- **V2-01**: gVisor (`runsc`) runner implementation behind the same `Runner` interface
-- **V2-02**: Redis Streams + `XREAD BLOCK` for guaranteed stdin delivery (replacing pub/sub)
-- **V2-03**: PTY allocation option for languages where pipe unbuffering proves unmanageable
-- **V2-04**: Offline crate/CRAN vendoring so Rust/R can use third-party packages without violating `network=none`
+- **V2-01**: `gVisorRunner` (k8s `RuntimeClass=gvisor`) behind the `Runner` interface
+- **V2-02**: `FlyMachinesRunner` (Firecracker microVM per execution via the Fly Machines API) behind the `Runner` interface, with an interactive-streaming + latency/cost benchmark spike
+- **V2-03**: Redis Streams + `XREAD BLOCK` for guaranteed stdin delivery (replacing pub/sub) — also the path if a serverless Redis without TCP pub/sub must be supported
+- **V2-04**: Offline crate/CRAN vendoring so Rust/R can use third-party packages without violating `--network=none`
+- **V2-05**: `fly-autoscaler` (or equivalent) scaling workers by `LLEN` queue depth, with scale-to-zero where the platform allows
 
 ## Out of Scope
 
@@ -129,91 +156,31 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| Public TypeScript API | Already exists; we only respect its contract + ship a local stub |
-| End-user authentication | Done by the TS API |
-| Pusher channel authorization | Done by the TS API |
-| Internet-facing exposure | Service is internal-only behind the private network |
-| Runtime dependency resolution in sandboxes | Piston model — images are pre-built with libs baked in |
-| Network access from sandboxes | Untrusted code must not reach the network (`--network=none`) |
-| Docker-in-Docker | Workers talk to the host runtime via mounted socket |
-| Trusting input from soketi | soketi is output-only; nothing trusted enters via the realtime channel |
-| Persistent / pausable sandboxes | A live session holds a slot until it expires; no long-lived persistence |
+| The upstream consumer app | It's the user's own backend; we ship only a local stub for E2E |
+| End-user authentication / complex auth | Only auth is the `EXECUTOR_API_TOKEN` bearer (upstream → API) |
+| Soketi channel authorization as a core feature | Upstream app's responsibility via key/secret; optional non-core helper only |
+| Any secret-returning endpoint / persisting soketi secret in Redis | Security: config is env-only, secrets never travel over the wire or land in Redis |
+| Internet-facing exposure | Internal-only behind the upstream app |
+| Runtime dependency resolution in sandboxes | Pre-built images keep `--network=none` always-on |
+| Network access from sandboxes | Untrusted code must not reach the network |
+| Docker-in-Docker | Worker talks to the host runtime via mounted socket |
+| Trusting input from soketi | soketi is output-only |
+| Persistent / pausable sandboxes | A live session holds a slot until it expires |
+| Upstash (or any non-TCP-pub/sub Redis) for the worker | The worker needs native blocking `SUBSCRIBE`/`BLPOP`; such Redis is API-only (see CFG-04) |
 
 ## Traceability
 
-Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for phase detail.
+Populated during roadmap creation — each v1 requirement maps to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LANG-01 | Phase 1 | Pending |
-| LANG-02 | Phase 1 | Pending |
-| LANG-03 | Phase 1 | Pending |
-| LANG-04 | Phase 1 | Pending |
-| RUN-01 | Phase 1 | Pending |
-| STDIN-04 | Phase 1 | Pending |
-| RUN-02 | Phase 2 | Pending |
-| RUN-03 | Phase 2 | Pending |
-| RUN-04 | Phase 2 | Pending |
-| HARD-01 | Phase 2 | Pending |
-| HARD-02 | Phase 2 | Pending |
-| HARD-03 | Phase 2 | Pending |
-| HARD-04 | Phase 2 | Pending |
-| HARD-05 | Phase 2 | Pending |
-| LIM-01 | Phase 2 | Pending |
-| LIM-02 | Phase 2 | Pending |
-| LIM-03 | Phase 2 | Pending |
-| LIM-04 | Phase 2 | Pending |
-| API-01 | Phase 3 | Pending |
-| API-02 | Phase 3 | Pending |
-| API-03 | Phase 3 | Pending |
-| API-04 | Phase 3 | Pending |
-| API-05 | Phase 3 | Pending |
-| API-06 | Phase 3 | Pending |
-| API-08 | Phase 3 | Pending |
-| QUEUE-01 | Phase 3 | Pending |
-| SESS-01 | Phase 3 | Pending |
-| SESS-02 | Phase 3 | Pending |
-| SESS-03 | Phase 3 | Pending |
-| STDIN-01 | Phase 3 | Pending |
-| STDIN-02 | Phase 3 | Pending |
-| STDIN-03 | Phase 3 | Pending |
-| OUT-01 | Phase 3 | Pending |
-| OUT-02 | Phase 3 | Pending |
-| OUT-03 | Phase 3 | Pending |
-| OUT-04 | Phase 3 | Pending |
-| LANG-05 | Phase 3 | Pending |
-| DEV-01 | Phase 3 | Pending |
-| DEV-02 | Phase 3 | Pending |
-| DEV-03 | Phase 3 | Pending |
-| LIFE-01 | Phase 4 | Pending |
-| LIFE-02 | Phase 4 | Pending |
-| SESS-04 | Phase 4 | Pending |
-| QUEUE-02 | Phase 5 | Pending |
-| QUEUE-03 | Phase 5 | Pending |
-| API-07 | Phase 5 | Pending |
-| LIM-05 | Phase 5 | Pending |
-| SCALE-01 | Phase 5 | Pending |
-| SCALE-02 | Phase 5 | Pending |
-| SCALE-03 | Phase 5 | Pending |
-| LANG-06 | Phase 6 | Pending |
-| LANG-07 | Phase 6 | Pending |
-| LANG-08 | Phase 6 | Pending |
-| TEST-01 | Phase 7 | Pending |
-| TEST-02 | Phase 7 | Pending |
-| TEST-03 | Phase 7 | Pending |
-| TEST-04 | Phase 7 | Pending |
-| TEST-05 | Phase 7 | Pending |
-| TEST-06 | Phase 7 | Pending |
-| TEST-07 | Phase 7 | Pending |
-| DOCS-01 | Phase 7 | Pending |
-| DOCS-02 | Phase 7 | Pending |
-| DOCS-03 | Phase 7 | Pending |
+| (all v1 REQ-IDs) | TBD | Pending |
 
 **Coverage:**
-- v1 requirements: 63 total (enumerated REQ-IDs; the prior "51" was a stale count)
-- Mapped to phases: 63 (100%)
-- Unmapped: 0
+- v1 requirements: 68 total
+- Mapped to phases: 0 (roadmap pending)
+- Unmapped: 68 ⚠️ (resolved by roadmapper)
 
 ---
 *Requirements defined: 2026-06-02*
-*Last updated: 2026-06-02 after roadmap creation (traceability populated)*
+*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets)*
