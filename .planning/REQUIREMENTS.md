@@ -141,17 +141,79 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Populated during roadmap creation — each v1 requirement maps to exactly one phase.
+Each v1 requirement maps to exactly one phase. See `.planning/ROADMAP.md` for phase detail.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (all v1 REQ-IDs) | TBD | Pending |
+| LANG-01 | Phase 1 | Pending |
+| LANG-02 | Phase 1 | Pending |
+| LANG-03 | Phase 1 | Pending |
+| LANG-04 | Phase 1 | Pending |
+| RUN-01 | Phase 1 | Pending |
+| STDIN-04 | Phase 1 | Pending |
+| RUN-02 | Phase 2 | Pending |
+| RUN-03 | Phase 2 | Pending |
+| RUN-04 | Phase 2 | Pending |
+| HARD-01 | Phase 2 | Pending |
+| HARD-02 | Phase 2 | Pending |
+| HARD-03 | Phase 2 | Pending |
+| HARD-04 | Phase 2 | Pending |
+| HARD-05 | Phase 2 | Pending |
+| LIM-01 | Phase 2 | Pending |
+| LIM-02 | Phase 2 | Pending |
+| LIM-03 | Phase 2 | Pending |
+| LIM-04 | Phase 2 | Pending |
+| API-01 | Phase 3 | Pending |
+| API-02 | Phase 3 | Pending |
+| API-03 | Phase 3 | Pending |
+| API-04 | Phase 3 | Pending |
+| API-05 | Phase 3 | Pending |
+| API-06 | Phase 3 | Pending |
+| API-08 | Phase 3 | Pending |
+| QUEUE-01 | Phase 3 | Pending |
+| SESS-01 | Phase 3 | Pending |
+| SESS-02 | Phase 3 | Pending |
+| SESS-03 | Phase 3 | Pending |
+| STDIN-01 | Phase 3 | Pending |
+| STDIN-02 | Phase 3 | Pending |
+| STDIN-03 | Phase 3 | Pending |
+| OUT-01 | Phase 3 | Pending |
+| OUT-02 | Phase 3 | Pending |
+| OUT-03 | Phase 3 | Pending |
+| OUT-04 | Phase 3 | Pending |
+| LANG-05 | Phase 3 | Pending |
+| DEV-01 | Phase 3 | Pending |
+| DEV-02 | Phase 3 | Pending |
+| DEV-03 | Phase 3 | Pending |
+| LIFE-01 | Phase 4 | Pending |
+| LIFE-02 | Phase 4 | Pending |
+| SESS-04 | Phase 4 | Pending |
+| QUEUE-02 | Phase 5 | Pending |
+| QUEUE-03 | Phase 5 | Pending |
+| API-07 | Phase 5 | Pending |
+| LIM-05 | Phase 5 | Pending |
+| SCALE-01 | Phase 5 | Pending |
+| SCALE-02 | Phase 5 | Pending |
+| SCALE-03 | Phase 5 | Pending |
+| LANG-06 | Phase 6 | Pending |
+| LANG-07 | Phase 6 | Pending |
+| LANG-08 | Phase 6 | Pending |
+| TEST-01 | Phase 7 | Pending |
+| TEST-02 | Phase 7 | Pending |
+| TEST-03 | Phase 7 | Pending |
+| TEST-04 | Phase 7 | Pending |
+| TEST-05 | Phase 7 | Pending |
+| TEST-06 | Phase 7 | Pending |
+| TEST-07 | Phase 7 | Pending |
+| DOCS-01 | Phase 7 | Pending |
+| DOCS-02 | Phase 7 | Pending |
+| DOCS-03 | Phase 7 | Pending |
 
 **Coverage:**
-- v1 requirements: 51 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 51 ⚠️ (resolved by roadmapper)
+- v1 requirements: 63 total (enumerated REQ-IDs; the prior "51" was a stale count)
+- Mapped to phases: 63 (100%)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-02*
-*Last updated: 2026-06-02 after initial definition*
+*Last updated: 2026-06-02 after roadmap creation (traceability populated)*
