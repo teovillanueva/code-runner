@@ -65,6 +65,10 @@ test-redis: ## Run Redis-dependent integration tests (requires TEST_REDIS_URL or
 test-worker: ## Run guarded worker integration tests (requires Docker + redis:7 on port 6381 + executor/python:3.12)
 	go test -tags=worker_integration -timeout 300s ./internal/worker/... -run Integration -v
 
+.PHONY: reaper-test
+reaper-test: ## Run reaper integration tests (requires Docker daemon + redis:7 on port 6381 + executor/python:3.12)
+	go test -tags=reaper_integration -timeout 180s ./internal/reaper/... -run Reaper -v
+
 .PHONY: python-image
 python-image: ## Build the Python 3.12 sandbox image on the host Docker daemon
 	docker build -t executor/python:3.12 languages/python-3.12

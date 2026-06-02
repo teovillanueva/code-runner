@@ -24,10 +24,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/client"
+
 	"github.com/teovillanueva/code-runner/internal/config"
 	"github.com/teovillanueva/code-runner/internal/jobstore"
 	"github.com/teovillanueva/code-runner/internal/manifest"
 	"github.com/teovillanueva/code-runner/internal/publisher"
+	"github.com/teovillanueva/code-runner/internal/reaper"
 	"github.com/teovillanueva/code-runner/internal/redisx"
 	"github.com/teovillanueva/code-runner/internal/runner"
 	"github.com/teovillanueva/code-runner/internal/stdintransport"
@@ -133,6 +136,25 @@ func run(ctx context.Context) error {
 	}
 
 	w := worker.New(store, transport, dockerRunner, pub, workerCfg)
+
+	// ── Reaper ────────────────────────────────────────────────────────────────
+	// The reaper runs alongside the worker and periodically sweeps the host for
+	// containers whose owning worker has died.  It uses its own Docker client so
+	// the runner interface does not need to be widened.
+	reaperDockerCli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		slog.Warn("reaper: could not create Docker client, reaper disabled", "err", err)
+	} else {
+		// Sweep interval: heartbeat TTL + a small buffer so a dead worker's key
+		// has reliably expired before the first sweep evaluates it.
+		reaperInterval := time.Duration(cfg.HeartbeatTTLMs)*time.Millisecond + 5*time.Second
+		r := reaper.New(reaperDockerCli, store, reaperInterval)
+		go r.Run(ctx)
+		slog.Info("reaper started", "interval", reaperInterval)
+	}
 
 	slog.Info("worker loop starting",
 		"max_sandboxes", cfg.MaxSandboxes,

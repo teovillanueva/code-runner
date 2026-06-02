@@ -91,3 +91,32 @@ func (s *Store) DecrFreeSlots(ctx context.Context) error {
 	}
 	return nil
 }
+
+// HeartbeatAlive reports whether the given worker's heartbeat key currently
+// exists in Redis.  A non-existent key means the worker has died (its TTL
+// expired) and its owned jobs are orphaned.
+//
+// The reaper (plan 05-02) uses this to distinguish live workers from dead ones
+// before deciding whether to remove a labelled container.
+func (s *Store) HeartbeatAlive(ctx context.Context, workerID string) (bool, error) {
+	k := keys.WorkerHeartbeatKey(workerID)
+	n, err := s.client.Exists(ctx, k).Result()
+	if err != nil {
+		return false, fmt.Errorf("jobstore.HeartbeatAlive: EXISTS %s: %w", k, err)
+	}
+	return n > 0, nil
+}
+
+// ScanWorkerJobsKeys returns one page of "worker:*:jobs" keys from Redis using
+// SCAN with the given cursor.  Returns the matched keys, the next cursor (0
+// means iteration is complete), and any error.
+//
+// The reaper (plan 05-02) uses this to discover all worker owned-jobs sets
+// without requiring access to the raw *redis.Client.
+func (s *Store) ScanWorkerJobsKeys(ctx context.Context, cursor uint64) (matchedKeys []string, nextCursor uint64, err error) {
+	matchedKeys, nextCursor, err = s.client.Scan(ctx, cursor, "worker:*:jobs", 100).Result()
+	if err != nil {
+		return nil, 0, fmt.Errorf("jobstore.ScanWorkerJobsKeys: SCAN: %w", err)
+	}
+	return matchedKeys, nextCursor, nil
+}
