@@ -45,6 +45,10 @@ test-go: ## Run Go tests
 abuse: ## Run the abuse/safety test suite (requires Docker)
 	go test -tags=abuse -timeout 600s ./apps/worker/... -run Abuse -v
 
+.PHONY: test-docker
+test-docker: ## Run guarded Docker integration tests (requires Docker daemon)
+	go test -tags=docker -timeout 300s ./internal/runner/... -run Integration -v
+
 .PHONY: up
 up: ## Bring up the local dev stack
 	docker compose up --build
