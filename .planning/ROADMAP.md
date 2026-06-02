@@ -125,7 +125,7 @@ Plans:
   4. Each language is added purely as `languages/<lang-version>/{manifest.json, Dockerfile}` and the abuse suite (Phase 4 gate) passes for the new images.
 **Plans**: 4 plans
 Plans:
-- [ ] 06-01-PLAN.md — Task 0: generic manifest-driven compile stage (extend Sandbox seam + worker run path + stub + generic gate test + Wave-2 Makefile targets) — the ONLY core change
+- [x] 06-01-PLAN.md — Task 0: generic manifest-driven compile stage (extend Sandbox seam + worker run path + stub + generic gate test + Wave-2 Makefile targets) — the ONLY core change
 - [ ] 06-02-PLAN.md — Rust 1.83 package (rustc -O compile + produced-binary run) + e2e compile/run + compile-error test
 - [ ] 06-03-PLAN.md — R 4.4 package (Rscript main.R, common libs, unbuffered streaming, null compile) + e2e Rscript + interactive stdin test
 - [ ] 06-04-PLAN.md — SQLite 3 package (alpine+sqlite, :memory: SQL, .sql file + interactive shell, clean EOF) + e2e file + interactive SELECT test
@@ -155,5 +155,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
 | 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
 | 5. Statelessness & Scale | 3/3 | Complete   | 2026-06-02 |
-| 6. Language Fan-out | 0/4 | Not started | - |
+| 6. Language Fan-out | 1/4 | In Progress|  |
 | 7. OSS Release & Deployment | 0/TBD | Not started | - |
