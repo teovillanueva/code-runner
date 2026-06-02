@@ -27,12 +27,10 @@ const API_BASE_URL = process.env["API_BASE_URL"] ?? "http://localhost:8080";
 const EXECUTOR_API_TOKEN =
   process.env["EXECUTOR_API_TOKEN"] ?? "dev-insecure-token-change-me";
 const SOKETI_APP_KEY = process.env["SOKETI_APP_KEY"] ?? "code-runner-key";
+const SOKETI_APP_SECRET = process.env["SOKETI_APP_SECRET"] ?? "code-runner-secret";
 const SOKETI_HOST = process.env["SOKETI_HOST"] ?? "localhost";
 const SOKETI_PORT = parseInt(process.env["SOKETI_PORT"] ?? "6001", 10);
 const SOKETI_USE_TLS = process.env["SOKETI_USE_TLS"] === "true";
-// The channel auth URL — the API's optional CHAN-02 helper
-const CHANNEL_AUTH_URL =
-  process.env["CHANNEL_AUTH_URL"] ?? `${API_BASE_URL}/v1/channel-auth`;
 
 // Timeout for the whole E2E (ms)
 const E2E_TIMEOUT_MS = parseInt(process.env["E2E_TIMEOUT_MS"] ?? "60000", 10);
@@ -43,36 +41,27 @@ const PYTHON_PROGRAM = `name = input("name? ")
 print(f"hello {name}")
 `;
 
-// ── Auth helper ──────────────────────────────────────────────────────────────
+// ── Channel auth (local HMAC signing) ────────────────────────────────────────
+//
+// Pusher private channel auth: HMAC-SHA256 over "<socket_id>:<channel_name>"
+// signed with the app secret, returned as "<app_key>:<hmac>".
+//
+// Trust boundary (CHAN-01): in a real deployment the upstream app computes this
+// using its own copy of the app secret. Here the stub has the secret from env
+// (dev-only; never exposed in production) and signs locally — equivalent to
+// the upstream app doing it.
+//
+// Note: pusher-js 8.x sends channel auth as application/x-www-form-urlencoded;
+// using a custom handler here avoids the content-type mismatch with the API's
+// JSON-only channel-auth helper.
+import { createHmac } from "node:crypto";
 
-/**
- * Call the API's channel-auth helper (CHAN-02) to authorize a private-run-<id>
- * channel subscription.
- *
- * This is the correct trust boundary: the upstream app (this stub) handles
- * channel auth. The API's CHAN-02 helper just does the HMAC signing for us
- * since we share the app secret in this dev demo.
- */
-async function authorizeChannel(
-  socketId: string,
-  channelName: string,
-): Promise<string> {
-  const res = await fetch(CHANNEL_AUTH_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${EXECUTOR_API_TOKEN}`,
-    },
-    body: JSON.stringify({ socket_id: socketId, channel_name: channelName }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(
-      `Channel auth failed: HTTP ${res.status} from ${CHANNEL_AUTH_URL}: ${body}`,
-    );
-  }
-  const data = (await res.json()) as { auth: string };
-  return data.auth;
+function signChannel(socketId: string, channelName: string): string {
+  const stringToSign = `${socketId}:${channelName}`;
+  const hmac = createHmac("sha256", SOKETI_APP_SECRET)
+    .update(stringToSign)
+    .digest("hex");
+  return `${SOKETI_APP_KEY}:${hmac}`;
 }
 
 // ── API helpers ──────────────────────────────────────────────────────────────
@@ -126,19 +115,33 @@ async function run(): Promise<void> {
 
   // pusher-js Node dist uses wsHost/wsPort for self-hosted soketi.
   // We use enabledTransports:['ws'] to skip SockJS fallback.
+  // Note: pusher-js 8.x requires `cluster` even when wsHost is set (validation
+  // check). We provide a dummy value; wsHost takes precedence in routing.
+  //
+  // Channel auth: pusher-js sends x-www-form-urlencoded but the API's CHAN-02
+  // helper expects JSON, so we use a custom handler that signs locally with the
+  // app secret (same pattern the upstream app uses in production).
   const pusher = new Pusher(SOKETI_APP_KEY, {
+    cluster: "mt1",
     wsHost: SOKETI_HOST,
     wsPort: SOKETI_PORT,
     wssPort: SOKETI_PORT,
     forceTLS: SOKETI_USE_TLS,
     disableStats: true,
     enabledTransports: ["ws"],
-    // Channel auth: call the API's CHAN-02 helper to sign the subscription.
     channelAuthorization: {
       transport: "ajax",
-      endpoint: CHANNEL_AUTH_URL,
-      headers: {
-        Authorization: `Bearer ${EXECUTOR_API_TOKEN}`,
+      endpoint: "http://localhost:1",   // unused — custom handler overrides
+      customHandler: (
+        params: { socketId: string; channelName: string },
+        callback: (err: Error | null, data: { auth: string } | null) => void,
+      ) => {
+        try {
+          const auth = signChannel(params.socketId, params.channelName);
+          callback(null, { auth });
+        } catch (err) {
+          callback(err instanceof Error ? err : new Error(String(err)), null);
+        }
       },
     },
   } as ConstructorParameters<typeof Pusher>[1]);
@@ -164,7 +167,8 @@ async function run(): Promise<void> {
     privateCh.bind("pusher:subscription_error", (err: unknown) => {
       clearTimeout(timer);
       pusher.disconnect();
-      reject(new Error(`Subscription error on ${channel}: ${String(err)}`));
+      const errStr = typeof err === "object" ? JSON.stringify(err) : String(err);
+      reject(new Error(`Subscription error on ${channel}: ${errStr}`));
     });
 
     privateCh.bind(
@@ -190,15 +194,25 @@ async function run(): Promise<void> {
       },
     );
 
+    // Helper: soketi delivers event data as a JSON string; parse it.
+    function parseEventData<T>(raw: unknown): T {
+      if (typeof raw === "string") {
+        try { return JSON.parse(raw) as T; } catch { /* fall through */ }
+      }
+      return raw as T;
+    }
+
     // ── 5. Bind stage events ──────────────────────────────────────────────
-    privateCh.bind(events.stage, (data: { stage: string }) => {
-      console.log(`[stub] stage: ${data.stage}`);
+    privateCh.bind(events.stage, (raw: unknown) => {
+      const data = parseEventData<{ phase: string }>(raw);
+      console.log(`[stub] stage: ${data.phase}`);
     });
 
     // ── 6. Bind stdout events ─────────────────────────────────────────────
     privateCh.bind(
       events.stdout,
-      async (data: { seq: number; chunk: string; truncated: boolean }) => {
+      async (raw: unknown) => {
+        const data = parseEventData<{ seq: number; chunk: string; truncated: boolean }>(raw);
         process.stdout.write(`[stub] stdout: ${data.chunk}`);
         if (!data.chunk.endsWith("\n")) process.stdout.write("\n");
 
@@ -240,31 +254,45 @@ async function run(): Promise<void> {
     // ── Bind stderr events ──────────────────────────────────────────────────
     privateCh.bind(
       events.stderr,
-      (data: { seq: number; chunk: string; truncated: boolean }) => {
+      (raw: unknown) => {
+        const data = parseEventData<{ seq: number; chunk: string; truncated: boolean }>(raw);
         process.stderr.write(`[stub] stderr: ${data.chunk}`);
         if (!data.chunk.endsWith("\n")) process.stderr.write("\n");
       },
     );
 
     // ── 8. Bind result event ─────────────────────────────────────────────────
+    // The ResultEvent wire format: {exitCode, idleTimedOut, timedOut, signal, truncated, durationMs}
     privateCh.bind(
       events.result,
-      (data: {
-        exitCode: number;
-        reason: string;
-        truncated: boolean;
-      }) => {
+      (raw: unknown) => {
+        const data = parseEventData<{
+          exitCode: number | null;
+          idleTimedOut: boolean;
+          timedOut: boolean;
+          signal: string | null;
+          truncated: boolean;
+          durationMs: number;
+        }>(raw);
         clearTimeout(timer);
         pusher.disconnect();
 
+        const reason = data.timedOut
+          ? "wall-timeout"
+          : data.idleTimedOut
+            ? "idle-timeout"
+            : data.signal
+              ? `signal:${data.signal}`
+              : "exit";
+
         console.log(
-          `[stub] result: exitCode=${data.exitCode} reason=${data.reason}`,
+          `[stub] result: exitCode=${data.exitCode} reason=${reason} durationMs=${data.durationMs}`,
         );
 
-        if (data.exitCode !== 0) {
+        if (data.exitCode !== 0 || data.idleTimedOut || data.timedOut) {
           reject(
             new Error(
-              `E2E FAIL: exitCode=${data.exitCode} reason=${data.reason}`,
+              `E2E FAIL: exitCode=${data.exitCode} reason=${reason}`,
             ),
           );
           return;

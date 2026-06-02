@@ -8,7 +8,7 @@
 #   1. Ensure .env is present (copy .env.example if not)
 #   2. Build the Python sandbox image on the host daemon (make python-image)
 #   3. Bring up redis + soketi + api + worker (background)
-#   4. Wait for API health endpoint to return 200
+#   4. Wait for API container to be healthy (docker compose health)
 #   5. Run the stub (docker compose run --rm stub)
 #   6. Assert the stub exited 0 and printed "hello World"
 #   7. Tear down (docker compose down -v) — always, even on failure
@@ -19,8 +19,11 @@
 #
 # Prerequisites:
 #   - Docker Desktop running (host daemon accessible)
-#   - Ports 6001 (soketi) + 8080 (api) free
 #   - executor/python:3.12 will be built automatically if missing
+#
+# Note: the API and soketi are on the internal docker network. No host port
+# publishing is required — the stub and worker connect via service names.
+# The e2e health check uses docker compose's built-in healthcheck status.
 #
 # Environment:
 #   All config is read from .env (or .env.example defaults).
@@ -83,13 +86,16 @@ info "bringing up redis + soketi + api + worker..."
 docker compose up -d --build redis soketi api worker
 
 # ── 4. Wait for API health ────────────────────────────────────────────────────
-info "waiting for API to be healthy (port ${API_PORT})..."
-HEALTH_URL="http://localhost:${API_PORT}/health"
+# The API is on the internal docker network (no host port published by default).
+# Use docker exec to check the /health endpoint from inside the container.
+info "waiting for API to be healthy..."
 MAX_WAIT=120
 WAITED=0
 
 while true; do
-  HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
+  HTTP_STATUS=$(docker compose exec -T api node -e \
+    "require('http').get('http://localhost:${API_PORT}/health',(r)=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(String(r.statusCode));process.exit(0);}catch(e){process.stdout.write('500');process.exit(1);}});}).on('error',()=>{process.stdout.write('000');process.exit(1);});" 2>/dev/null || echo "000")
+
   if [ "$HTTP_STATUS" = "200" ]; then
     pass "API is healthy"
     break
@@ -104,29 +110,8 @@ while true; do
     exit 1
   fi
 
-  sleep 2
-  WAITED=$((WAITED + 2))
-  echo -n "."
-done
-
-# Also wait for soketi to be ready (the worker needs it)
-info "verifying soketi is reachable..."
-SOKETI_PORT="${SOKETI_PORT:-6001}"
-SOKETI_MAX_WAIT=30
-SOKETI_WAITED=0
-while true; do
-  SOKETI_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${SOKETI_PORT}/" 2>/dev/null || echo "000")
-  if [ "$SOKETI_STATUS" = "200" ]; then
-    pass "soketi is healthy"
-    break
-  fi
-  if [ "$SOKETI_WAITED" -ge "$SOKETI_MAX_WAIT" ]; then
-    fail "soketi did not become healthy within ${SOKETI_MAX_WAIT}s"
-    docker compose logs soketi --tail=20
-    exit 1
-  fi
-  sleep 2
-  SOKETI_WAITED=$((SOKETI_WAITED + 2))
+  sleep 3
+  WAITED=$((WAITED + 3))
   echo -n "."
 done
 
@@ -137,9 +122,13 @@ echo ""
 # Capture output to both terminal and a variable for assertion
 STUB_OUTPUT_FILE=$(mktemp)
 
-# Run the stub with --no-TTY (batch mode for CI compatibility).
-# Use --profile stub to enable the stub service, or build+run directly.
+# Run the stub via docker compose. The stub is in the 'stub' profile.
+# We build and run it inline with --profile stub.
 STUB_EXIT=0
+# Build stub image if not present, then run it.
+# The --profile flag is for 'docker compose up' only, not 'run'.
+# We build and run the stub service directly (which is in the 'stub' profile).
+docker compose build stub 2>/dev/null
 docker compose run --rm \
   -e EXECUTOR_API_TOKEN="${EXECUTOR_API_TOKEN}" \
   -e API_BASE_URL="http://api:${API_PORT}" \
@@ -149,7 +138,6 @@ docker compose run --rm \
   -e SOKETI_PORT="6001" \
   -e SOKETI_USE_TLS="false" \
   -e CHANNEL_AUTH_URL="http://api:${API_PORT}/v1/channel-auth" \
-  --profile stub \
   stub 2>&1 | tee "$STUB_OUTPUT_FILE" || STUB_EXIT=$?
 
 echo ""

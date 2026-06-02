@@ -48,8 +48,11 @@ services:
       SOKETI_DEFAULT_APP_SECRET: ${SOKETI_APP_SECRET:-code-runner-secret}
       SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "false"
       SOKETI_DEBUG: "0"
-    ports:
-      - "${SOKETI_PORT:-6001}:6001"
+    # soketi is on the internal docker network; the stub connects via the
+    # service name "soketi:6001" — no host port needed for the E2E.
+    # Expose to host only for external client development (optional, may conflict
+    # if another soketi instance is already running on the host).
+    # To expose: add  ports: ["${SOKETI_PORT:-6001}:6001"]  here.
     networks:
       - code-runner
     healthcheck:
@@ -79,8 +82,6 @@ services:
       ENABLE_CHANNEL_AUTH: "true"
       # The languages dir inside the container (bound via the build context)
       LANGUAGES_DIR: /app/languages
-    ports:
-      - "${API_PORT:-8080}:${API_PORT:-8080}"
     depends_on:
       redis:
         condition: service_healthy

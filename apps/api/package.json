@@ -6,6 +6,7 @@
   "description": "Hono API gateway for the code-runner service.",
   "scripts": {
     "dev": "node --experimental-strip-types src/server.ts",
+    "start": "tsx src/server.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^3.2.0"
   }

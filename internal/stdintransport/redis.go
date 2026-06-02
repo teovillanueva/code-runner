@@ -47,12 +47,29 @@ func (t *RedisTransport) Publish(ctx context.Context, jobID string, chunk []byte
 // SUBSCRIBEing keys.StdinChannel(jobID). A goroutine reads the channel and
 // invokes handler(chunk) per message. The returned Subscription's Close()
 // unsubscribes and stops the goroutine; Close is idempotent (sync.Once).
+//
+// The API publishes StdinMessage JSON ({chunk: "..."}) to this channel.
+// This implementation decodes the JSON and passes the raw chunk bytes to the
+// handler — the handler receives the decoded stdin bytes, not the JSON envelope.
 func (t *RedisTransport) Subscribe(ctx context.Context, jobID string, handler func(chunk []byte)) (Subscription, error) {
 	pubsub := t.client.Subscribe(ctx, keys.StdinChannel(jobID))
 
 	sub := &redisSubscription{
-		pubsub:  pubsub,
-		handler: func(payload string) { handler([]byte(payload)) },
+		pubsub: pubsub,
+		handler: func(payload string) {
+			// Decode the StdinMessage JSON envelope published by the API.
+			// The API publishes: JSON.stringify({ chunk: "<raw_bytes>" })
+			// We extract the "chunk" field and pass its bytes to the handler.
+			var msg wire.StdinMessage
+			if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+				// Malformed payload — drop silently (fire-and-forget semantics).
+				return
+			}
+			if len(msg.Chunk) == 0 {
+				return
+			}
+			handler([]byte(msg.Chunk))
+		},
 	}
 	sub.start(ctx)
 	return sub, nil
