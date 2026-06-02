@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-runner.dev/schema/wire.json",
+  "title": "CodeRunnerWire",
+  "description": "Single source of truth for every message exchanged between the API and the worker, plus the manifest and public API payloads. TS types + zod validators + Go structs are generated from this file. Do not edit generated artifacts by hand.",
+  "type": "object",
+  "$defs": {
+    "Limits": {
+      "title": "Limits",
+      "description": "Resource limits for a sandbox. The three clocks (wall/idle/cpu) plus memory, pids and output caps.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wallTimeMs": { "type": "integer", "minimum": 1, "description": "Max total lifetime of the session in ms. Kills unconditionally." },
+        "idleMs": { "type": "integer", "minimum": 1, "description": "Max ms with no stdout and no stdin before the sandbox is killed." },
+        "cpuMs": { "type": "integer", "minimum": 1, "description": "Max accumulated CPU time in ms (cgroup), independent of wall-clock." },
+        "memoryMb": { "type": "integer", "minimum": 1, "description": "Memory cap in MiB. memory == memory-swap (no swap)." },
+        "pids": { "type": "integer", "minimum": 1, "description": "Max number of processes/threads (pids-limit)." },
+        "outputKb": { "type": "integer", "minimum": 1, "description": "Max combined stdout+stderr in KiB before truncation." }
+      },
+      "required": ["wallTimeMs", "idleMs", "cpuMs", "memoryMb", "pids", "outputKb"]
+    },
+    "LimitsOverride": {
+      "title": "LimitsOverride",
+      "description": "Optional per-request override of a subset of Limits.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wallTimeMs": { "type": "integer", "minimum": 1 },
+        "idleMs": { "type": "integer", "minimum": 1 },
+        "cpuMs": { "type": "integer", "minimum": 1 },
+        "memoryMb": { "type": "integer", "minimum": 1 },
+        "pids": { "type": "integer", "minimum": 1 },
+        "outputKb": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "FileInput": {
+      "title": "FileInput",
+      "description": "A single source file submitted by the caller.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Relative file name written into the sandbox workspace." },
+        "content": { "type": "string", "description": "UTF-8 file content." }
+      },
+      "required": ["name", "content"]
+    },
+    "Manifest": {
+      "title": "Manifest",
+      "description": "A language package manifest (languages/<lang-version>/manifest.json).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "language": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "aliases": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "image": { "type": "string", "minLength": 1, "description": "Pre-built image with all libs baked in (no runtime dependency resolution)." },
+        "entrypoint": { "type": "string", "minLength": 1, "description": "Main file name, e.g. main.py." },
+        "compile": {
+          "description": "Optional compile command (argv). null for interpreted languages.",
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
+        "run": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Run command (argv)." },
+        "interactive": { "type": "boolean", "description": "Whether the language supports a live interactive stdin session." },
+        "defaultLimits": { "$ref": "#/$defs/Limits" }
+      },
+      "required": ["language", "version", "aliases", "image", "entrypoint", "compile", "run", "interactive", "defaultLimits"]
+    },
+    "LanguageInfo": {
+      "title": "LanguageInfo",
+      "description": "Public language descriptor returned by GET /v1/languages.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "language": { "type": "string" },
+        "version": { "type": "string" },
+        "aliases": { "type": "array", "items": { "type": "string" } },
+        "interactive": { "type": "boolean" }
+      },
+      "required": ["language", "version", "aliases", "interactive"]
+    },
+    "ExecuteRequest": {
+      "title": "ExecuteRequest",
+      "description": "Body of POST /v1/execute.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "language": { "type": "string", "minLength": 1, "description": "Language name or alias." },
+        "version": { "type": "string", "description": "Optional explicit version; if omitted the only/most-recent match is used." },
+        "files": { "type": "array", "items": { "$ref": "#/$defs/FileInput" }, "minItems": 1 },
+        "limits": { "$ref": "#/$defs/LimitsOverride" }
+      },
+      "required": ["language", "files"]
+    },
+    "ExecuteResponse": {
+      "title": "ExecuteResponse",
+      "description": "202 response of POST /v1/execute.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jobId": { "type": "string" },
+        "channel": { "type": "string", "description": "soketi channel the client must subscribe to (private-run-<jobId>)." },
+        "status": { "type": "string", "const": "queued" }
+      },
+      "required": ["jobId", "channel", "status"]
+    },
+    "JobSpec": {
+      "title": "JobSpec",
+      "description": "The fully-resolved job the API enqueues for the worker. The API resolves the manifest so the worker stays language-agnostic at runtime.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jobId": { "type": "string" },
+        "channel": { "type": "string" },
+        "language": { "type": "string" },
+        "version": { "type": "string" },
+        "image": { "type": "string" },
+        "entrypoint": { "type": "string" },
+        "compile": { "type": ["array", "null"], "items": { "type": "string" } },
+        "run": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "interactive": { "type": "boolean" },
+        "files": { "type": "array", "items": { "$ref": "#/$defs/FileInput" }, "minItems": 1 },
+        "limits": { "$ref": "#/$defs/Limits" },
+        "enqueuedAtMs": { "type": "integer", "description": "Unix epoch ms when the API enqueued the job." }
+      },
+      "required": ["jobId", "channel", "language", "version", "image", "entrypoint", "compile", "run", "interactive", "files", "limits", "enqueuedAtMs"]
+    },
+    "JobState": {
+      "title": "JobState",
+      "description": "Lifecycle state of a job.",
+      "type": "string",
+      "enum": ["queued", "starting", "running", "done", "killed", "error"]
+    },
+    "JobStatus": {
+      "title": "JobStatus",
+      "description": "Response of GET /v1/jobs/:id.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jobId": { "type": "string" },
+        "channel": { "type": "string" },
+        "language": { "type": "string" },
+        "version": { "type": "string" },
+        "state": { "$ref": "#/$defs/JobState" },
+        "updatedAtMs": { "type": "integer" }
+      },
+      "required": ["jobId", "channel", "language", "version", "state", "updatedAtMs"]
+    },
+    "StdinMessage": {
+      "title": "StdinMessage",
+      "description": "Published on stdin:<jobId>. Carries a chunk to write to the process stdin.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chunk": { "type": "string", "description": "Bytes to write to stdin (UTF-8)." }
+      },
+      "required": ["chunk"]
+    },
+    "ControlType": {
+      "title": "ControlType",
+      "type": "string",
+      "enum": ["start", "kill", "stdin_close"]
+    },
+    "ControlMessage": {
+      "title": "ControlMessage",
+      "description": "Published on ctrl:<jobId>. Routes lifecycle control to the owning worker.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "#/$defs/ControlType" }
+      },
+      "required": ["type"]
+    },
+    "StagePhase": {
+      "title": "StagePhase",
+      "type": "string",
+      "enum": ["queued", "compiling", "running"]
+    },
+    "StageEvent": {
+      "title": "StageEvent",
+      "description": "soketi event 'stage' on private-run-<jobId>.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "$ref": "#/$defs/StagePhase" }
+      },
+      "required": ["phase"]
+    },
+    "OutputChunkEvent": {
+      "title": "OutputChunkEvent",
+      "description": "soketi events 'stdout' and 'stderr' on private-run-<jobId>.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chunk": { "type": "string" },
+        "seq": { "type": "integer", "description": "Monotonic sequence number for ordering." }
+      },
+      "required": ["chunk", "seq"]
+    },
+    "ResultEvent": {
+      "title": "ResultEvent",
+      "description": "Terminal soketi event 'result' on private-run-<jobId>.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exitCode": { "type": ["integer", "null"] },
+        "signal": { "type": ["string", "null"] },
+        "timedOut": { "type": "boolean", "description": "Killed by the wall-clock or cpu clock." },
+        "idleTimedOut": { "type": "boolean", "description": "Killed by the idle clock." },
+        "truncated": { "type": "boolean", "description": "Output exceeded outputKb and was truncated." },
+        "durationMs": { "type": "integer" }
+      },
+      "required": ["exitCode", "signal", "timedOut", "idleTimedOut", "truncated", "durationMs"]
+    }
+  }
+}

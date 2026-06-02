@@ -1,0 +1,25 @@
+{
+  "name": "@code-runner/contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Single-source-of-truth wire contract (JSON Schema) → generated TS types + zod validators + Go structs.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./schema/wire.schema.json"
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "check": "node scripts/generate.mjs && git diff --exit-code -- gen schema || (echo '\\n✗ contract drift: regenerate with `pnpm contract` and commit' && exit 1)",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.4",
+    "json-schema-to-zod": "^2.8.1",
+    "typescript": "^5.7.2",
+    "zod": "^3.24.1"
+  }
+}

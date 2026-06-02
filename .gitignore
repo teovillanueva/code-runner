@@ -1,0 +1,24 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# Go
+/bin/
+*.test
+coverage.out
+
+# Env
+.env
+.env.local
+
+# OS / editors
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local scratch
+/tmp/
+*.log

@@ -1,0 +1,219 @@
+// Code generated from schema/wire.schema.json by `pnpm contract`. DO NOT EDIT.
+
+/**
+ * Lifecycle state of a job.
+ */
+export type JobState = "queued" | "starting" | "running" | "done" | "killed" | "error";
+export type ControlType = "start" | "kill" | "stdin_close";
+export type StagePhase = "queued" | "compiling" | "running";
+
+/**
+ * Resource limits for a sandbox. The three clocks (wall/idle/cpu) plus memory, pids and output caps.
+ */
+export interface Limits {
+  /**
+   * Max total lifetime of the session in ms. Kills unconditionally.
+   */
+  wallTimeMs: number;
+  /**
+   * Max ms with no stdout and no stdin before the sandbox is killed.
+   */
+  idleMs: number;
+  /**
+   * Max accumulated CPU time in ms (cgroup), independent of wall-clock.
+   */
+  cpuMs: number;
+  /**
+   * Memory cap in MiB. memory == memory-swap (no swap).
+   */
+  memoryMb: number;
+  /**
+   * Max number of processes/threads (pids-limit).
+   */
+  pids: number;
+  /**
+   * Max combined stdout+stderr in KiB before truncation.
+   */
+  outputKb: number;
+}
+/**
+ * Optional per-request override of a subset of Limits.
+ */
+export interface LimitsOverride {
+  wallTimeMs?: number;
+  idleMs?: number;
+  cpuMs?: number;
+  memoryMb?: number;
+  pids?: number;
+  outputKb?: number;
+}
+/**
+ * A single source file submitted by the caller.
+ */
+export interface FileInput {
+  /**
+   * Relative file name written into the sandbox workspace.
+   */
+  name: string;
+  /**
+   * UTF-8 file content.
+   */
+  content: string;
+}
+/**
+ * A language package manifest (languages/<lang-version>/manifest.json).
+ */
+export interface Manifest {
+  language: string;
+  version: string;
+  aliases: string[];
+  /**
+   * Pre-built image with all libs baked in (no runtime dependency resolution).
+   */
+  image: string;
+  /**
+   * Main file name, e.g. main.py.
+   */
+  entrypoint: string;
+  /**
+   * Optional compile command (argv). null for interpreted languages.
+   */
+  compile: string[] | null;
+  /**
+   * Run command (argv).
+   *
+   * @minItems 1
+   */
+  run: [string, ...string[]];
+  /**
+   * Whether the language supports a live interactive stdin session.
+   */
+  interactive: boolean;
+  defaultLimits: Limits;
+}
+/**
+ * Public language descriptor returned by GET /v1/languages.
+ */
+export interface LanguageInfo {
+  language: string;
+  version: string;
+  aliases: string[];
+  interactive: boolean;
+}
+/**
+ * Body of POST /v1/execute.
+ */
+export interface ExecuteRequest {
+  /**
+   * Language name or alias.
+   */
+  language: string;
+  /**
+   * Optional explicit version; if omitted the only/most-recent match is used.
+   */
+  version?: string;
+  /**
+   * @minItems 1
+   */
+  files: [FileInput, ...FileInput[]];
+  limits?: LimitsOverride;
+}
+/**
+ * 202 response of POST /v1/execute.
+ */
+export interface ExecuteResponse {
+  jobId: string;
+  /**
+   * soketi channel the client must subscribe to (private-run-<jobId>).
+   */
+  channel: string;
+  status: "queued";
+}
+/**
+ * The fully-resolved job the API enqueues for the worker. The API resolves the manifest so the worker stays language-agnostic at runtime.
+ */
+export interface JobSpec {
+  jobId: string;
+  channel: string;
+  language: string;
+  version: string;
+  image: string;
+  entrypoint: string;
+  compile: string[] | null;
+  /**
+   * @minItems 1
+   */
+  run: [string, ...string[]];
+  interactive: boolean;
+  /**
+   * @minItems 1
+   */
+  files: [FileInput, ...FileInput[]];
+  limits: Limits;
+  /**
+   * Unix epoch ms when the API enqueued the job.
+   */
+  enqueuedAtMs: number;
+}
+/**
+ * Response of GET /v1/jobs/:id.
+ */
+export interface JobStatus {
+  jobId: string;
+  channel: string;
+  language: string;
+  version: string;
+  state: JobState;
+  updatedAtMs: number;
+}
+/**
+ * Published on stdin:<jobId>. Carries a chunk to write to the process stdin.
+ */
+export interface StdinMessage {
+  /**
+   * Bytes to write to stdin (UTF-8).
+   */
+  chunk: string;
+}
+/**
+ * Published on ctrl:<jobId>. Routes lifecycle control to the owning worker.
+ */
+export interface ControlMessage {
+  type: ControlType;
+}
+/**
+ * soketi event 'stage' on private-run-<jobId>.
+ */
+export interface StageEvent {
+  phase: StagePhase;
+}
+/**
+ * soketi events 'stdout' and 'stderr' on private-run-<jobId>.
+ */
+export interface OutputChunkEvent {
+  chunk: string;
+  /**
+   * Monotonic sequence number for ordering.
+   */
+  seq: number;
+}
+/**
+ * Terminal soketi event 'result' on private-run-<jobId>.
+ */
+export interface ResultEvent {
+  exitCode: number | null;
+  signal: string | null;
+  /**
+   * Killed by the wall-clock or cpu clock.
+   */
+  timedOut: boolean;
+  /**
+   * Killed by the idle clock.
+   */
+  idleTimedOut: boolean;
+  /**
+   * Output exceeded outputKb and was truncated.
+   */
+  truncated: boolean;
+  durationMs: number;
+}
