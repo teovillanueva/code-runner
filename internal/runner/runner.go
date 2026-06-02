@@ -14,6 +14,19 @@ import (
 	"github.com/teovillanueva/code-runner/packages/contract/gen/go/wire"
 )
 
+// CompileResult is the terminal outcome of a compile pre-step.
+// It carries the exit code and elapsed wall time of the compile command.
+// The caller inspects ExitCode to decide whether to proceed to the run step.
+type CompileResult struct {
+	// ExitCode is the exit status of the compile command.
+	// A value of 0 means success; any non-zero value means failure.
+	ExitCode int
+
+	// DurationMs is the wall-clock time taken by the compile step in
+	// milliseconds (from exec start to exec completion).
+	DurationMs int
+}
+
 // Result is the terminal outcome of a sandbox execution. It mirrors the shape
 // of wire.ResultEvent so the worker can publish it directly to soketi.
 type Result struct {
@@ -107,4 +120,23 @@ type Sandbox interface {
 	// The caller MUST defer Cleanup() after Create() returns successfully so
 	// no slot leaks on any exit path (normal, error, panic).
 	Cleanup() error
+
+	// Compile executes a compile command INSIDE the same hardened sandbox that
+	// was created by Runner.Create. The argv comes exclusively from the
+	// manifest compile field — no language-name branching in callers.
+	//
+	// The compile command runs under the same sandbox hardening as the run
+	// step (network=none, cap-drop ALL, non-root, read-only rootfs, writable
+	// /workspace). Any artifact produced in /workspace (e.g. /workspace/prog)
+	// persists in the container for the subsequent run step.
+	//
+	// The stderr callback is called synchronously for each stderr chunk from
+	// the compile command. Callers forward these to the publisher so the
+	// client sees compiler diagnostics.
+	//
+	// Returns a CompileResult with the exit code and duration. A non-zero
+	// ExitCode means compilation failed; the caller MUST NOT proceed to the
+	// run step. An error return indicates an infrastructure failure (Docker
+	// exec failed, context cancelled, etc.) — treat it as a failed compile.
+	Compile(ctx context.Context, argv []string, stderr func([]byte)) (CompileResult, error)
 }

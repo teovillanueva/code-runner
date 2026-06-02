@@ -144,6 +144,13 @@ func (s *scriptedSandbox) Cleanup() error {
 	return nil
 }
 
+// Compile satisfies the extended Sandbox interface. The scripted sandbox is
+// used only for worker-layer tests that don't exercise the compile path — so
+// this always returns exit 0 unless overridden by compileResult.
+func (s *scriptedSandbox) Compile(_ context.Context, _ []string, _ func([]byte)) (runner.CompileResult, error) {
+	return runner.CompileResult{ExitCode: 0}, nil
+}
+
 func (s *scriptedSandbox) cleanups() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

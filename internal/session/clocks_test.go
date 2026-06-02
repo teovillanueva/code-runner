@@ -84,6 +84,12 @@ func (f *fakeSandbox) kills() int {
 	return f.killCount
 }
 
+// Compile satisfies the updated runner.Sandbox interface. The session-layer
+// tests do not exercise the compile path, so this is always a no-op exit 0.
+func (f *fakeSandbox) Compile(_ context.Context, _ []string, _ func([]byte)) (runner.CompileResult, error) {
+	return runner.CompileResult{ExitCode: 0}, nil
+}
+
 func (f *fakeSandbox) cleanups() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

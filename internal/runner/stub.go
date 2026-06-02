@@ -67,6 +67,14 @@ func (s *stubSandbox) Cleanup() error {
 	return nil
 }
 
+// Compile is a no-op for the stub. It returns a zero-exit CompileResult
+// immediately without executing argv. If a stderrFn is provided it is not
+// called (no compile output in the stub). This satisfies the Sandbox interface
+// and serves as the baseline for unit tests.
+func (s *stubSandbox) Compile(_ context.Context, _ []string, _ func([]byte)) (CompileResult, error) {
+	return CompileResult{ExitCode: 0}, nil
+}
+
 // syncBuffer wraps bytes.Buffer with a mutex to satisfy io.WriteCloser safely.
 type syncBuffer struct {
 	mu     sync.Mutex

@@ -62,6 +62,13 @@ func (s *closureSandbox) Cleanup() error {
 	return nil
 }
 
+// Compile satisfies the updated Sandbox interface.
+// closureSandbox is used only for session-layer tests (Result flags, cleanup
+// idempotency) which do not exercise the compile path — so a no-op is correct.
+func (s *closureSandbox) Compile(_ context.Context, _ []string, _ func([]byte)) (runner.CompileResult, error) {
+	return runner.CompileResult{ExitCode: 0}, nil
+}
+
 // eofReader always returns 0, io.EOF immediately.
 type eofReader struct{}
 

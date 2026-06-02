@@ -32,6 +32,16 @@ import (
 	"github.com/teovillanueva/code-runner/packages/contract/gen/go/wire"
 )
 
+// compileHoldCmd is the entrypoint used when spec.Compile is non-nil: a
+// generic long-lived process that keeps the container alive while the compile
+// exec step runs and produces its artifact, then keeps the container alive for
+// the subsequent run step. We use "cat" reading from /dev/null so it blocks
+// indefinitely without consuming CPU.
+//
+// This is driven purely from spec.Compile being non-nil — never from a language
+// name — so it works for any compiled language.
+var compileHoldCmd = strslice.StrSlice{"cat"}
+
 // Compile-time assertions: DockerSocketRunner must implement Runner;
 // dockerSandbox must implement Sandbox.
 var _ Runner = (*DockerSocketRunner)(nil)
@@ -153,9 +163,19 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 	}
 
 	// ── Container config ────────────────────────────────────────────────────
+	// When spec.Compile is non-nil, start the container with a generic long-
+	// lived hold command (compileHoldCmd) rather than the run argv. This keeps
+	// the container alive through: compile exec → artifact in /workspace →
+	// run exec. When spec.Compile is nil the container starts with spec.Run
+	// exactly as before — byte-for-byte unchanged Python path.
+	containerCmd := strslice.StrSlice(spec.Run)
+	if spec.Compile != nil {
+		containerCmd = compileHoldCmd
+	}
+
 	containerCfg := &container.Config{
 		Image:        spec.Image,
-		Cmd:          strslice.StrSlice(spec.Run),
+		Cmd:          containerCmd,
 		WorkingDir:   sandboxWorkDir,
 		User:         sandboxUser,
 		AttachStdin:  true,
@@ -509,6 +529,78 @@ func (s *dockerSandbox) CPUReader() CPUUsageFunc {
 // when calling session.Run.
 func (s *dockerSandbox) Limits() wire.Limits {
 	return s.spec.Limits
+}
+
+// Compile executes argv as an exec inside the already-running hardened
+// container. It inherits all sandbox hardening (network=none, cap-drop ALL,
+// non-root user, read-only rootfs, writable /workspace) because it runs
+// inside the same container — no new HostConfig grants are added.
+//
+// stdout from the compile command is discarded (compilers write diagnostics
+// to stderr). stderr bytes are forwarded to the stderr callback so the worker
+// can publish compiler diagnostics to the client.
+//
+// The produced artifact (e.g. /workspace/prog or /tmp/prog) remains in the
+// container filesystem for the subsequent run step.
+//
+// argv comes only from the manifest compile field; no language-name branching
+// occurs here or in the callers.
+func (s *dockerSandbox) Compile(ctx context.Context, argv []string, stderrFn func([]byte)) (CompileResult, error) {
+	start := time.Now()
+
+	// Create the exec configuration. Use sandboxUser (non-root) and
+	// sandboxWorkDir to match the container's own process model exactly.
+	execCreate, err := s.cli.ContainerExecCreate(ctx, s.containerID, container.ExecOptions{
+		User:         sandboxUser,
+		WorkingDir:   sandboxWorkDir,
+		Cmd:          argv,
+		AttachStdout: true,
+		AttachStderr: true,
+		AttachStdin:  false,
+	})
+	if err != nil {
+		return CompileResult{}, fmt.Errorf("docker: Compile ExecCreate: %w", err)
+	}
+
+	// Attach to the exec so we can read its output.
+	execResp, err := s.cli.ContainerExecAttach(ctx, execCreate.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return CompileResult{}, fmt.Errorf("docker: Compile ExecAttach: %w", err)
+	}
+	defer execResp.Close()
+
+	// Demux the exec output stream. Compiler stdout is discarded; stderr is
+	// forwarded to the caller via stderrFn so the worker can publish it.
+	var stderrBuf bytes.Buffer
+	stdoutW := io.Discard
+	_, copyErr := stdcopy.StdCopy(stdoutW, &stderrBuf, execResp.Reader)
+
+	// Forward accumulated stderr to the callback.
+	if stderrBuf.Len() > 0 && stderrFn != nil {
+		stderrFn(stderrBuf.Bytes())
+	}
+
+	if copyErr != nil && copyErr != io.EOF {
+		return CompileResult{
+			DurationMs: int(time.Since(start).Milliseconds()),
+		}, fmt.Errorf("docker: Compile demux: %w", copyErr)
+	}
+
+	// Inspect the exec to retrieve the exit code.
+	inspCtx, inspCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer inspCancel()
+
+	insp, err := s.cli.ContainerExecInspect(inspCtx, execCreate.ID)
+	if err != nil {
+		return CompileResult{
+			DurationMs: int(time.Since(start).Milliseconds()),
+		}, fmt.Errorf("docker: Compile ExecInspect: %w", err)
+	}
+
+	return CompileResult{
+		ExitCode:   insp.ExitCode,
+		DurationMs: int(time.Since(start).Milliseconds()),
+	}, nil
 }
 
 // isNotFound reports whether err is a Docker "not found" error (container
