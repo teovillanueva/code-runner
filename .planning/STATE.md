@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: planning
+stopped_at: Completed 01-02-PLAN.md — Runner/Sandbox + StdinTransport interfaces + config (CFG-04).
+last_updated: "2026-06-02T19:37:36Z"
+last_activity: 2026-06-02 — 01-02: Runner/Sandbox + StdinTransport interfaces + native-Redis config constraint (CFG-04)
+progress:
+  total_phases: 7
+  completed_phases: 0
+  total_plans: 3
+  completed_plans: 3
+  percent: 4
+---
+
 # Project State
 
 ## Project Reference
@@ -10,15 +26,16 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 ## Current Position
 
 Phase: 1 of 7 (Foundation & Wire Contract)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-06-02 — Roadmap revised for the polyglot monorepo / Hono API / shared-contract / OSS spec (7 phases, 83 requirements mapped)
+Plan: 02 of 03 in current phase (Phase 1)
+Status: In progress
+Last activity: 2026-06-02 — 01-02: Runner/Sandbox + StdinTransport interfaces + native-Redis config constraint (CFG-04)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [░░░░░░░░░░] 4%
 
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 0
 - Average duration: — min
 - Total execution time: 0.0 hours
@@ -30,6 +47,7 @@ Progress: [░░░░░░░░░░] 0%
 | - | - | - | - |
 
 **Recent Trend:**
+
 - Last 5 plans: —
 - Trend: —
 
@@ -47,6 +65,8 @@ Recent decisions affecting current work:
 - [Phase 1/5]: Prod worker Redis must speak native pub/sub + blocking ops; Upstash is API-only (no TCP blocking SUBSCRIBE/BLPOP/XREAD BLOCK). Recommend a single native managed Redis/Valkey shared by API + worker.
 - [Phase 3]: Hono on Node (`@hono/node-server`), `ioredis` (TS) + `go-redis` (Go); constant-time bearer auth.
 - [Phase 4]: Abuse suite is built early (right after Python E2E) and gates the language fan-out; must run on Linux CI for real cgroup OOM/CPU behavior.
+- [01-02]: runner.Result defined inline (not aliasing wire.ResultEvent) to keep Phase 2 decoupled from the wire schema for runner-internal fields.
+- [01-02]: Config.RequiresNativeRedis() is a method (not a constant) to remain testable and support future URL-based validation.
 
 ### Pending Todos
 
@@ -75,5 +95,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-06-02
-Stopped at: Revised ROADMAP.md + STATE.md and rewrote REQUIREMENTS.md traceability for the new 7-phase structure (83/83 requirements mapped).
+Stopped at: Completed 01-02-PLAN.md — Runner/Sandbox + StdinTransport interfaces + config (CFG-04). Commits: fda830d, 575113e, 6ad9f91.
 Resume file: None
