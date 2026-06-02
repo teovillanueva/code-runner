@@ -107,7 +107,11 @@ Plans:
   3. Queue depth and full-capacity conditions surface as backpressure (`429`) rather than silently dropping work.
   4. Worker death mid-session leaves no orphaned host containers: a label-based reaper removes them and reclaims their slots.
   5. The repo documents the autoscaling-by-queue-depth and scale-to-zero mechanism per deploy target — where the scaling unit is the **worker node** (which launches its sandboxes internally and hosts N concurrent ones), not a microVM per execution — including the requirement that the worker's Redis speak native pub/sub + blocking ops (Upstash is API-only, not worker-viable); the `FlyMachinesRunner` microVM-per-execution model is noted as a v2 option.
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 05-01-PLAN.md — Worker slot semaphore (acquire-before-claim) + ephemeral workerId + Redis heartbeat/owned-jobs substrate + new keys/config + concurrency-cap test
+- [ ] 05-02-PLAN.md — Label-based dead-worker reaper (removes orphaned containers + anonymous volumes, frees slots, marks jobs error) wired into every worker + integration test
+- [ ] 05-03-PLAN.md — API job-admission 429 (queue-depth backpressure) + autoscale-by-queue-depth/scale-to-zero docs (docs/scaling.md + README) + docker compose --scale worker=2 smoke
 
 ### Phase 6: Language Fan-out
 **Goal**: Prove the manifest extensibility invariant by adding Rust, R, and SQLite as folder + image with zero core changes — including the SQLite case that stress-tests whether "language = image + compile? + run" holds for something that is not a general-purpose language.
@@ -145,6 +149,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
 | 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
-| 5. Statelessness & Scale | 0/TBD | Not started | - |
+| 5. Statelessness & Scale | 0/3 | Not started | - |
 | 6. Language Fan-out | 0/TBD | Not started | - |
 | 7. OSS Release & Deployment | 0/TBD | Not started | - |
