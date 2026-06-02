@@ -126,8 +126,8 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **TEST-04**: A program blocked on stdin is killed by the idle timeout
 - [x] **TEST-05**: `/stdin/close` (EOF) is delivered and a program reading to EOF terminates correctly
 - [x] **TEST-06**: A giant-output program is truncated with `truncated=true` and does not exhaust memory
-- [ ] **TEST-07**: The abuse suite runs on Linux CI (not only macOS dev) so real cgroup OOM/CPU behavior is exercised
-- [ ] **TEST-08**: The abuse suite is built early — immediately after the Python end-to-end path — and gates the language fan-out
+- [x] **TEST-07**: The abuse suite runs on Linux CI (not only macOS dev) so real cgroup OOM/CPU behavior is exercised
+- [x] **TEST-08**: The abuse suite is built early — immediately after the Python end-to-end path — and gates the language fan-out
 
 ### Open Source & Documentation
 
@@ -249,8 +249,8 @@ Each v1 requirement maps to exactly one phase.
 | TEST-04 | Phase 4 | Complete |
 | TEST-05 | Phase 4 | Complete |
 | TEST-06 | Phase 4 | Complete |
-| TEST-07 | Phase 4 | Pending |
-| TEST-08 | Phase 4 | Pending |
+| TEST-07 | Phase 4 | Complete |
+| TEST-08 | Phase 4 | Complete |
 | OSS-01 | Phase 1 | Pending |
 | OSS-02 | Phase 1 | Pending |
 | DOCS-01 | Phase 7 | Pending |

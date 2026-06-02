@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 1: Foundation & Wire Contract** - Monorepo layout, JSON-Schema wire contract codegen + drift check, manifest schema/loader, `Runner` interface, OSS scaffolding — ends at a human approval gate before coding
 - [x] **Phase 2: Sandbox Hardening & Runner** - Go `DockerSocketRunner`: full hardening flags, three clocks, tree-kill, output caps, idempotent `sync.Once` cleanup (completed 2026-06-02)
 - [x] **Phase 3: Interactive Python End-to-End** - Hono API (all `/v1/*`), Redis queue + stdin/control routing, worker session, soketi publisher, Python package, docker compose dev stack — full interactive demo works (completed 2026-06-02)
-- [ ] **Phase 4: Abuse Suite & Safety Validation** - Fork bomb, OOM, infinite loop, idle, EOF, giant output on Linux CI — gates the language fan-out
+- [x] **Phase 4: Abuse Suite & Safety Validation** - Fork bomb, OOM, infinite loop, idle, EOF, giant output on Linux CI — gates the language fan-out (completed 2026-06-02)
 - [ ] **Phase 5: Statelessness & Scale** - Slot capacity, backpressure 429, reliable claim, dead-worker reaper, N replicas, autoscaling-by-queue-depth + scale-to-zero design, native-Redis worker constraint
 - [ ] **Phase 6: Language Fan-out** - Rust (compile stage), R 4.4, SQLite 3 (interactive SQL shell) added as manifest + Dockerfile, zero core changes
 - [ ] **Phase 7: OSS Release & Deployment** - README quickstart, API contract, add-a-language guide, deployment-per-target, channel-auth documentation
@@ -94,7 +94,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [x] 04-01-PLAN.md — Adversarial abuse suite (fork bomb, OOM, infinite loop, idle, EOF, giant output + CPU-evasion) through the full worker path, build-tagged + `make abuse`, run green on cgroup v2
-- [ ] 04-02-PLAN.md — Linux CI workflow (.github/workflows/abuse.yml) running `make abuse` on ubuntu-latest + README gate note tying the language fan-out to a green abuse run
+- [x] 04-02-PLAN.md — Linux CI workflow (.github/workflows/abuse.yml) running `make abuse` on ubuntu-latest + README gate note tying the language fan-out to a green abuse run
 
 ### Phase 5: Statelessness & Scale
 **Goal**: Make the API and workers safely horizontally scalable — slot-bounded capacity, backpressure instead of dropped work, reliable claim, a reaper that prevents container/slot leaks on worker death, and a documented autoscaling/scale-to-zero design under the native-Redis-for-worker constraint.
@@ -144,7 +144,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
-| 4. Abuse Suite & Safety Validation | 1/2 | In Progress|  |
+| 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
 | 6. Language Fan-out | 0/TBD | Not started | - |
 | 7. OSS Release & Deployment | 0/TBD | Not started | - |
