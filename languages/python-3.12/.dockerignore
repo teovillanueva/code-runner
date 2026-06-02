@@ -1,0 +1,4 @@
+# Keep the build context minimal — only Dockerfile and this file are needed.
+# Exclude everything that is not part of the image definition.
+*
+!Dockerfile
