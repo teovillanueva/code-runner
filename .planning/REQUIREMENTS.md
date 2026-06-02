@@ -36,7 +36,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **RUN-02**: A `DockerSocketRunner` launches an ephemeral container per execution via the mounted host socket (no Docker-in-Docker)
 - [x] **RUN-03**: The runner attaches and demuxes stdout/stderr separately and forwards them to the session
 - [x] **RUN-04**: `kill` destroys the whole container (process tree), never just a PID
-- [ ] **WRK-01**: The worker consumes jobs from the Redis queue
+- [x] **WRK-01**: The worker consumes jobs from the Redis queue
 - [ ] **WRK-02**: The worker subscribes to `stdin:<jobId>` only for jobs it owns and writes chunks to the process pipe — no service discovery
 - [ ] **WRK-03**: The worker keeps the process alive with stdin/stdout/stderr pipes open (interactive session, not batch-ephemeral)
 - [ ] **WRK-04**: The worker is stateless and coupled to the rest of the system only through Redis (jobs + stdin) and soketi (output); it never calls the API
@@ -49,9 +49,9 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### stdin Routing
 
-- [ ] **STDIN-01**: stdin is routed without service discovery: the API `PUBLISH`es to `stdin:<jobId>` and the owning worker writes it to the process pipe
+- [x] **STDIN-01**: stdin is routed without service discovery: the API `PUBLISH`es to `stdin:<jobId>` and the owning worker writes it to the process pipe
 - [ ] **STDIN-02**: `/stdin/close` delivers EOF to the process exactly once
-- [ ] **STDIN-03**: Control messages (start/kill) route to the owning worker via a per-job control channel
+- [x] **STDIN-03**: Control messages (start/kill) route to the owning worker via a per-job control channel
 - [ ] **STDIN-04**: The stdin transport sits behind an interface so Redis pub/sub (MVP) can be swapped for Redis Streams (`XREAD BLOCK`) later without core changes
 
 ### Sandbox Hardening
@@ -195,16 +195,16 @@ Each v1 requirement maps to exactly one phase.
 | RUN-02 | Phase 2 | Complete |
 | RUN-03 | Phase 2 | Complete |
 | RUN-04 | Phase 2 | Complete |
-| WRK-01 | Phase 3 | Pending |
+| WRK-01 | Phase 3 | Complete |
 | WRK-02 | Phase 3 | Pending |
 | WRK-03 | Phase 3 | Pending |
 | WRK-04 | Phase 3 | Pending |
 | SESS-01 | Phase 3 | Pending |
 | SESS-02 | Phase 3 | Pending |
 | SESS-03 | Phase 3 | Pending |
-| STDIN-01 | Phase 3 | Pending |
+| STDIN-01 | Phase 3 | Complete |
 | STDIN-02 | Phase 3 | Pending |
-| STDIN-03 | Phase 3 | Pending |
+| STDIN-03 | Phase 3 | Complete |
 | STDIN-04 | Phase 1 | Pending |
 | HARD-01 | Phase 2 | Complete |
 | HARD-02 | Phase 2 | Complete |
