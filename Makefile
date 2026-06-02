@@ -57,6 +57,10 @@ up: ## Bring up the local dev stack
 down: ## Tear down the local dev stack
 	docker compose down -v
 
+.PHONY: test-redis
+test-redis: ## Run Redis-dependent integration tests (requires TEST_REDIS_URL or local Redis on :6379)
+	go test ./internal/redisx/... ./internal/stdintransport/... ./internal/jobstore/... -run Redis -v -count=1
+
 .PHONY: e2e
 e2e: ## Run the end-to-end interactive demo against the local stack
 	./scripts/e2e.sh
