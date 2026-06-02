@@ -76,7 +76,7 @@ Plans:
 - [x] 03-01-PLAN.md — Go Redis layer: go-redis client, real pub/sub StdinTransport (stdin:/ctrl:), job store + BRPOP queue consumer (Wave 1)
 - [ ] 03-02-PLAN.md — Worker run loop: claim → create → start-handshake/warm-up → session.RunInteractive (publisher sinks + stdin routing) → single teardown; guarded full-Python integration test (Wave 2)
 - [x] 03-03-PLAN.md — Python 3.12 image: python:3.12-slim + numpy/pandas/requests, non-root, PYTHONUNBUFFERED unbuffered streaming (Wave 1)
-- [ ] 03-04-PLAN.md — Hono API: all /v1/* endpoints, constant-time bearer auth, generated-zod validation, jobId+channel gen, LPUSH+spec/status, PUBLISH stdin/control, 429 rate/byte-cap, optional channel-auth (Wave 1)
+- [x] 03-04-PLAN.md — Hono API: all /v1/* endpoints, constant-time bearer auth, generated-zod validation, jobId+channel gen, LPUSH+spec/status, PUBLISH stdin/control, 429 rate/byte-cap, optional channel-auth (Wave 1)
 - [ ] 03-05-PLAN.md — docker-compose + stub upstream + scripts/e2e.sh + README quickstart; blocking human-verify of the live interactive demo (Wave 3)
 **UI hint**: yes
 
@@ -140,7 +140,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 |-------|----------------|--------|-----------|
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
-| 3. Interactive Python End-to-End | 2/5 | In Progress|  |
+| 3. Interactive Python End-to-End | 3/5 | In Progress|  |
 | 4. Abuse Suite & Safety Validation | 0/TBD | Not started | - |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
 | 6. Language Fan-out | 0/TBD | Not started | - |

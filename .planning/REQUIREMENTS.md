@@ -9,17 +9,17 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### API Gateway (Hono / TypeScript)
 
-- [ ] **API-01**: `POST /v1/execute` with `{language, version, files[], limits?}` returns `202 {jobId, channel, status:"queued"}`; the API generates `jobId`+`channel` and returns before the process starts
-- [ ] **API-02**: `POST /v1/jobs/:id/start` starts the process (only valid after the client has subscribed)
-- [ ] **API-03**: `POST /v1/jobs/:id/stdin {chunk}` writes to the process stdin
-- [ ] **API-04**: `POST /v1/jobs/:id/stdin/close` closes stdin (EOF)
-- [ ] **API-05**: `POST /v1/jobs/:id/kill` terminates the session
-- [ ] **API-06**: `GET /v1/jobs/:id` returns the job status
-- [ ] **API-07**: `GET /v1/languages` lists available languages, sourced from the manifests
-- [ ] **API-08**: A Hono middleware authenticates the upstream caller with `EXECUTOR_API_TOKEN` using a constant-time comparison and rejects missing/invalid tokens
-- [ ] **API-09**: The API validates requests against the shared contract and returns clear errors for malformed payloads, unknown `language`/`version`, and unknown `jobId`
-- [ ] **API-10**: The API enforces a per-job stdin rate limit and a pending-stdin byte cap, returning `429` on overflow (backpressure)
-- [ ] **API-11**: The API is stateless and communicates with the worker **only** via Redis (enqueue job, `PUBLISH` stdin/control, read job status) — it never calls the worker directly
+- [x] **API-01**: `POST /v1/execute` with `{language, version, files[], limits?}` returns `202 {jobId, channel, status:"queued"}`; the API generates `jobId`+`channel` and returns before the process starts
+- [x] **API-02**: `POST /v1/jobs/:id/start` starts the process (only valid after the client has subscribed)
+- [x] **API-03**: `POST /v1/jobs/:id/stdin {chunk}` writes to the process stdin
+- [x] **API-04**: `POST /v1/jobs/:id/stdin/close` closes stdin (EOF)
+- [x] **API-05**: `POST /v1/jobs/:id/kill` terminates the session
+- [x] **API-06**: `GET /v1/jobs/:id` returns the job status
+- [x] **API-07**: `GET /v1/languages` lists available languages, sourced from the manifests
+- [x] **API-08**: A Hono middleware authenticates the upstream caller with `EXECUTOR_API_TOKEN` using a constant-time comparison and rejects missing/invalid tokens
+- [x] **API-09**: The API validates requests against the shared contract and returns clear errors for malformed payloads, unknown `language`/`version`, and unknown `jobId`
+- [x] **API-10**: The API enforces a per-job stdin rate limit and a pending-stdin byte cap, returning `429` on overflow (backpressure)
+- [x] **API-11**: The API is stateless and communicates with the worker **only** via Redis (enqueue job, `PUBLISH` stdin/control, read job status) — it never calls the worker directly
 
 ### Shared Wire Contract (`packages/contract`)
 
@@ -102,15 +102,15 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Configuration & Secrets (env-only)
 
-- [ ] **CFG-01**: All configuration is via env vars (`EXECUTOR_API_TOKEN`, `REDIS_URL`, `SOKETI_HOST/PORT/USE_TLS/APP_ID/APP_KEY/APP_SECRET`) — there are no configuration endpoints
-- [ ] **CFG-02**: No endpoint returns secrets, and the soketi secret is never persisted in Redis
-- [ ] **CFG-03**: soketi credentials are read from env by the worker (to trigger) and by the API (if it signs channel auth)
+- [x] **CFG-01**: All configuration is via env vars (`EXECUTOR_API_TOKEN`, `REDIS_URL`, `SOKETI_HOST/PORT/USE_TLS/APP_ID/APP_KEY/APP_SECRET`) — there are no configuration endpoints
+- [x] **CFG-02**: No endpoint returns secrets, and the soketi secret is never persisted in Redis
+- [x] **CFG-03**: soketi credentials are read from env by the worker (to trigger) and by the API (if it signs channel auth)
 - [ ] **CFG-04**: The chosen Redis must support native pub/sub and blocking operations for the worker (a managed serverless Redis that lacks TCP `SUBSCRIBE`/`BLPOP`, e.g. Upstash, is only usable for the API, not the worker)
 
 ### Channel Authorization (upstream responsibility)
 
 - [ ] **CHAN-01**: The README documents how the upstream app authorizes the browser's private soketi channel using the app key/secret (HMAC)
-- [ ] **CHAN-02**: (Optional, non-core) The API may offer a channel-auth helper behind `EXECUTOR_API_TOKEN`, clearly marked as optional
+- [x] **CHAN-02**: (Optional, non-core) The API may offer a channel-auth helper behind `EXECUTOR_API_TOKEN`, clearly marked as optional
 
 ### Dev Environment
 
@@ -174,17 +174,17 @@ Each v1 requirement maps to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| API-01 | Phase 3 | Pending |
-| API-02 | Phase 3 | Pending |
-| API-03 | Phase 3 | Pending |
-| API-04 | Phase 3 | Pending |
-| API-05 | Phase 3 | Pending |
-| API-06 | Phase 3 | Pending |
-| API-07 | Phase 3 | Pending |
-| API-08 | Phase 3 | Pending |
-| API-09 | Phase 3 | Pending |
-| API-10 | Phase 3 | Pending |
-| API-11 | Phase 3 | Pending |
+| API-01 | Phase 3 | Complete |
+| API-02 | Phase 3 | Complete |
+| API-03 | Phase 3 | Complete |
+| API-04 | Phase 3 | Complete |
+| API-05 | Phase 3 | Complete |
+| API-06 | Phase 3 | Complete |
+| API-07 | Phase 3 | Complete |
+| API-08 | Phase 3 | Complete |
+| API-09 | Phase 3 | Complete |
+| API-10 | Phase 3 | Complete |
+| API-11 | Phase 3 | Complete |
 | CONT-01 | Phase 1 | Pending |
 | CONT-02 | Phase 1 | Pending |
 | CONT-03 | Phase 1 | Pending |
@@ -234,12 +234,12 @@ Each v1 requirement maps to exactly one phase.
 | SCALE-03 | Phase 5 | Pending |
 | SCALE-04 | Phase 5 | Pending |
 | SCALE-05 | Phase 5 | Pending |
-| CFG-01 | Phase 3 | Pending |
-| CFG-02 | Phase 3 | Pending |
-| CFG-03 | Phase 3 | Pending |
+| CFG-01 | Phase 3 | Complete |
+| CFG-02 | Phase 3 | Complete |
+| CFG-03 | Phase 3 | Complete |
 | CFG-04 | Phase 1 | Pending |
 | CHAN-01 | Phase 7 | Pending |
-| CHAN-02 | Phase 3 | Pending |
+| CHAN-02 | Phase 3 | Complete |
 | DEV-01 | Phase 3 | Pending |
 | DEV-02 | Phase 3 | Pending |
 | DEV-03 | Phase 3 | Pending |
