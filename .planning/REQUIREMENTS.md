@@ -33,9 +33,9 @@ Requirements for the initial release. Each maps to roadmap phases.
 ### Worker & Runner (Go)
 
 - [ ] **RUN-01**: A `Runner`/`Sandbox` interface abstracts "create hardened sandbox, attach pipes, enforce limits, kill, cleanup" so the backend can swap (Docker → gVisor → Firecracker) without touching core logic
-- [ ] **RUN-02**: A `DockerSocketRunner` launches an ephemeral container per execution via the mounted host socket (no Docker-in-Docker)
-- [ ] **RUN-03**: The runner attaches and demuxes stdout/stderr separately and forwards them to the session
-- [ ] **RUN-04**: `kill` destroys the whole container (process tree), never just a PID
+- [x] **RUN-02**: A `DockerSocketRunner` launches an ephemeral container per execution via the mounted host socket (no Docker-in-Docker)
+- [x] **RUN-03**: The runner attaches and demuxes stdout/stderr separately and forwards them to the session
+- [x] **RUN-04**: `kill` destroys the whole container (process tree), never just a PID
 - [ ] **WRK-01**: The worker consumes jobs from the Redis queue
 - [ ] **WRK-02**: The worker subscribes to `stdin:<jobId>` only for jobs it owns and writes chunks to the process pipe — no service discovery
 - [ ] **WRK-03**: The worker keeps the process alive with stdin/stdout/stderr pipes open (interactive session, not batch-ephemeral)
@@ -56,11 +56,11 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Sandbox Hardening
 
-- [ ] **HARD-01**: Every sandbox runs with `--network=none`
-- [ ] **HARD-02**: Every sandbox runs `--read-only` with a size-capped tmpfs `/tmp` workspace
-- [ ] **HARD-03**: Memory is capped with `--memory` == `--memory-swap` (no swap)
-- [ ] **HARD-04**: Every sandbox runs with `--pids-limit` and `--cpus` set
-- [ ] **HARD-05**: Every sandbox runs with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, and a restrictive seccomp profile, as a non-root user
+- [x] **HARD-01**: Every sandbox runs with `--network=none`
+- [x] **HARD-02**: Every sandbox runs `--read-only` with a size-capped tmpfs `/tmp` workspace
+- [x] **HARD-03**: Memory is capped with `--memory` == `--memory-swap` (no swap)
+- [x] **HARD-04**: Every sandbox runs with `--pids-limit` and `--cpus` set
+- [x] **HARD-05**: Every sandbox runs with `--cap-drop=ALL`, `--security-opt=no-new-privileges`, and a restrictive seccomp profile, as a non-root user
 
 ### Resource Limits (three clocks + caps)
 
@@ -192,9 +192,9 @@ Each v1 requirement maps to exactly one phase.
 | CONT-05 | Phase 1 | Pending |
 | CONT-06 | Phase 1 | Pending |
 | RUN-01 | Phase 1 | Pending |
-| RUN-02 | Phase 2 | Pending |
-| RUN-03 | Phase 2 | Pending |
-| RUN-04 | Phase 2 | Pending |
+| RUN-02 | Phase 2 | Complete |
+| RUN-03 | Phase 2 | Complete |
+| RUN-04 | Phase 2 | Complete |
 | WRK-01 | Phase 3 | Pending |
 | WRK-02 | Phase 3 | Pending |
 | WRK-03 | Phase 3 | Pending |
@@ -206,11 +206,11 @@ Each v1 requirement maps to exactly one phase.
 | STDIN-02 | Phase 3 | Pending |
 | STDIN-03 | Phase 3 | Pending |
 | STDIN-04 | Phase 1 | Pending |
-| HARD-01 | Phase 2 | Pending |
-| HARD-02 | Phase 2 | Pending |
-| HARD-03 | Phase 2 | Pending |
-| HARD-04 | Phase 2 | Pending |
-| HARD-05 | Phase 2 | Pending |
+| HARD-01 | Phase 2 | Complete |
+| HARD-02 | Phase 2 | Complete |
+| HARD-03 | Phase 2 | Complete |
+| HARD-04 | Phase 2 | Complete |
+| HARD-05 | Phase 2 | Complete |
 | LIM-01 | Phase 2 | Complete |
 | LIM-02 | Phase 2 | Complete |
 | LIM-03 | Phase 2 | Complete |

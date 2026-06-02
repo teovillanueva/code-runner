@@ -56,7 +56,7 @@ Plans:
 Plans:
 - [x] 02-01-PLAN.md — Phase 2 deps + restrictive seccomp profile + testable safety logic (three clocks, output pump, sync.Once teardown) in internal/session
 - [x] 02-02-PLAN.md — soketi/Pusher publisher (stage/stdout/stderr/result, env creds, <10KB chunking, monotonic seq) in internal/publisher
-- [ ] 02-03-PLAN.md — DockerSocketRunner over the moby SDK: full hardening + attach/demux + tree-kill + idempotent cleanup + cgroup-v2 CPU reader
+- [x] 02-03-PLAN.md — DockerSocketRunner over the moby SDK: full hardening + attach/demux + tree-kill + idempotent cleanup + cgroup-v2 CPU reader
 - [ ] 02-04-PLAN.md — Guarded Docker integration tests: hardening inspect, three clocks, truncation, stdin round-trip, no-leak label check + make target
 
 ### Phase 3: Interactive Python End-to-End
@@ -133,7 +133,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Wire Contract | 0/3 | Not started | - |
-| 2. Sandbox Hardening & Runner | 2/4 | In Progress|  |
+| 2. Sandbox Hardening & Runner | 3/4 | In Progress|  |
 | 3. Interactive Python End-to-End | 0/TBD | Not started | - |
 | 4. Abuse Suite & Safety Validation | 0/TBD | Not started | - |
 | 5. Statelessness & Scale | 0/TBD | Not started | - |
