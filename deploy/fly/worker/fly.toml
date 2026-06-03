@@ -17,7 +17,7 @@ primary_region = "gru"
   SOKETI_USE_TLS = "false"
   SOKETI_APP_ID = "code-runner"
   SOKETI_APP_KEY = "code-runner-key"
-  WORKER_MAX_SANDBOXES = "4"
+  WORKER_MAX_SANDBOXES = "2"
   SANDBOX_IMAGE_REGISTRY = "ghcr.io/teovillanueva"
   # Secrets (fly secrets set -a code-runner-worker):
   #   SOKETI_APP_SECRET
@@ -28,8 +28,9 @@ primary_region = "gru"
   source = "docker_data"
   destination = "/var/lib/docker"
 
-# dockerd + the worker + up to WORKER_MAX_SANDBOXES live sandboxes share this VM.
-# Bump size/memory if you raise WORKER_MAX_SANDBOXES or run heavy images (R).
+# Cheapest viable for TESTING: shared-cpu-1x + 1GB runs dockerd + a python/sqlite/rust
+# sandbox fine. R (847MB image) may need a bump to 2048mb. dockerd + N live sandboxes
+# share this VM — raise size/memory together with WORKER_MAX_SANDBOXES for real load.
 [[vm]]
-  size = "shared-cpu-2x"
-  memory = "2048"
+  size = "shared-cpu-1x"
+  memory = "1024mb"

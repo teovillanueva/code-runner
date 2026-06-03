@@ -47,7 +47,7 @@ fly apps create code-runner-worker
 
 ```bash
 fly volumes create redis_data  -a code-runner-redis  -r gru -s 1   --yes
-fly volumes create docker_data -a code-runner-worker -r gru -s 10  --yes
+fly volumes create docker_data -a code-runner-worker -r gru -s 6   --yes
 ```
 
 ## 3. Generate + set secrets
