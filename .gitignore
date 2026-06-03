@@ -22,3 +22,4 @@ coverage.out
 # Local scratch
 /tmp/
 *.log
+.claude/scheduled_tasks.lock

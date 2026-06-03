@@ -69,6 +69,51 @@ echo "EXECUTOR_API_TOKEN=$API_TOKEN"
 If your GHCR packages are private, also:
 `fly secrets set -a code-runner-worker GHCR_TOKEN=<a GH PAT with read:packages>`
 
+## 3a. Provision object storage for artifacts (Tigris)
+
+Run artifacts (files the executed program writes) are uploaded by the **worker**
+to an S3-compatible bucket and handed back as presigned URLs. On Fly this is
+**Tigris** — `fly storage create` provisions a bucket and injects its credentials
+as **secrets on the worker app**:
+
+```bash
+fly storage create -a code-runner-worker
+```
+
+This sets the following **secrets** on `code-runner-worker` automatically. The
+worker's `S3Store` reads the standard `AWS_*` names with **zero translation** —
+the same code that runs against the dev MinIO runs unmodified against Tigris:
+
+| Tigris-injected secret (worker app) | S3Store env it satisfies | Notes |
+|-------------------------------------|--------------------------|-------|
+| `BUCKET_NAME`          | `BUCKET_NAME` (bucket) | the artifacts bucket |
+| `AWS_ACCESS_KEY_ID`    | `AWS_ACCESS_KEY_ID`    | credential — secret, never in `[env]` |
+| `AWS_SECRET_ACCESS_KEY`| `AWS_SECRET_ACCESS_KEY`| credential — secret, never in `[env]` |
+| `AWS_ENDPOINT_URL_S3`  | `AWS_ENDPOINT_URL_S3`  | Tigris endpoint URL |
+| `AWS_REGION`           | `AWS_REGION`           | region (e.g. `auto`) |
+
+> If a provider ever injects differently-named vars, the worker also honors
+> `ARTIFACT_S3_ENDPOINT` / `ARTIFACT_S3_BUCKET` / `ARTIFACT_S3_ACCESS_KEY_ID` /
+> `ARTIFACT_S3_SECRET_ACCESS_KEY` / `ARTIFACT_S3_REGION` overrides — unused for
+> Tigris since its names already match.
+
+**The `code-runner-api` app needs NO S3 credentials** — only the worker
+uploads, signs presigned URLs, and manages the bucket lifecycle.
+
+**No manual bucket creation needed.** The worker auto-creates the bucket on boot
+if it does not exist (`S3Store.EnsureLifecycle` → `BucketExists` + `MakeBucket`),
+so even a bucket-less Tigris store works the first time. This is the same path
+proven against a fresh dev MinIO (R14).
+
+**Retention TTLs** are non-secret and live in `deploy/fly/worker/fly.toml`
+`[env]` (`RUN_RESULT_TTL`, `PRESIGNED_URL_TTL` in seconds; `ARTIFACT_S3_OBJECT_TTL`
+in days). The object TTL **must be ≥** the presigned-URL TTL or the worker fails
+fast at boot (R15 ordering invariant). S3/Tigris bucket lifecycle expiration is
+**whole-day granular** — sub-day cleanup is not achievable, so the object TTL is
+expressed in days. code-runner storage is an **ephemeral handoff**: your backend
+is expected to copy artifacts to its own durable store; code-runner relies on the
+bucket lifecycle rule for cleanup and makes no long-term retention guarantee.
+
 ## 4. Deploy (order matters — deps first)
 
 All deploys run from the **repo root** (the build context is the monorepo):
@@ -99,7 +144,8 @@ curl -s -X POST localhost:8080/v1/execute \
 # → 202 {"jobId":"...","channel":"private-run-...","status":"queued"}
 ```
 
-Then subscribe to the channel on `wss://code-runner-soketi.fly.dev` (signing the
+Then subscribe to the channel on `wss://<your-soketi-app>.fly.dev` (the soketi app's
+public hostname — soketi is the one app exposed to browsers; signing the
 auth with `SOKETI_APP_SECRET` — see the README "Channel Auth" section and
 `apps/stub/src/index.ts`), `POST /v1/jobs/:id/start`, send stdin, and watch the
 streamed output. `fly logs -a code-runner-worker` shows the sandbox lifecycle.

@@ -12,22 +12,44 @@ primary_region = "gru"
 
 [env]
   REDIS_URL = "redis://code-runner-redis.internal:6379"
-  # NOTE: soketi listens IPv4-only, but Fly's .internal DNS is IPv6 (6PN) → a
-  # direct .internal:6001 trigger is refused. For this test deploy the worker
-  # publishes to soketi's public hostname over TLS (valid cert, same-region via
-  # the Fly edge). For a fully-private prod path, give soketi a `.flycast` IP (or
-  # make it bind IPv6) and point this at code-runner-soketi.flycast.
-  SOKETI_HOST = "code-runner-soketi.fly.dev"
+  # The worker→soketi trigger MUST stay private (trust boundary: soketi is
+  # output-only toward clients; the public edge never receives trusted input).
+  # soketi listens IPv4-only, but Fly's .internal DNS is IPv6 (6PN) → a direct
+  # .internal:6001 trigger is refused. The private IPv4 path is `.flycast`:
+  # allocate a private v4 for soketi (`fly ips allocate-v4 --private -a <soketi-app>`)
+  # and trigger it over 6PN — no public exposure. (Alternatively, make soketi
+  # bind IPv6 and use code-runner-soketi.internal:6001.)
+  # NOTE: flycast routes through soketi's http_service, so PORT/USE_TLS here must
+  # match how that service is published — verify on your deploy and adjust if the
+  # trigger is refused.
+  SOKETI_HOST = "code-runner-soketi.flycast"
   SOKETI_PORT = "443"
   SOKETI_USE_TLS = "true"
   SOKETI_APP_ID = "code-runner"
   SOKETI_APP_KEY = "code-runner-key"
   WORKER_MAX_SANDBOXES = "2"
   SANDBOX_IMAGE_REGISTRY = "ghcr.io/teovillanueva"
+  # ── Artifacts retention TTLs (Phase 9, D-11) — NON-secret config ──
+  # Object TTL is in DAYS; the two URL/result TTLs are in SECONDS. The object TTL
+  # MUST be >= the presigned-URL TTL or the worker fails fast at boot (R15). S3
+  # lifecycle granularity is whole DAYS (sub-day cleanup is not achievable).
+  RUN_RESULT_TTL = "600"
+  PRESIGNED_URL_TTL = "86400"
+  ARTIFACT_S3_OBJECT_TTL = "3"
   # Secrets (fly secrets set -a code-runner-worker):
   #   SOKETI_APP_SECRET
   #   GHCR_TOKEN  — only needed if the ghcr.io/teovillanueva/executor-* packages are PRIVATE
   #                 (make them public once and you can drop this)
+  # ── Tigris (object storage) creds — injected as SECRETS by `fly storage create`
+  #    onto THIS worker app (never put them in [env], never commit them). The
+  #    same S3Store reads these standard AWS_* names with zero translation:
+  #   BUCKET_NAME
+  #   AWS_ACCESS_KEY_ID
+  #   AWS_SECRET_ACCESS_KEY
+  #   AWS_ENDPOINT_URL_S3
+  #   AWS_REGION
+  # The API app needs NONE of these — only the worker uploads/signs/lifecycles.
+  # The worker auto-creates the Tigris bucket on boot if absent (S3Store.EnsureLifecycle).
 
 [mounts]
   source = "docker_data"
