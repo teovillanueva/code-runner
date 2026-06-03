@@ -17,8 +17,11 @@ primary_region = "gru"
 [http_service]
   internal_port = 6001
   force_https = true
-  auto_stop_machines = "suspend"
-  auto_start_machines = true
+  # soketi must stay up: the worker publishes output over the private 6PN
+  # (.internal), which does NOT trigger Fly's auto-start. Suspending it would
+  # drop output events (connection refused). Keep it always-on.
+  auto_stop_machines = "off"
+  auto_start_machines = false
   min_machines_running = 1
 
 [[vm]]

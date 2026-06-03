@@ -8,13 +8,18 @@ app = "code-runner-worker"
 primary_region = "gru"
 
 [build]
-  dockerfile = "deploy/fly/worker/Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   REDIS_URL = "redis://code-runner-redis.internal:6379"
-  SOKETI_HOST = "code-runner-soketi.internal"
-  SOKETI_PORT = "6001"
-  SOKETI_USE_TLS = "false"
+  # NOTE: soketi listens IPv4-only, but Fly's .internal DNS is IPv6 (6PN) → a
+  # direct .internal:6001 trigger is refused. For this test deploy the worker
+  # publishes to soketi's public hostname over TLS (valid cert, same-region via
+  # the Fly edge). For a fully-private prod path, give soketi a `.flycast` IP (or
+  # make it bind IPv6) and point this at code-runner-soketi.flycast.
+  SOKETI_HOST = "code-runner-soketi.fly.dev"
+  SOKETI_PORT = "443"
+  SOKETI_USE_TLS = "true"
   SOKETI_APP_ID = "code-runner"
   SOKETI_APP_KEY = "code-runner-key"
   WORKER_MAX_SANDBOXES = "2"

@@ -9,7 +9,7 @@ primary_region = "gru"
 # Build context is the repo root (the monorepo). Run from there:
 #   fly deploy -c deploy/fly/api/fly.toml --dockerfile apps/api/Dockerfile .
 [build]
-  dockerfile = "apps/api/Dockerfile"
+  dockerfile = "../../../apps/api/Dockerfile"
 
 [env]
   API_PORT = "8080"
