@@ -1,0 +1,167 @@
+---
+title: Integrate from your backend
+description: Submit jobs, drive stdin, and sign channel auth with the Node SDK.
+icon: Server
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Your backend is the **trusted consumer** of code-runner — it holds the
+`EXECUTOR_API_TOKEN` and the `SOKETI_APP_SECRET`, and it's the only thing that talks
+to the API directly. The `@teovilla/code-runner-sdk-node` package gives you a typed
+client plus zero-dependency channel-auth signing.
+
+<Callout type="warn">
+  This SDK is **server-side only**. It carries secrets — never bundle it into a
+  browser. For the browser, use [`@teovilla/code-runner-react`](/docs/guides/react-sdk).
+</Callout>
+
+## Install
+
+<Tabs items={['pnpm', 'npm', 'yarn']}>
+
+<Tab value="pnpm">
+
+```bash
+pnpm add @teovilla/code-runner-sdk-node
+```
+
+</Tab>
+
+<Tab value="npm">
+
+```bash
+npm install @teovilla/code-runner-sdk-node
+```
+
+</Tab>
+
+<Tab value="yarn">
+
+```bash
+yarn add @teovilla/code-runner-sdk-node
+```
+
+</Tab>
+
+</Tabs>
+
+Requires Node 22+. The package re-exports the relevant wire-contract types, so you
+don't need to install the contract separately.
+
+## Create a client
+
+```ts
+import { CodeRunnerClient } from '@teovilla/code-runner-sdk-node';
+
+const client = new CodeRunnerClient({
+  baseUrl: process.env.CODE_RUNNER_URL!, // e.g. "http://localhost:8080"
+  token: process.env.EXECUTOR_API_TOKEN!, // the bearer token
+});
+```
+
+| Option | Type | Notes |
+| --- | --- | --- |
+| `baseUrl` | `string` | The gateway base URL. |
+| `token` | `string` | `EXECUTOR_API_TOKEN`; sent as `Authorization: Bearer …`. |
+| `fetch` | `FetchLike?` | Optional custom `fetch`; defaults to `globalThis.fetch`. |
+
+## Client methods
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `listLanguages()` | `GET /v1/languages` | List available languages & versions. |
+| `execute(req)` | `POST /v1/execute` | Enqueue a job → `{ jobId, channel, status }`. |
+| `getJob(id)` | `GET /v1/jobs/:id` | Poll job status. |
+| `getOutput(id)` | `GET /v1/jobs/:id/output` | Pull the persisted `RunResult` (needs `collectOutput`). |
+| `start(id)` | `POST /v1/jobs/:id/start` | Send the start signal (the handshake). |
+| `sendStdin(id, chunk)` | `POST /v1/jobs/:id/stdin` | Write a chunk to the process stdin. |
+| `closeStdin(id)` | `POST /v1/jobs/:id/stdin/close` | Signal EOF (Ctrl-D). |
+| `kill(id)` | `POST /v1/jobs/:id/kill` | SIGKILL the sandbox. |
+
+## Submit a job
+
+```ts
+const job = await client.execute({
+  language: 'python',
+  files: [
+    { name: 'main.py', content: "name = input('name? ')\nprint(f'hello {name}')\n" },
+  ],
+  // optional per-request overrides; absent fields use the manifest defaults
+  limits: { wallTimeMs: 30000, memoryMb: 128 },
+});
+
+console.log(job.jobId);  // "550e8400-..."
+console.log(job.channel); // "private-run-550e8400-..."
+```
+
+`execute` returns **before** the process starts. The next step is the
+[start-handshake](/docs/concepts/lifecycle#the-start-handshake): your client
+subscribes to `job.channel` over soketi, and *then* you call `client.start(job.jobId)`.
+
+## Error handling
+
+Every method throws typed errors that extend `CodeRunnerError`, so you can branch on
+`instanceof`:
+
+```ts
+import {
+  CapacityError,
+  ValidationError,
+  RateLimitError,
+  NotFoundError,
+} from '@teovilla/code-runner-sdk-node';
+
+try {
+  await client.execute(req);
+} catch (err) {
+  if (err instanceof CapacityError) {
+    // 429 — queue is full. err.retryAfterMs tells you when to retry.
+  } else if (err instanceof ValidationError) {
+    // 400 — bad body, unknown language/version.
+  } else if (err instanceof RateLimitError) {
+    // 429 on stdin — err.retryAfterMs / err.capBytes
+  } else if (err instanceof NotFoundError) {
+    // 404 — unknown job id.
+  }
+}
+```
+
+All errors carry `.status` (the HTTP code) and `.body` (the parsed response).
+
+## Sign channel auth
+
+Authorizing a browser's `private-run-<jobId>` channel is your backend's job. The SDK
+gives you a helper so you never hand-roll the HMAC:
+
+```ts
+import { createChannelAuthorizer } from '@teovilla/code-runner-sdk-node';
+
+const authorize = createChannelAuthorizer({
+  appKey: process.env.SOKETI_APP_KEY!,
+  appSecret: process.env.SOKETI_APP_SECRET!, // stays server-side
+});
+
+// In your channel-auth route (what pusher-js POSTs to):
+app.post('/code-runner/auth', (req, res) => {
+  const { socket_id, channel_name } = req.body;
+  res.json(authorize(socket_id, channel_name)); // { auth: "<key>:<hmac>" }
+});
+```
+
+The authorizer **only** signs `private-run-*` channels and throws otherwise. See
+[Channel Auth](/docs/guides/channel-auth) for the full pattern and trust rationale.
+
+## OpenTelemetry (optional)
+
+If you have `@opentelemetry/api` installed (an optional peer dependency), the SDK
+injects a W3C `traceparent` header into `POST /v1/execute`. The worker extracts it,
+so one execution produces a **single connected trace** spanning your backend, the
+API, and the worker. See [Observability](/docs/self-hosting/observability).
+
+## Next
+
+<Cards>
+  <Card title="Interactive sessions, end to end" href="/docs/guides/interactive-stdin" description="Combine the backend SDK and React into a full stdin round-trip." />
+  <Card title="React integration" href="/docs/guides/react-sdk" description="Subscribe to live output in the browser." />
+</Cards>

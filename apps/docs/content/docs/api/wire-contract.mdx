@@ -1,0 +1,80 @@
+---
+title: The Wire Contract
+description: One JSON Schema, generating TS types, Zod validators, and Go structs.
+icon: FileCode
+---
+
+Every type that crosses a process boundary in code-runner — request bodies, events,
+job specs, Redis payloads — is defined **once** in
+`packages/contract/schema/wire.schema.json`. From that single source, codegen produces:
+
+- **TypeScript types** (consumed by the API and the SDKs),
+- **Zod validators** (the API validates request bodies with these),
+- **Go structs** (the worker imports `packages/contract/gen/go/wire`).
+
+A CI **drift check** (`make contract-check`) regenerates the artifacts and fails if
+they differ from what's committed — so the polyglot seam can never silently drift.
+
+<Callout type="warn">
+  Never hand-edit anything under `packages/contract/gen/**`. To change the wire
+  format, edit `wire.schema.json` and run `make contract` (or `pnpm contract`).
+</Callout>
+
+## Shared names: keys, channels, events
+
+The contract package also exports the canonical Redis keys, channel builders, and
+event names from `@teovilla/code-runner-contract`. The Go worker mirrors these in
+`internal/keys`.
+
+```ts
+import { keys, channelForJob, stdinChannel, controlChannel, events } from '@teovilla/code-runner-contract';
+
+channelForJob('abc');   // "private-run-abc"   (soketi output channel)
+stdinChannel('abc');    // "stdin:abc"         (Redis pub-sub: stdin)
+controlChannel('abc');  // "ctrl:abc"          (Redis pub-sub: start/kill/stdin_close)
+
+keys.jobQueue;          // "jobs:queue"        (Redis list)
+keys.jobSpec('abc');    // "job:abc:spec"
+keys.jobStatus('abc');  // "job:abc:status"
+keys.jobOutput('abc');  // "job:abc:output"
+
+events;                 // { stage, stdout, stderr, result, artifact }
+```
+
+## Core types
+
+These are exported from `@teovilla/code-runner-contract` and re-exported by the SDKs.
+
+| Type | Shape |
+| --- | --- |
+| `ExecuteRequest` | `{ language, version?, files: FileInput[], limits?: LimitsOverride, collectOutput? }` |
+| `ExecuteResponse` | `{ jobId, channel, status: "queued" }` |
+| `FileInput` | `{ name: string, content: string }` |
+| `JobStatus` | `{ jobId, channel, language, version, state: JobState, updatedAtMs }` |
+| `JobState` | `"queued" \| "starting" \| "running" \| "done" \| "killed" \| "error"` |
+| `Limits` | `{ wallTimeMs, idleMs, cpuMs, memoryMb, pids, outputKb, maxArtifacts, maxArtifactBytes }` |
+| `LimitsOverride` | all `Limits` fields optional |
+| `LanguageInfo` | `{ language, version, aliases, interactive }` |
+| `Manifest` | `{ language, version, aliases, image, entrypoint, compile?, run, interactive, defaultLimits }` |
+
+## Event & message types
+
+| Type | Shape | Carried on |
+| --- | --- | --- |
+| `StageEvent` | `{ phase: "queued" \| "compiling" \| "running" }` | soketi `stage` |
+| `OutputChunkEvent` | `{ chunk: string, seq: number }` | soketi `stdout` / `stderr` |
+| `ResultEvent` | `{ exitCode, signal, timedOut, idleTimedOut, truncated, durationMs }` | soketi `result` |
+| `Artifact` | `{ name, mimeType, bytes, url }` | soketi `artifact` / `RunResult` |
+| `RunResult` | `ResultEvent` + `{ stdout, stderr, artifacts: Artifact[], artifactsTruncated }` | `GET /v1/jobs/:id/output` |
+| `StdinMessage` | `{ chunk: string }` | Redis `stdin:<id>` |
+| `ControlMessage` | `{ type: "start" \| "kill" \| "stdin_close" }` | Redis `ctrl:<id>` |
+
+## Regenerating the contract
+
+```bash
+pnpm contract        # or: make contract — regenerate TS + Zod + Go
+make contract-check  # CI gate: fail if generated artifacts drifted
+```
+
+The codegen uses [`go-jsonschema`](https://github.com/omissis/go-jsonschema) for the
+Go structs and a TypeScript/Zod generator for the JS side.

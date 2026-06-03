@@ -1,0 +1,223 @@
+---
+title: REST API
+description: Every HTTP endpoint, request/response shape, and status code.
+icon: Globe
+---
+
+The API gateway exposes a small, internal HTTP surface. **All `/v1/*` endpoints
+require** an `Authorization: Bearer <EXECUTOR_API_TOKEN>` header; a missing or invalid
+token returns `401 {"error":"unauthorized"}` (compared in constant time). `GET /health`
+is the only unauthenticated route.
+
+Base URL in local dev: `http://localhost:8080`.
+
+---
+
+## GET /health
+
+Unauthenticated readiness probe.
+
+```http
+GET /health  →  200 {"status":"ok"}
+```
+
+---
+
+## POST /v1/execute
+
+Submit code for execution. Returns immediately, **before** any process starts, with a
+job ID and the soketi channel to subscribe to.
+
+**Request body**
+
+```json
+{
+  "language": "python",
+  "version": "3.12",
+  "files": [
+    { "name": "main.py", "content": "name = input('name? ')\nprint(f'hello {name}')\n" }
+  ],
+  "limits": {
+    "wallTimeMs": 30000, "idleMs": 10000, "cpuMs": 15000,
+    "memoryMb": 128, "pids": 64, "outputKb": 512,
+    "maxArtifacts": 20, "maxArtifactBytes": 4194304
+  },
+  "collectOutput": false
+}
+```
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `language` | yes | Name or alias (`"python"`, `"py"`, `"rust"`, `"rs"`, `"sqlite"`, `"sql"`). |
+| `version` | no | Omit to use the only/most-recent match. |
+| `files` | yes | Array of `{ name, content }`; at least one. File names 1–255 chars. |
+| `limits` | no | Per-request overrides; absent fields use manifest defaults. |
+| `collectOutput` | no | `true` to persist a pullable `RunResult`. Defaults to `false`. |
+
+**Responses**
+
+| Code | Body | When |
+| --- | --- | --- |
+| `202` | `{"jobId","channel":"private-run-<jobId>","status":"queued"}` | Accepted; job enqueued. |
+| `400` | `{"error","details":[...]}` | Invalid body, unknown language, or unknown version. |
+| `429` | `{"error":"Executor at capacity...","retryAfterMs":1000}` | `LLEN(jobs:queue) >= MAX_QUEUE_DEPTH`. Checked after manifest resolution, so invalid bodies get `400`, not `429`. |
+
+---
+
+## POST /v1/jobs/:id/start
+
+The start-handshake signal. Call it **after** your client has subscribed to the
+job's soketi channel. See [Request Lifecycle](/docs/concepts/lifecycle#the-start-handshake).
+
+```http
+POST /v1/jobs/:id/start  →  202 {"ok":true}
+```
+
+Publishes `{type:"start"}` on `ctrl:<jobId>`.
+
+---
+
+## POST /v1/jobs/:id/stdin
+
+Write a chunk to the running process's stdin.
+
+**Request body**
+
+```json
+{ "chunk": "World\n" }
+```
+
+**Responses**
+
+| Code | Body | When |
+| --- | --- | --- |
+| `200` | `{"ok":true}` | Chunk published to `stdin:<jobId>`. |
+| `400` | `{"error","details":[...]}` | Invalid body (missing `chunk`). |
+| `429` | `{"error":"...","retryAfterMs":1000}` or `{"error":"...","capBytes":65536}` | Frame-rate cap (30 frames/s) or pending-byte cap (64 KiB) exceeded. |
+
+---
+
+## POST /v1/jobs/:id/stdin/close
+
+Signal EOF to stdin (like Ctrl-D). Publishes `{type:"stdin_close"}` on `ctrl:<jobId>`.
+
+```http
+POST /v1/jobs/:id/stdin/close  →  200 {"ok":true}
+```
+
+---
+
+## POST /v1/jobs/:id/kill
+
+SIGKILL the sandbox. Publishes `{type:"kill"}` on `ctrl:<jobId>`.
+
+```http
+POST /v1/jobs/:id/kill  →  200 {"ok":true}
+```
+
+---
+
+## GET /v1/jobs/:id
+
+Poll job status.
+
+**Responses**
+
+| Code | Body | When |
+| --- | --- | --- |
+| `200` | `JobStatus` | Job found. |
+| `404` | `{"error":"Job not found: <id>"}` | Unknown job id. |
+
+**`JobStatus`**
+
+```json
+{
+  "jobId": "<uuid>",
+  "channel": "private-run-<uuid>",
+  "language": "python",
+  "version": "3.12",
+  "state": "running",
+  "updatedAtMs": 1700000000000
+}
+```
+
+`state` ∈ `queued` · `starting` · `running` · `done` · `killed` · `error`.
+
+---
+
+## GET /v1/jobs/:id/output
+
+Pull the persisted `RunResult` for a job that ran with `collectOutput: true`.
+
+**Responses**
+
+| Code | Body | When |
+| --- | --- | --- |
+| `200` | `RunResult` | Output present. |
+| `404` | `{"error":...}` | Unknown id, output not collected, or past TTL. |
+
+**`RunResult`**
+
+```json
+{
+  "exitCode": 0,
+  "signal": null,
+  "timedOut": false,
+  "idleTimedOut": false,
+  "truncated": false,
+  "durationMs": 312,
+  "stdout": "hello World\n",
+  "stderr": "",
+  "artifacts": [
+    { "name": "plot.png", "mimeType": "image/png", "bytes": 20481, "url": "https://.../plot.png?X-Amz-..." }
+  ],
+  "artifactsTruncated": false
+}
+```
+
+See [Artifacts & Pullable Output](/docs/guides/artifacts).
+
+---
+
+## GET /v1/languages
+
+List the languages discovered from `languages/*/manifest.json`. No language
+identifiers are hardcoded.
+
+```json
+[
+  { "language": "python", "version": "3.12", "aliases": ["py","py3","python3"], "interactive": true },
+  { "language": "rust",   "version": "1.83", "aliases": ["rs"],                 "interactive": true },
+  { "language": "r",      "version": "4.4",  "aliases": ["R"],                  "interactive": false },
+  { "language": "sqlite", "version": "3",    "aliases": ["sql"],                "interactive": true }
+]
+```
+
+---
+
+## POST /v1/channel-auth
+
+**Optional.** Registered only when `ENABLE_CHANNEL_AUTH=true`. Intended for local
+demos — in production your own backend signs channel auth (see
+[Channel Auth](/docs/guides/channel-auth)).
+
+**Request body**
+
+```json
+{ "socket_id": "123.456", "channel_name": "private-run-<jobId>" }
+```
+
+**Responses**
+
+| Code | Body | When |
+| --- | --- | --- |
+| `200` | `{"auth":"<app_key>:<hmac>"}` | Channel authorized. |
+| `400` | `{"error":"Missing required fields: socket_id, channel_name"}` | Missing fields. |
+| `403` | `{"error":"Only private-run-<jobId> channels can be authorized here"}` | Non-`private-run-` channel. |
+
+---
+
+## Typed client
+
+You don't have to call these by hand — the [`@teovilla/code-runner-sdk-node`](/docs/guides/backend-sdk)
+client wraps every endpoint with typed methods and typed errors.

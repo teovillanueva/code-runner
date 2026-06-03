@@ -1,0 +1,9 @@
+{
+  "title": "API Reference",
+  "icon": "Braces",
+  "pages": [
+    "rest",
+    "events",
+    "wire-contract"
+  ]
+}

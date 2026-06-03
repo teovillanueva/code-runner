@@ -1,0 +1,80 @@
+---
+title: Sandbox Hardening
+description: The defense-in-depth applied to every container that runs untrusted code.
+icon: ShieldCheck
+---
+
+Every sandbox runs untrusted code, so every sandbox is hardened the same way — and
+the hardening is applied **unconditionally** at container creation, not opt-in. The
+worker's `DockerSocketRunner` sets all of the following on every launch.
+
+## The hardening layers
+
+| Layer | Setting | What it stops |
+| --- | --- | --- |
+| **No network** | `NetworkMode: "none"` | SSRF, cloud metadata access, data exfiltration, dependency fetching. |
+| **Read-only root** | `ReadonlyRootfs: true` | Tampering with the image; persistence across runs. |
+| **Scratch space** | `/tmp` as `tmpfs` (`noexec,nosuid`), `/workspace` as an anonymous volume | Writable work area without a writable rootfs; auto-removed on cleanup. |
+| **No swap** | `Memory == MemorySwap` | Memory-limit evasion via swap; thrashing. Over-limit → OOM kill. |
+| **CPU cap** | `NanoCPUs` (1 CPU) | Monopolizing host CPU. |
+| **PID cap** | `PidsLimit` (from `pids`) | Fork bombs. |
+| **Drop all caps** | `CapDrop: ["ALL"]` | Almost all privileged operations. |
+| **No new privileges** | `SecurityOpt: no-new-privileges` | setuid/setgid privilege escalation. |
+| **seccomp** | `SecurityOpt: seccomp=<profile>` | Dangerous syscalls (see below). |
+| **Non-root user** | `User: 65534:65534` ("nobody") | Running as root inside the container. |
+
+## The seccomp profile
+
+The bundled profile at `profiles/seccomp/runner.json` is **deny-by-default**
+(`SCMP_ACT_ERRNO`) with an explicit allow-list. On top of a standard allow-list it
+removes syscalls no sandboxed language needs but that are dangerous in untrusted
+hands:
+
+- `ptrace` — debugger attach / breakout
+- `mount`, `umount2` — filesystem escape
+- `keyctl`, `add_key`, `request_key` — kernel keyring / credential theft
+- `bpf` — eBPF / kernel code execution
+- `clone3`, `unshare`, `setns` — namespace escape
+- `kexec_load` — load a new kernel
+- `perf_event_open` — side-channel surface
+- `userfaultfd` — page-fault-handler exploits
+
+It covers `x86_64`, `aarch64`, and other architectures so the same profile works on
+Intel and ARM hosts.
+
+<Callout type="warn">
+  The **Docker daemon** reads the seccomp profile, not the worker — so the profile
+  path (or inlined JSON) must be resolvable by `dockerd`. The worker handles this
+  for you; it matters only if you customize the deployment.
+</Callout>
+
+## Defense in depth, and gVisor
+
+These layers are runc-based and already strong. For an extra isolation boundary you
+can run sandboxes under [gVisor](https://gvisor.dev/) with **no code changes**:
+
+```bash
+SANDBOX_RUNTIME=runsc
+```
+
+This passes `HostConfig.Runtime = "runsc"` to every container launch. gVisor's
+*Sentry* is a userspace kernel that intercepts all syscalls, giving Firecracker-class
+isolation without per-execution VM-create latency. The seccomp profile stays in place
+as a second layer. See [Scaling](/docs/self-hosting/scaling#extra-isolation-with-gvisor).
+
+## Language image rules
+
+The hardening only holds if the language images cooperate. The bundled images follow
+these rules, and new ones should too:
+
+- **No `USER root` at runtime** — the runner forces UID `65534`, and `/workspace` is
+  world-writable (mode `1777`) so the non-root user can write there.
+- **All dependencies baked at build time** — no runtime `pip`/`npm`/`cargo` fetches,
+  because there's no network.
+- **Headless defaults** — e.g. Python sets `MPLBACKEND=Agg`, R uses a PDF device, so
+  plotting libraries don't try to open a display.
+- **No `CMD`/`ENTRYPOINT` that conflicts** — the runner supplies the compile/run argv
+  from the manifest.
+
+The [abuse suite](/docs/guides/add-a-language#the-safety-gate) is the gate that proves
+a new image actually contains hostile code on real Linux cgroup v2 before it merges.

@@ -1,0 +1,11 @@
+{
+  "title": "Self-Hosting",
+  "icon": "ServerCog",
+  "pages": [
+    "local-stack",
+    "configuration",
+    "scaling",
+    "observability",
+    "deploy-fly"
+  ]
+}

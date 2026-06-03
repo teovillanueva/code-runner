@@ -1,0 +1,148 @@
+---
+title: Integrate in React
+description: Subscribe to live output in the browser with the useCodeRunnerJob hook.
+icon: Atom
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+`@teovilla/code-runner-react` is the **browser** side of the integration. It wraps
+[pusher-js](https://github.com/pusher/pusher-js) to subscribe to a job's
+`private-run-<jobId>` channel over soketi and reassembles ordered stdout/stderr for
+you. It carries **no secrets and no bearer token** — actions like stdin and kill are
+delegated back to your backend through callbacks.
+
+## Install
+
+<Tabs items={['pnpm', 'npm', 'yarn']}>
+
+<Tab value="pnpm">
+
+```bash
+pnpm add @teovilla/code-runner-react pusher-js
+```
+
+</Tab>
+
+<Tab value="npm">
+
+```bash
+npm install @teovilla/code-runner-react pusher-js
+```
+
+</Tab>
+
+<Tab value="yarn">
+
+```bash
+yarn add @teovilla/code-runner-react pusher-js
+```
+
+</Tab>
+
+</Tabs>
+
+`react >= 18` and `pusher-js >= 8` are peer dependencies.
+
+## Wrap your app in the provider
+
+`CodeRunnerProvider` lazily creates a single pusher-js connection and supplies it to
+every hook below it.
+
+```tsx
+import { CodeRunnerProvider } from '@teovilla/code-runner-react';
+
+export function App() {
+  return (
+    <CodeRunnerProvider
+      appKey={import.meta.env.VITE_SOKETI_APP_KEY} // public app key
+      host="localhost"                              // soketi host
+      port={6001}
+      useTLS={false}
+      authEndpoint="/code-runner/auth"              // YOUR backend's channel-auth route
+    >
+      <YourRoutes />
+    </CodeRunnerProvider>
+  );
+}
+```
+
+| Prop | Type | Notes |
+| --- | --- | --- |
+| `appKey` | `string` | The **public** soketi app key. Safe in the browser. |
+| `host` | `string` | soketi hostname. |
+| `port` | `number?` | Defaults to `6001`. |
+| `useTLS` | `boolean?` | `true` for `wss://`. Defaults to `false`. |
+| `cluster` | `string?` | Leave unset for self-hosted soketi. |
+| `authEndpoint` | `string` | Your backend route that signs private-channel auth. |
+| `authHeaders` | `Record<string,string>?` | Extra headers (session cookie, CSRF) for the auth request. |
+
+<Callout type="info">
+  `authEndpoint` points at **your** backend, not at code-runner. That route uses the
+  [Node SDK's `createChannelAuthorizer`](/docs/guides/backend-sdk#sign-channel-auth)
+  to sign the subscription with the app secret. The browser never sees the secret.
+</Callout>
+
+## Subscribe to a job
+
+```tsx
+import { useCodeRunnerJob } from '@teovilla/code-runner-react';
+
+function JobView({ jobId }: { jobId: string }) {
+  const { stage, stdout, stderr, result, status, sendStdin, kill } =
+    useCodeRunnerJob({
+      jobId,
+      // sendStdin / kill don't talk to code-runner directly — they call YOUR backend,
+      // which holds the bearer token and forwards to the code-runner API.
+      onStdin: (chunk) =>
+        fetch(`/api/jobs/${jobId}/stdin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chunk }),
+        }),
+      onKill: () => fetch(`/api/jobs/${jobId}/kill`, { method: 'POST' }),
+    });
+
+  return (
+    <div>
+      <p>stage: {stage ?? '—'} · status: {status}</p>
+      <pre>{stdout}</pre>
+      <pre style={{ color: 'crimson' }}>{stderr}</pre>
+      <button onClick={() => sendStdin('World\n')}>Send stdin</button>
+      <button onClick={() => kill()}>Kill</button>
+      {result && <p>exit {result.exitCode} · {result.durationMs}ms</p>}
+    </div>
+  );
+}
+```
+
+### Hook arguments
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `jobId` | `string` | The job to subscribe to. |
+| `channel` | `string?` | Override; defaults to `private-run-${jobId}`. |
+| `onStdin` | `(chunk: string) => void \| Promise<void>` | Called by `sendStdin`. Route to your backend. |
+| `onKill` | `() => void \| Promise<void>` | Called by `kill`. Route to your backend. |
+
+### Hook return value
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `stage` | `StagePhase \| null` | `"queued" \| "compiling" \| "running"`. |
+| `stdout` | `string` | Reassembled, ordered stdout. |
+| `stderr` | `string` | Reassembled, ordered stderr. |
+| `result` | `ResultEvent \| null` | Terminal result once the job ends. |
+| `artifacts` | `Artifact[]` | Captured workspace artifacts (if any). |
+| `status` | `"idle" \| "running" \| "done"` | Coarse lifecycle state. |
+| `sendStdin` | `(chunk: string) => void \| Promise<void>` | Invokes `onStdin`. |
+| `kill` | `() => void \| Promise<void>` | Invokes `onKill`. |
+
+The hook handles chunk ordering by `seq` internally, so `stdout`/`stderr` are always
+correctly ordered even if WebSocket frames arrive out of order.
+
+## Putting it together
+
+Read [Interactive Sessions](/docs/guides/interactive-stdin) for the complete
+backend + frontend flow, including who calls `execute`, who subscribes, and who calls
+`start`.

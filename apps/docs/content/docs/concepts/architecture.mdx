@@ -1,0 +1,114 @@
+---
+title: Architecture
+description: The components, the data flow, and the trust boundary.
+icon: Network
+---
+
+code-runner is composed of a handful of small, single-purpose services connected by
+Redis and soketi. The design goal is that **all trusted input enters through one
+authenticated door**, and clients only ever *receive* output.
+
+## The data flow
+
+```text
+Upstream App ──Bearer token──► API (Hono)
+                                   │  LPUSH jobs:queue
+                                   ▼
+                               Redis
+                                   │  BRPOP / SUBSCRIBE stdin:<jobId>
+                                   ▼
+                          Worker NODE (Go, long-lived)
+                          ┌─────────────────────────┐
+                          │  Sandbox  │  Sandbox  …  │  (up to WORKER_MAX_SANDBOXES)
+                          └─────────────────────────┘
+                                   │  Pusher HTTP trigger
+                                   ▼
+                              soketi (WebSocket fan-out)
+                                   │
+                                   ▼
+                            Browser / Client
+```
+
+## The components
+
+### API gateway — `apps/api` (Hono / TypeScript)
+
+The **single trusted entry point**. It is a thin, stateless gateway that:
+
+- authenticates every `/v1/*` request with a constant-time bearer-token check;
+- validates request bodies against the generated Zod schemas;
+- resolves the requested language against the manifests on disk;
+- writes the job spec & status to Redis and `LPUSH`es the job ID onto `jobs:queue`;
+- relays stdin and control signals (`start`, `kill`, `stdin_close`) to the worker
+  over Redis pub-sub.
+
+Because it's stateless and only does one-shot Redis writes, the API can run anywhere
+— serverless, VMs, or Kubernetes — and scale to N replicas freely.
+
+### Worker — `apps/worker` (Go)
+
+A **long-lived process** that does the heavy lifting:
+
+- `BRPOP`s job IDs off the queue (a blocking claim);
+- launches a hardened sandbox container via the host Docker daemon (behind a
+  `Runner` interface so the backend can be swapped);
+- enforces the [three clocks](/docs/concepts/three-clocks) per sandbox;
+- pumps stdin from Redis into the process and streams stdout/stderr out to soketi;
+- guarantees teardown — container removed, slot freed, subscriptions closed —
+  on every terminal path.
+
+The worker is the **unit of scale**: one node holds up to `WORKER_MAX_SANDBOXES`
+concurrent live sandboxes. You scale the fleet by queue depth.
+
+### Redis
+
+The coordination substrate. It carries three distinct workloads:
+
+| Use | Mechanism |
+| --- | --- |
+| Job queue | A list at `jobs:queue` — `LPUSH` by the API, `BRPOP` by the worker. |
+| stdin & control | Pub-sub channels `stdin:<jobId>` and `ctrl:<jobId>`. |
+| Job metadata | Keys `job:<id>:spec`, `job:<id>:status`, `job:<id>:output`. |
+
+<Callout type="warn">
+  The **worker requires native TCP Redis** (`redis://` or `rediss://`) because it
+  uses blocking `BRPOP` and `SUBSCRIBE`. Serverless REST-only Redis (e.g. Upstash's
+  REST tier) is fine for the API but **not** the worker. See [Configuration](/docs/self-hosting/configuration#redis).
+</Callout>
+
+### soketi
+
+A [Pusher-compatible](https://pusher.com/) WebSocket server. The worker *triggers*
+output events over the Pusher HTTP API; soketi fans them out to subscribed clients.
+soketi is **output-only** in this system — nothing trusted ever enters through it.
+
+## The trust boundary
+
+This is the most important invariant in the whole design:
+
+<Callout type="info" title="All trusted input enters only through the bearer-authed API.">
+  Code, stdin, and control signals reach the worker **exclusively** through the
+  API. soketi is a one-way street toward the client. The `SOKETI_APP_SECRET` is
+  read from the environment only — it is **never** written to Redis and **never**
+  returned by any endpoint.
+</Callout>
+
+Practically, that means:
+
+- A browser **subscribes** to `private-run-<jobId>` to read output, but it cannot
+  push code or stdin to code-runner. To send stdin, the browser calls *your*
+  backend, which calls the code-runner API with the bearer token.
+- Authorizing a browser's private channel is **your backend's job** (it signs an
+  HMAC with the app secret). code-runner ships an optional helper for local demos.
+  See [Channel Auth](/docs/guides/channel-auth).
+
+## Where it runs
+
+- **Local dev:** `docker compose up` brings up redis + soketi + api + worker. The
+  worker uses the host Docker socket (`DockerSocketRunner`).
+- **Production:** stateless API replicas + an autoscaled worker fleet, with a
+  native Redis and a soketi service. Optionally swap the runtime to gVisor
+  (`SANDBOX_RUNTIME=runsc`) for an extra isolation layer with no code changes.
+
+See [Scaling & Statelessness](/docs/self-hosting/scaling) and the
+[Fly.io reference deploy](/docs/self-hosting/deploy-fly).

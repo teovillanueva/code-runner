@@ -1,0 +1,199 @@
+---
+title: Add a Language
+description: A folder, a manifest, and a Dockerfile — zero core changes.
+icon: Boxes
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+Languages are **self-contained packages** in `languages/<lang>-<version>/`. Adding one
+requires **no changes** to the Go worker or the API — the manifest loader discovers the
+folder at boot. A language is defined entirely by `image + compile? + run`.
+
+## The package model
+
+```text
+languages/
+  python-3.12/
+    manifest.json
+    Dockerfile
+  rust-1.83/
+    manifest.json
+    Dockerfile
+  sqlite-3/
+    manifest.json
+    Dockerfile
+```
+
+## The manifest
+
+`manifest.json` tells the worker everything it needs:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `language` | `string` | Primary name, e.g. `"python"`. |
+| `version` | `string` | Version string, e.g. `"3.12"`. |
+| `aliases` | `string[]` | Alternative names accepted by `/v1/execute`, e.g. `["py","py3"]`. |
+| `image` | `string` | Pre-built Docker image tag, e.g. `"executor/python:3.12"`. |
+| `entrypoint` | `string` | The main file name written into `/workspace`, e.g. `"main.py"`. |
+| `compile` | `string[] \| null` | Compile argv for compiled languages; `null` for interpreted ones. |
+| `run` | `string[]` | Run argv. |
+| `interactive` | `boolean` | Whether the language supports live stdin. |
+| `defaultLimits` | `object` | `wallTimeMs`, `idleMs`, `cpuMs`, `memoryMb`, `pids`, `outputKb`. |
+
+**Compiled vs interpreted:** if `compile` is non-null, the worker runs it first (with
+its own budget) and only starts `run` if compilation succeeds. For interpreted
+languages, set `compile` to `null`.
+
+### Interpreted example — Python
+
+```json
+{
+  "language": "python",
+  "version": "3.12",
+  "aliases": ["py", "py3", "python3"],
+  "image": "executor/python:3.12",
+  "entrypoint": "main.py",
+  "compile": null,
+  "run": ["python", "main.py"],
+  "interactive": true,
+  "defaultLimits": {
+    "wallTimeMs": 30000, "idleMs": 10000, "cpuMs": 15000,
+    "memoryMb": 128, "pids": 64, "outputKb": 512
+  }
+}
+```
+
+### Compiled example — Rust
+
+```json
+{
+  "language": "rust",
+  "version": "1.83",
+  "aliases": ["rs"],
+  "image": "executor/rust:1.83",
+  "entrypoint": "main.rs",
+  "compile": ["rustc", "-O", "main.rs", "-o", "/workspace/prog"],
+  "run": ["/workspace/prog"],
+  "interactive": true,
+  "defaultLimits": {
+    "wallTimeMs": 120000, "idleMs": 15000, "cpuMs": 60000,
+    "memoryMb": 512, "pids": 128, "outputKb": 1024
+  }
+}
+```
+
+The compiler writes the binary to `/workspace/prog`; the run stage executes it. The
+`/workspace` volume persists across the compile→run boundary.
+
+### Non-traditional runtime — SQLite
+
+The abstraction holds even for things that aren't general-purpose languages:
+
+```json
+{
+  "language": "sqlite",
+  "version": "3",
+  "aliases": ["sql"],
+  "image": "executor/sqlite:3",
+  "entrypoint": "main.sql",
+  "compile": null,
+  "run": ["sqlite3", "-batch", ":memory:", "-init", "main.sql"],
+  "interactive": true,
+  "defaultLimits": {
+    "wallTimeMs": 30000, "idleMs": 10000, "cpuMs": 15000,
+    "memoryMb": 64, "pids": 32, "outputKb": 512
+  }
+}
+```
+
+## The Dockerfile
+
+The image must cooperate with the [hardening](/docs/concepts/sandbox-hardening#language-image-rules):
+
+- **Bake all dependencies at build time** — there is no network at runtime.
+- **Don't pin `USER root`** — the runner forces UID `65534`; `/workspace` is writable
+  (`1777`) for that user.
+- **Don't set a conflicting `CMD`/`ENTRYPOINT`** — the runner supplies the argv.
+- **Default to headless** — disable GUIs/displays for plotting libraries, etc.
+
+## Steps to add one
+
+<Steps>
+
+<Step>
+
+### Create the folder
+
+`languages/<lang>-<version>/manifest.json` and `languages/<lang>-<version>/Dockerfile`,
+following the shapes above.
+
+</Step>
+
+<Step>
+
+### Build the image on the host daemon
+
+The worker mounts the host Docker socket, so the image must exist on the host:
+
+```bash
+docker build -t executor/<lang>:<version> languages/<lang>-<version>
+# or add a Makefile target and run: make <lang>-image
+# or rebuild everything: make build-images
+```
+
+</Step>
+
+<Step>
+
+### Restart the stack
+
+The manifest loader auto-discovers the new folder at boot — no code changes.
+
+```bash
+docker compose up --build
+```
+
+</Step>
+
+<Step>
+
+### Verify
+
+```bash
+curl http://localhost:8080/v1/languages \
+  -H "Authorization: Bearer $EXECUTOR_API_TOKEN"
+# the new language should appear in the list
+```
+
+</Step>
+
+</Steps>
+
+## The safety gate
+
+Before a new language can be trusted with untrusted code, it must survive the **abuse
+suite** — a CI gate that drives hostile jobs through the full worker path on real
+Linux cgroup v2:
+
+- OOM kills (memory limit)
+- CPU throttling / spin loops (CPU clock)
+- wall-time and idle-time expiry
+- PID exhaustion / fork bombs
+- output flooding (truncation)
+- clean-exit containment
+
+Run it locally (needs Docker with cgroup v2, `redis:7` on port `6381`, and the image):
+
+```bash
+make python-image
+docker run -d -p 6381:6379 redis:7
+make abuse
+```
+
+<Callout type="warn">
+  macOS Docker Desktop diverges from production Linux on cgroup behavior, so the abuse
+  suite's authoritative run is in CI (`.github/workflows/abuse.yml`, ubuntu-latest).
+  Repo owners should make **"abuse / abuse"** a required status check on `main` so a
+  new language can't merge unless its image is proven to contain hostile code.
+</Callout>

@@ -1,0 +1,92 @@
+---
+title: Output Events
+description: The soketi events emitted on a job's private channel.
+icon: Radio
+---
+
+All real-time output is emitted on the soketi channel **`private-run-<jobId>`**. A
+client subscribes to that channel (with [auth](/docs/guides/channel-auth)) and binds
+to the events below.
+
+<Callout type="info">
+  soketi delivers each event's data as a **JSON-encoded string**. Parse it with
+  `JSON.parse` before use. The [React SDK](/docs/guides/react-sdk) does this for you.
+</Callout>
+
+The event names and payloads are generated from
+`packages/contract/schema/wire.schema.json`, so they're identical across the worker,
+the API, and the SDKs.
+
+## `stage`
+
+A lifecycle transition.
+
+```json
+{ "phase": "queued" }
+```
+
+`phase` ∈ `queued` · `compiling` · `running`. (`compiling` only appears for compiled
+languages.)
+
+## `stdout` / `stderr`
+
+A chunk of process output. Same shape for both streams.
+
+```json
+{ "chunk": "name? ", "seq": 0 }
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `chunk` | `string` | UTF-8 output text. |
+| `seq` | `number` | Monotonic sequence number for ordering. A single logical output may be split across several events (each ≤ ~8 KB); reassemble by `seq`. |
+
+## `result`
+
+The **terminal** event, emitted exactly once when the sandbox exits.
+
+```json
+{
+  "exitCode": 0,
+  "signal": null,
+  "timedOut": false,
+  "idleTimedOut": false,
+  "truncated": false,
+  "durationMs": 312
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `exitCode` | `number \| null` | `null` when killed by a signal. |
+| `signal` | `string \| null` | The signal name, if killed by one. |
+| `timedOut` | `boolean` | Wall-clock **or** CPU-clock expiry. |
+| `idleTimedOut` | `boolean` | Idle-clock expiry. |
+| `truncated` | `boolean` | Output exceeded the `outputKb` budget. |
+| `durationMs` | `number` | Wall-clock duration of the run. |
+
+See [The Three Clocks](/docs/concepts/three-clocks) for what each timeout means.
+
+## `artifact`
+
+Emitted for files captured from `/workspace` when artifact storage is configured.
+
+```json
+{ "name": "plot.png", "mimeType": "image/png", "bytes": 20481, "url": "https://.../plot.png?X-Amz-..." }
+```
+
+`url` is a presigned GET URL (no bearer needed). See
+[Artifacts](/docs/guides/artifacts).
+
+## Binding example
+
+With pusher-js directly (the React SDK abstracts this):
+
+```ts
+const channel = pusher.subscribe(`private-run-${jobId}`);
+
+channel.bind('stage',  (d: string) => { const { phase } = JSON.parse(d); });
+channel.bind('stdout', (d: string) => { const { chunk, seq } = JSON.parse(d); });
+channel.bind('stderr', (d: string) => { const { chunk, seq } = JSON.parse(d); });
+channel.bind('result', (d: string) => { const r = JSON.parse(d); /* terminal */ });
+```

@@ -1,0 +1,80 @@
+---
+title: The Three Clocks
+description: Wall time, idle time, and CPU time — how a sandbox is bounded.
+icon: Timer
+---
+
+Every sandbox is governed by **three independent resource clocks**. They run
+concurrently, and **any one of them firing kills the sandbox unconditionally**. This
+is what guarantees the system never leaks a container or a session slot, no matter
+how hostile the code is.
+
+| Clock | Limit field | Fires when… | Reported in result as |
+| --- | --- | --- | --- |
+| **Wall** | `wallTimeMs` | the total elapsed lifetime exceeds the limit | `timedOut: true` |
+| **Idle** | `idleMs` | no stdout/stderr output **and** no stdin for the window | `idleTimedOut: true` |
+| **CPU** | `cpuMs` | cumulative CPU time (read from the cgroup) exceeds the limit | `timedOut: true` |
+
+## Why three?
+
+Each clock defends against a different failure mode:
+
+- **Wall clock** is the absolute backstop. It can't be reset and doesn't care what
+  the process is doing — it guards against a hung `Wait()`, a deadlock, or a
+  CPU-hiding sleep loop. A sandbox can *never* outlive its wall budget.
+- **Idle clock** reclaims interactive sessions that a user walked away from. An REPL
+  waiting at a prompt with nobody typing is pure wasted capacity; the idle clock
+  frees the slot. It **resets on every output chunk** (and on stdin activity), so an
+  actively-working program is never killed for being "idle".
+- **CPU clock** measures *actual work*, not elapsed time. It reads the container's
+  real cgroup CPU usage on a 100 ms poll, so a tight `while True` loop is caught by
+  CPU time even if it's well within its wall budget — while a program that mostly
+  waits on stdin isn't unfairly charged.
+
+<Callout type="info">
+  The wall and CPU clocks both surface as `timedOut: true` in the terminal result;
+  the idle clock surfaces as `idleTimedOut: true`. A clean exit reports both as
+  `false` with the process's real `exitCode`.
+</Callout>
+
+## Where the limits come from
+
+Each language ships **default limits** in its `manifest.json`:
+
+```json
+"defaultLimits": {
+  "wallTimeMs": 30000,
+  "idleMs": 10000,
+  "cpuMs": 15000,
+  "memoryMb": 128,
+  "pids": 64,
+  "outputKb": 512
+}
+```
+
+A caller can override any subset per request via the `limits` field on
+`POST /v1/execute`. Absent fields fall back to the manifest defaults:
+
+```json
+{
+  "language": "python",
+  "files": [{ "name": "main.py", "content": "..." }],
+  "limits": { "wallTimeMs": 60000, "memoryMb": 256 }
+}
+```
+
+## The other two limits
+
+Beyond the three time clocks, two more limits round out the resource envelope — also
+enforced at the cgroup / container level:
+
+- **`memoryMb`** — hard memory cap. Swap is disabled (the cgroup memory limit equals
+  the memory+swap limit), so exceeding it triggers an OOM kill rather than thrashing.
+- **`pids`** — maximum number of processes/threads, which stops fork bombs.
+- **`outputKb`** — the combined stdout+stderr budget. Output beyond it is dropped and
+  the result is flagged `truncated: true`.
+
+All of these are validated by the **abuse suite** — a CI gate that drives hostile
+jobs (OOM, CPU spin, fork bombs, wall/idle timeouts, output floods) through the real
+worker on Linux cgroup v2 before any language can be merged. See
+[Add a Language](/docs/guides/add-a-language#the-safety-gate).

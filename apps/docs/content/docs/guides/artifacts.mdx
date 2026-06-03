@@ -1,0 +1,102 @@
+---
+title: Artifacts & Pullable Output
+description: Persist stdout/stderr and capture files a job wrote to /workspace.
+icon: Package
+---
+
+Real-time output is streamed over soketi. But sometimes you also want a **pullable**
+copy of a run — for clients that weren't subscribed, for batch jobs, or to grab files
+the program produced (a rendered chart, a generated CSV). That's what
+`collectOutput` and the artifact store are for.
+
+## Pullable stdout/stderr
+
+Set `collectOutput: true` on the execute request:
+
+```ts
+const job = await client.execute({
+  language: 'python',
+  collectOutput: true,
+  files: [{ name: 'main.py', content: "print('done')\n" }],
+});
+```
+
+The worker then accumulates the same bytes it streams to soketi and persists a
+`RunResult` to Redis with a TTL (`RUN_RESULT_TTL`, default 600s). Pull it after the
+job ends:
+
+```ts
+const out = await client.getOutput(job.jobId);
+// {
+//   exitCode: 0, signal: null, timedOut: false, idleTimedOut: false,
+//   truncated: false, durationMs: 312,
+//   stdout: "done\n", stderr: "",
+//   artifacts: [...], artifactsTruncated: false
+// }
+```
+
+`getOutput` returns `404` (a `NotFoundError`) if the job had no collected output, the
+id is unknown, or the TTL elapsed. The single 404 is deliberate — a caller can't probe
+which job ids exist.
+
+## File artifacts
+
+A job can also leave **files** in `/workspace`. After the process exits — but before
+the container is torn down — the worker captures top-level files from `/workspace`,
+uploads them to S3-compatible storage, and includes presigned URLs in the `RunResult`:
+
+```json
+"artifacts": [
+  {
+    "name": "plot.png",
+    "mimeType": "image/png",
+    "bytes": 20481,
+    "url": "https://<bucket>/artifacts/<jobId>/plot.png?X-Amz-..."
+  }
+],
+"artifactsTruncated": false
+```
+
+The `url` is a **presigned GET URL** — it needs no bearer token, so you can hand it
+straight to a browser. Input files, the compile-output binary, and internal markers
+are excluded from capture automatically.
+
+<Callout type="info">
+  Artifact capture is **opt-in infrastructure**: it's active only when the worker is
+  configured with object storage (`BUCKET_NAME` + S3 credentials). With no storage
+  configured, file artifacts are simply disabled — pullable stdout/stderr still work.
+</Callout>
+
+### Artifact limits
+
+Two per-request limits (with manifest/defaults) bound capture:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `maxArtifacts` | 20 | Max number of files captured. |
+| `maxArtifactBytes` | 4 MiB | Max size per captured file. |
+
+When more files exist than `maxArtifacts`, `artifactsTruncated` is `true`.
+
+## Storage & retention
+
+The worker uses an S3-compatible store (MinIO in dev, Tigris/S3/R2 in prod). On boot
+it ensures the bucket exists and installs a **lifecycle expiry rule** on the
+`artifacts/` prefix, so objects are cleaned up automatically. Three independent TTLs
+govern retention:
+
+| Env var | Default | Controls |
+| --- | --- | --- |
+| `RUN_RESULT_TTL` | 600s | How long the `RunResult` lives in Redis. |
+| `PRESIGNED_URL_TTL` | 24h | How long a presigned artifact URL stays valid. |
+| `ARTIFACT_S3_OBJECT_TTL` | 3 days | When the object is deleted from the bucket. |
+
+<Callout type="warn">
+  The object TTL must be **≥** the presigned-URL TTL (the worker validates this at
+  startup) — otherwise a URL could outlive the file it points to. Treat artifacts as
+  **ephemeral**: if you need them durably, copy them to your own storage from the
+  presigned URL before they expire.
+</Callout>
+
+See [Configuration](/docs/self-hosting/configuration#object-storage--artifacts) for the
+full set of storage variables, and try it end to end with `make artifacts-e2e`.

@@ -1,0 +1,95 @@
+---
+title: Channel Auth
+description: Authorizing a browser's private soketi channel — your backend's job.
+icon: KeyRound
+---
+
+To receive output, a browser subscribes to the **private** soketi channel
+`private-run-<jobId>`. Pusher's protocol requires private channels to be
+*authorized*: the client asks a server to sign its subscription. In code-runner,
+**that signing is your backend's responsibility** — it's the side that holds the
+`SOKETI_APP_SECRET`.
+
+## How private-channel auth works
+
+When pusher-js subscribes to a private channel, it `POST`s `{ socket_id, channel_name }`
+to your configured `authEndpoint`. Your server must respond with an `auth` token:
+
+```text
+auth = "<SOKETI_APP_KEY>:" + HMAC_SHA256("<socket_id>:<channel_name>", SOKETI_APP_SECRET)
+```
+
+The browser sends that token back to soketi, which verifies the HMAC with its copy of
+the secret and admits the subscription. This is the standard Pusher private-channel
+flow — code-runner just reuses it.
+
+## The recommended way: the Node SDK helper
+
+Don't hand-roll the HMAC. Use `createChannelAuthorizer`, which signs and also
+**rejects any channel that isn't `private-run-*`** so your endpoint can't be abused to
+authorize arbitrary channels:
+
+```ts
+import { createChannelAuthorizer } from '@teovilla/code-runner-sdk-node';
+
+const authorize = createChannelAuthorizer({
+  appKey: process.env.SOKETI_APP_KEY!,
+  appSecret: process.env.SOKETI_APP_SECRET!,
+});
+
+app.post('/code-runner/auth', (req, res) => {
+  try {
+    const { socket_id, channel_name } = req.body;
+    res.json(authorize(socket_id, channel_name)); // { auth: "<key>:<hmac>" }
+  } catch {
+    res.status(403).json({ error: 'forbidden channel' });
+  }
+});
+```
+
+Point your React provider's `authEndpoint` at this route. In a real app you'd also
+**gate this route by your own session** — only sign a channel for a user who is
+actually allowed to watch that job.
+
+## Doing it without the SDK
+
+The signing is ~5 lines in any language. Node, for reference:
+
+```ts
+import { createHmac } from 'node:crypto';
+
+function signChannel(socketId: string, channelName: string): string {
+  const stringToSign = `${socketId}:${channelName}`;
+  const hmac = createHmac('sha256', process.env.SOKETI_APP_SECRET!)
+    .update(stringToSign)
+    .digest('hex');
+  return `${process.env.SOKETI_APP_KEY}:${hmac}`;
+}
+// respond with: { auth: signChannel(socket_id, channel_name) }
+```
+
+## The trust boundary
+
+<Callout type="warn">
+  The `SOKETI_APP_SECRET` is read from the environment **only**. It is never written
+  to Redis, never returned by any code-runner endpoint, and never sent to the browser.
+  It must stay inside your backend. The `SOKETI_APP_KEY` is public and safe in the
+  browser; the secret is not.
+</Callout>
+
+## The built-in helper (local demos only)
+
+For convenience, the API can expose its own channel-auth endpoint when
+`ENABLE_CHANNEL_AUTH=true`:
+
+```text
+POST /v1/channel-auth
+  { "socket_id": "123.456", "channel_name": "private-run-<jobId>" }
+  → 200 { "auth": "<app_key>:<hmac>" }
+```
+
+It performs the exact same HMAC. It exists so a single service (like the bundled stub)
+can handle both execution and channel auth during local development. **In production,
+prefer signing in your own backend** so the secret lives with your session logic and
+the auth decision can respect your authorization rules. It rejects any non
+`private-run-` channel with `403`.

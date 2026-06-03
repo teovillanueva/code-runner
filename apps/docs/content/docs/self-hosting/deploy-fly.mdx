@@ -1,0 +1,170 @@
+---
+title: Deploy to Fly.io
+description: A reference production deployment — four apps over Fly's private network.
+icon: Cloud
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+This is a concrete, end-to-end reference deploy on [Fly.io](https://fly.io). It runs
+**four apps** in one org, talking over Fly's private 6PN network. The `fly.toml` files
+live under `deploy/fly/`.
+
+| App | Visibility | Role |
+| --- | --- | --- |
+| `code-runner-soketi` | **public** (wss) | Browsers subscribe here for output. The only public app. |
+| `code-runner-redis` | private | Job queue + stdin/control pub-sub (native Redis). |
+| `code-runner-api` | private | Hono gateway; your backend calls it with the bearer token. |
+| `code-runner-worker` | private | Runs its own `dockerd` and launches hardened sandboxes. |
+
+<Callout type="info" title="Why dockerd-in-Machine?">
+  The worker is a Fly Machine (Firecracker microVM) that runs **its own dockerd** and
+  launches sandbox containers inside it. The microVM is the strong outer boundary; the
+  [hardened container](/docs/concepts/sandbox-hardening) is the per-execution boundary.
+  Language images are pulled from GHCR on first boot and cached on a volume.
+</Callout>
+
+<Callout type="warn" title="Cost heads-up">
+  This provisions real Machines + volumes. The worker wants ~2 GB RAM and a ~6–10 GB
+  volume. Keep `min_machines_running` low and lean on scale-to-zero.
+</Callout>
+
+## Prerequisites
+
+- `flyctl` installed and logged in (`fly auth whoami`).
+- The language images published to GHCR (push a `v*` tag or run the `release-images`
+  workflow). Make the `executor-*` packages **public** so the worker can pull without a
+  token — or keep them private and set a `GHCR_TOKEN` worker secret.
+- Pick a region and replace `gru` in the four `fly.toml` files if you like.
+
+## Deploy
+
+<Steps>
+
+<Step>
+
+### Create the apps
+
+```bash
+fly apps create code-runner-soketi
+fly apps create code-runner-redis
+fly apps create code-runner-api
+fly apps create code-runner-worker
+```
+
+</Step>
+
+<Step>
+
+### Create the volumes
+
+```bash
+fly volumes create redis_data  -a code-runner-redis  -r gru -s 1 --yes
+fly volumes create docker_data -a code-runner-worker -r gru -s 6 --yes
+```
+
+</Step>
+
+<Step>
+
+### Generate and set secrets
+
+The **same** `SOKETI_APP_SECRET` must be on soketi, api, and worker.
+
+```bash
+API_TOKEN=$(openssl rand -hex 32)
+SOKETI_SECRET=$(openssl rand -hex 32)
+
+fly secrets set -a code-runner-soketi SOKETI_DEFAULT_APP_SECRET="$SOKETI_SECRET"
+fly secrets set -a code-runner-api    EXECUTOR_API_TOKEN="$API_TOKEN" SOKETI_APP_SECRET="$SOKETI_SECRET"
+fly secrets set -a code-runner-worker SOKETI_APP_SECRET="$SOKETI_SECRET"
+
+echo "Save this — your upstream app authenticates with it: $API_TOKEN"
+```
+
+</Step>
+
+<Step>
+
+### Provision artifact storage (Tigris)
+
+`fly storage create` provisions an S3-compatible bucket and injects its credentials as
+**secrets on the worker app** — under the standard `AWS_*` names the worker already
+reads, with zero translation:
+
+```bash
+fly storage create -a code-runner-worker
+```
+
+The worker auto-creates the bucket and installs the lifecycle rule on first boot
+(`S3Store.EnsureLifecycle`). The **API needs no S3 credentials** — only the worker
+uploads and signs URLs. Retention TTLs live in `deploy/fly/worker/fly.toml` `[env]`;
+remember `ARTIFACT_S3_OBJECT_TTL` (days) must be ≥ `PRESIGNED_URL_TTL` (seconds), or
+the worker fails fast at boot.
+
+</Step>
+
+<Step>
+
+### Deploy (dependencies first)
+
+All deploys run from the **repo root** (the build context is the whole monorepo):
+
+```bash
+fly deploy -c deploy/fly/redis/fly.toml  -a code-runner-redis
+fly deploy -c deploy/fly/soketi/fly.toml -a code-runner-soketi
+fly deploy -c deploy/fly/api/fly.toml    --dockerfile apps/api/Dockerfile          -a code-runner-api    .
+fly deploy -c deploy/fly/worker/fly.toml --dockerfile deploy/fly/worker/Dockerfile -a code-runner-worker .
+```
+
+The worker's first boot pulls the four language images from GHCR — watch it:
+
+```bash
+fly logs -a code-runner-worker   # dockerd up → pulling executor-* → starting worker
+```
+
+</Step>
+
+<Step>
+
+### Verify end to end
+
+Tunnel to the private API and drive an interactive execute:
+
+```bash
+fly proxy 8080:8080 -a code-runner-api &
+
+curl -s -X POST localhost:8080/v1/execute \
+  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"language":"python","files":[{"name":"main.py","content":"print(input())"}]}'
+# → 202 {"jobId":"...","channel":"private-run-...","status":"queued"}
+```
+
+Or run the zero-checkout demo: `TOKEN=$API_TOKEN bash scripts/try-fly.sh`.
+
+</Step>
+
+</Steps>
+
+## Networking notes
+
+- The worker reaches **soketi over `.flycast`** (IPv4 private), not `.internal` — Fly's
+  6PN DNS is IPv6 and the Pusher client doesn't resolve it cleanly. soketi's
+  `fly.toml` uses port `443` + `SOKETI_USE_TLS=true` accordingly.
+- The worker reaches **Redis over `.internal`** (`code-runner-redis.internal:6379`) —
+  6PN IPv6 is fine for the blocking ops.
+- The **API stays private by design**. Your upstream backend reaches it at
+  `code-runner-api.internal:8080`, or you add an `[http_service]` (still token-gated)
+  to expose it.
+
+## Hardening & scaling
+
+- Set a Redis password (`--requirepass` + secret, update `REDIS_URL`) for
+  defense-in-depth even though the app is 6PN-private.
+- Raise `WORKER_MAX_SANDBOXES` and the worker VM size together; run multiple worker
+  Machines for more capacity. Ownership-by-subscription works across replicas. See
+  [Scaling](/docs/self-hosting/scaling).
+- **Upgrade path:** a future `FlyMachinesRunner` (one Firecracker Machine per execution
+  via the Fly Machines API) replaces dockerd-in-Machine for per-execution VM isolation.
+
+The full annotated walkthrough lives in `docs/deploy-fly.md` in the repo.

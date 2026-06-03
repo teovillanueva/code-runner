@@ -1,0 +1,186 @@
+---
+title: Quickstart
+description: Bring up the full stack locally and run an interactive job end to end.
+icon: Rocket
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+This walks you from a fresh clone to a working interactive execution in a few
+minutes. Everything runs locally against your Docker daemon — no cloud account
+needed.
+
+## Prerequisites
+
+- **Docker Desktop** running, with **cgroup v2** (required for resource limits).
+- **Node.js 22+** and **pnpm 10+** (for the API and the stub driver).
+- **Go 1.26+** (for the worker).
+- Ports **8080** (API) and **6001** (soketi) free on the host.
+
+<Callout type="info">
+  The worker mounts the **host** Docker socket and builds sandboxes on the host
+  daemon — there is **no Docker-in-Docker**. That's why the language images must
+  exist on your host before you run a job.
+</Callout>
+
+## Run it
+
+<Steps>
+
+<Step>
+
+### Clone and copy the environment file
+
+```bash
+git clone https://github.com/teovillanueva/code-runner.git
+cd code-runner
+cp .env.example .env
+```
+
+Every default in `.env.example` is safe for local development. You don't need to
+change anything to get started. (See [Configuration](/docs/self-hosting/configuration)
+for what each variable does.)
+
+</Step>
+
+<Step>
+
+### Build the language sandbox images
+
+The worker launches each job inside a pre-built, language-specific image. Build
+all four bundled languages on your host daemon:
+
+```bash
+make build-images
+# Builds: executor/python:3.12  executor/rust:1.83  executor/r:4.4  executor/sqlite:3
+```
+
+You can also build a single image, e.g. `make python-image`.
+
+</Step>
+
+<Step>
+
+### Bring up the stack
+
+```bash
+docker compose up      # or: make up   (adds --build)
+```
+
+This starts **redis**, **soketi**, **api**, and **worker**. The API is now live
+at `http://localhost:8080`.
+
+Verify it's healthy (no auth required):
+
+```bash
+curl http://localhost:8080/health
+# {"status":"ok"}
+```
+
+</Step>
+
+<Step>
+
+### Run the interactive end-to-end demo
+
+```bash
+make e2e
+```
+
+The bundled **stub** is a tiny interactive driver: it submits a Python program
+that prompts for a name, detects the prompt, sends `World` over stdin, and asserts
+the round-trip. Abbreviated output:
+
+```
+[stub] stdout: name?
+[stub] detected prompt, sending stdin: World
+[stub] stdout: hello World
+[stub] result: exitCode=0 reason=exit durationMs=...
+[PASS] ===== E2E PASS: interactive execute hello World round-trip succeeded =====
+```
+
+If you see `E2E PASS`, your stack is fully working — queue, sandbox, stdin
+round-trip, and soketi output streaming all verified.
+
+</Step>
+
+<Step>
+
+### Tear down
+
+```bash
+make down      # docker compose down -v
+```
+
+</Step>
+
+</Steps>
+
+## Submit a job by hand
+
+Want to drive it yourself instead of the stub? Here's the minimal flow with `curl`
+(see [Request Lifecycle](/docs/concepts/lifecycle) for why the order matters).
+
+<Tabs items={['1. Execute', '2. Start', '3. Status']}>
+
+<Tab value="1. Execute">
+
+```bash
+curl -X POST http://localhost:8080/v1/execute \
+  -H "Authorization: Bearer dev-insecure-token-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "language": "python",
+    "files": [{ "name": "main.py", "content": "print(\"hello from code-runner\")\n" }]
+  }'
+# 202 {"jobId":"<uuid>","channel":"private-run-<uuid>","status":"queued"}
+```
+
+</Tab>
+
+<Tab value="2. Start">
+
+After your client has **subscribed** to the `private-run-<jobId>` soketi channel,
+send the start signal. (For a `curl`-only test you can skip subscribing — output
+just won't be delivered anywhere.)
+
+```bash
+curl -X POST http://localhost:8080/v1/jobs/<jobId>/start \
+  -H "Authorization: Bearer dev-insecure-token-change-me"
+# 202 {"ok":true}
+```
+
+</Tab>
+
+<Tab value="3. Status">
+
+```bash
+curl http://localhost:8080/v1/jobs/<jobId> \
+  -H "Authorization: Bearer dev-insecure-token-change-me"
+# 200 {"jobId":"...","state":"running","language":"python","version":"3.12",...}
+```
+
+</Tab>
+
+</Tabs>
+
+<Callout type="warn">
+  All `/v1/*` endpoints require `Authorization: Bearer <EXECUTOR_API_TOKEN>`.
+  The default dev token is `dev-insecure-token-change-me` — **change it** before
+  exposing the service to anything. Generate one with `openssl rand -hex 32`.
+</Callout>
+
+To receive output in real time, you need a client subscribed to soketi. The
+fastest path is the [Node SDK + React](/docs/guides/react-sdk) integration, or
+read [Interactive Sessions](/docs/guides/interactive-stdin) for the full
+end-to-end pattern.
+
+## Next steps
+
+<Cards>
+  <Card title="How a request flows" href="/docs/concepts/lifecycle" description="The start-handshake and the full execute → stdin → result path." />
+  <Card title="Integrate from your backend" href="/docs/guides/backend-sdk" description="Submit jobs and sign channel auth with the Node SDK." />
+  <Card title="Add a language" href="/docs/guides/add-a-language" description="A folder + a manifest + a Dockerfile." />
+  <Card title="Self-hosting & scaling" href="/docs/self-hosting/scaling" description="Autoscale by queue depth; deploy to production." />
+</Cards>

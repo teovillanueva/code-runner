@@ -1,0 +1,108 @@
+---
+title: Request Lifecycle
+description: How a job travels from execute to result, and why the start-handshake exists.
+icon: Workflow
+---
+
+A single execution moves through a precise sequence of steps across the API, Redis,
+the worker, and soketi. Understanding the order — especially the **start-handshake**
+— is the key to integrating correctly.
+
+## The full sequence
+
+```text
+1. POST /v1/execute            → 202 {jobId, channel: "private-run-<id>", status: "queued"}
+       API validates, resolves the manifest, writes job spec + status to Redis,
+       LPUSHes the job ID onto jobs:queue.
+
+2. Worker BRPOPs the job ID, SUBSCRIBEs to stdin:<id> + ctrl:<id>, then parks at
+   the start gate, publishing the "queued" stage event.
+
+3. Client subscribes to soketi private-run-<id>  (and confirms the subscription).
+
+4. POST /v1/jobs/:id/start     → 202 {ok:true}
+       API PUBLISHes {type:"start"} on ctrl:<id>.
+
+5. Worker receives "start" → launches the sandbox → output flows to soketi:
+       stage(running) → stdout/stderr chunks … → result (terminal).
+
+6. (interactive) POST /v1/jobs/:id/stdin {chunk}
+       API PUBLISHes the chunk on stdin:<id> → worker writes it to the process pipe.
+```
+
+## The start-handshake
+
+soketi pub-sub is **fire-and-forget**: if no client is subscribed when an event is
+published, that event is simply lost. If the worker started executing the instant
+the job was claimed, the first lines of output could be emitted *before* the client
+finished subscribing — and vanish.
+
+The **start-handshake** closes that race:
+
+<Callout type="info">
+  The worker subscribes to the job's channels and then **parks** the job, doing
+  nothing until it receives an explicit `start` signal. Your client subscribes to
+  the soketi channel *first*, confirms the subscription, and only then calls
+  `POST /v1/jobs/:id/start`. By the time output begins, a subscriber is guaranteed
+  to be listening.
+</Callout>
+
+```text
+1. POST /v1/execute            → 202 {jobId, channel}
+2. Subscribe soketi private-run-<jobId>   (await subscription_succeeded)
+3. POST /v1/jobs/:id/start     → 202 {ok:true}
+4. Worker starts the sandbox   → output flows to soketi
+```
+
+This applies to **batch jobs too** (no stdin expected) — follow the same sequence.
+If `/start` never arrives, the worker reclaims the slot after `WORKER_WARMUP_MS`
+(default 30s) so a never-started job can't hold capacity forever.
+
+## Stages and the terminal result
+
+As a job progresses, the worker emits `stage` events on the soketi channel:
+
+`queued` → `compiling` (compiled languages only) → `running`
+
+and exactly one terminal **`result`** event when the sandbox exits. The result tells
+you *why* it ended:
+
+```json
+{
+  "exitCode": 0,
+  "signal": null,
+  "timedOut": false,
+  "idleTimedOut": false,
+  "truncated": false,
+  "durationMs": 312
+}
+```
+
+- `exitCode` is `null` when the process was killed by a signal.
+- `timedOut` covers **wall-clock and CPU-clock** expiry.
+- `idleTimedOut` covers **idle-clock** expiry.
+- `truncated` is `true` if output exceeded the `outputKb` budget.
+
+See the [three clocks](/docs/concepts/three-clocks) for what each timeout means, and
+the [events reference](/docs/api/events) for every event payload.
+
+## Driving stdin and control
+
+While a job runs you can:
+
+| Action | Endpoint | Effect |
+| --- | --- | --- |
+| Send input | `POST /v1/jobs/:id/stdin` | Publishes a chunk to `stdin:<id>`; the worker writes it to the process stdin. |
+| Signal EOF | `POST /v1/jobs/:id/stdin/close` | Publishes `{type:"stdin_close"}`; the worker closes stdin (like Ctrl-D). |
+| Kill | `POST /v1/jobs/:id/kill` | Publishes `{type:"kill"}`; the worker SIGKILLs the sandbox. |
+
+stdin is rate-limited at the API (a frame-rate cap and a pending-byte cap) to keep a
+single client from flooding the worker. Exceeding either returns `429`.
+
+## Collecting output after the fact
+
+Real-time output is delivered over soketi. If you also want a **pullable** copy —
+useful for clients that weren't subscribed, or for batch workflows — set
+`collectOutput: true` on the execute request. The worker then persists a `RunResult`
+(stdout, stderr, and any artifacts) to Redis with a TTL, retrievable via
+`GET /v1/jobs/:id/output`. See [Artifacts & pullable output](/docs/guides/artifacts).

@@ -1,0 +1,117 @@
+---
+title: Scaling & Statelessness
+description: Autoscale by queue depth, scale to zero, and the worker-node topology.
+icon: TrendingUp
+---
+
+code-runner is designed to scale horizontally. Both the API and the worker are
+**stateless** — all shared state lives in Redis — so you scale each tier by adding
+replicas.
+
+## The topology
+
+```text
+  Client / Upstream App
+         │
+         ▼
+  ┌──────────────┐
+  │  API (Hono)  │  N replicas — stateless, scale freely
+  └──────┬───────┘
+         │  LPUSH jobs:queue
+         ▼
+  ┌──────────────┐
+  │    Redis     │  native TCP (blocking ops required by the worker)
+  └──────┬───────┘
+         │  BRPOP / SUBSCRIBE stdin:<jobId>
+         ▼
+  ┌────────────────────────────────┐
+  │  Worker NODE (Go, long-lived)  │  M replicas — scaled by queue depth
+  │  ┌──────────┐  ┌──────────┐    │
+  │  │ Sandbox  │  │ Sandbox  │ …  │  up to WORKER_MAX_SANDBOXES per node
+  │  └──────────┘  └──────────┘    │
+  └────────────────────────────────┘
+         │  Pusher HTTP trigger
+         ▼
+  ┌──────────────┐
+  │   soketi     │  WebSocket fan-out (output only)
+  └──────────────┘
+```
+
+## The scaling unit is the worker node
+
+A worker is a **long-lived Go process** that claims jobs and launches sandboxes
+*internally* — up to `WORKER_MAX_SANDBOXES` concurrently. The unit of scale is the
+**node**, not a microVM per execution. This is what makes interactive sessions cheap:
+holding a slot open for a live stdin session is just a goroutine, not a VM.
+
+Capacity is governed by an in-memory semaphore inside each worker (authoritative), with
+the Redis queue depth as the cross-fleet signal.
+
+## Autoscale by queue depth
+
+Scale the worker fleet on `LLEN jobs:queue`.
+
+**Fly.io** — use [`fly-autoscaler`](https://github.com/superfly/fly-autoscaler) with
+the Redis LLEN metric:
+
+```toml
+[metrics.redis_queue_depth]
+type   = "redis"
+url    = "redis://your-redis-host:6379"
+metric = "llen"
+key    = "jobs:queue"
+
+[scaling]
+min   = 1
+max   = 50
+count = "min(50, max(1, qdepth / 2))"
+```
+
+**Kubernetes** — use [KEDA](https://keda.sh/) with the Redis scaler on
+`LLEN jobs:queue`, or an HPA backed by a custom metric from a Redis exporter.
+
+## Scale to zero
+
+Because the API is stateless and the worker only holds in-flight jobs, the worker
+fleet can scale to zero when the queue is empty. Jobs submitted while at zero sit in
+`jobs:queue` until the autoscaler spins a worker up and it `BRPOP`s them. Keep at least
+one API replica (or a scale-to-zero platform with fast cold start) so new jobs can be
+enqueued.
+
+soketi should **stay up** (min 1) — it's the live output transport and clients hold
+persistent WebSocket connections to it.
+
+## Orphan recovery
+
+If a worker dies mid-job, its sandboxes would be orphaned. A **reaper** loop detects
+this: it lists containers labelled by job, checks which owning workers are still alive
+(via heartbeat keys), and force-removes any container whose worker is gone — reclaiming
+the volume and marking the job `error`. This keeps a crashed node from leaking
+containers.
+
+## Extra isolation with gVisor
+
+For a stronger sandbox boundary in production, run sandboxes under
+[gVisor](https://gvisor.dev/):
+
+```bash
+SANDBOX_RUNTIME=runsc
+```
+
+This sets `HostConfig.Runtime="runsc"` on every launch — **no worker code changes**.
+gVisor's userspace kernel (the *Sentry*) intercepts all syscalls, giving
+Firecracker-class isolation with no per-execution VM-create latency. The seccomp
+profile stays in place as defense-in-depth. Validate each language image under runsc
+first, since the Sentry governs syscall behaviour.
+
+## Per-tier guidance
+
+| Tier | Stateless? | Needs native Redis? | Scale by |
+| --- | --- | --- | --- |
+| API | yes | no (REST Redis OK) | replicas / serverless |
+| Worker | yes | **yes** | queue depth (`LLEN jobs:queue`) |
+| Redis | — | it *is* Redis | vertical / managed cluster |
+| soketi | yes | no | connections; keep min 1 |
+
+For a concrete walk-through on one platform, see the
+[Fly.io reference deploy](/docs/self-hosting/deploy-fly).

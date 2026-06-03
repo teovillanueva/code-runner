@@ -1,0 +1,12 @@
+{
+  "title": "Guides",
+  "icon": "Compass",
+  "pages": [
+    "backend-sdk",
+    "react-sdk",
+    "interactive-stdin",
+    "channel-auth",
+    "artifacts",
+    "add-a-language"
+  ]
+}

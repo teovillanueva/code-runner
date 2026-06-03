@@ -1,0 +1,96 @@
+---
+title: Observability
+description: Bring-your-own OpenTelemetry — off by default, one connected trace when on.
+icon: Activity
+---
+
+Both the API and the worker are fully instrumented with OpenTelemetry, but ship
+**telemetry-off by default**. They emit nothing — no exporter, no connection, zero
+overhead — until you set a single environment variable.
+
+## The on switch
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+```
+
+That's it. Unset → a plain `docker compose up` is a true no-op. Set → both services
+export traces, metrics, and logs to that OTLP endpoint.
+
+## One connected trace per execution
+
+When enabled, a single execution produces **one trace spanning your backend, the API,
+and the worker**. The [Node SDK](/docs/guides/backend-sdk#opentelemetry-optional)
+injects a W3C `traceparent` into `POST /v1/execute`; the API starts an `execute` span;
+the worker extracts that context and links its phase spans into the same `trace_id`:
+
+```text
+execute (API)
+ └─ claim            (worker — root of the worker side, linked via traceparent)
+    ├─ sandbox.create
+    ├─ handshake.wait
+    ├─ compile        (compiled languages only)
+    ├─ run
+    └─ publish.result
+```
+
+## Metrics emitted
+
+The worker exports application-side metrics (no Redis/soketi exporter needed for
+these):
+
+| Metric | Type | Notes |
+| --- | --- | --- |
+| `code_runner.jobs.terminal` | counter | Labelled by `terminal_state`: `done`, `error`, `timed_out`, `idle_timed_out`, `killed`. |
+| `code_runner.queue.time` | histogram | Time a job spent queued (enqueue → claim). |
+| `code_runner.queue.depth` | gauge | `LLEN jobs:queue`. |
+| `code_runner.slots.used` / `.max` | gauges | In-memory semaphore occupancy and capacity. |
+| `code_runner.sandbox.create.duration` / `kill.duration` | histograms | Sandbox lifecycle timings. |
+| `code_runner.publish.duration` / `.errors` | histogram / counter | soketi trigger timings & failures. |
+| `code_runner.reaper.orphans` | counter | Orphaned containers reclaimed. |
+
+Logs are structured (slog/JSON) and carry `trace_id`, `span_id`, and `job_id` for
+correlation. No secrets or user code are ever logged.
+
+## The one-flag example stack
+
+An example backend (OTLP collector + Jaeger) ships **inert** under the `observability`
+compose profile — a plain `up` never starts it.
+
+```bash
+# 1. Enable the endpoint in .env (uncomment the OTEL_* block):
+#    OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+
+# 2. Start the stack WITH the collector + Jaeger:
+docker compose --profile observability up --build
+
+# 3. Run one execution and open the trace:
+bash scripts/observability-e2e.sh
+#    → Jaeger UI: http://localhost:16686  (service: code-runner-api)
+```
+
+In Jaeger, the latest `code-runner-api` trace contains both the API `execute` span and
+the worker phase spans under one `trace_id`. The collector config
+(`observability/otel-collector.yaml`) forwards **traces → Jaeger** and prints
+**metrics + logs** via its `debug` exporter.
+
+## Pointing at a real backend
+
+Edit `observability/otel-collector.yaml` to fan signals out to your stack — Prometheus
+/ Grafana for metrics, Loki / Elastic for logs, Tempo / Jaeger for traces. Nothing in
+the application changes; you only change the collector's exporters.
+
+In production, **lower the sampler** (`OTEL_TRACES_SAMPLER_ARG=0.05` for 5%). For
+"sample low but always keep errors", use collector-side tail sampling (a commented
+`tail_sampling` block ships in the example config).
+
+## Redis & soketi infrastructure metrics
+
+code-runner instruments **its own** API and worker, and deliberately does **not** ship
+exporters for Redis or soketi — those are operator-owned. To observe them, add the
+standard sidecars to your deployment:
+
+- **Redis:** [`oliver006/redis_exporter`](https://github.com/oliver006/redis_exporter)
+  pointed at `REDIS_URL`, scraped by Prometheus.
+- **soketi:** enable soketi's own Prometheus metrics endpoint
+  (`METRICS_ENABLED=true`) and scrape it.

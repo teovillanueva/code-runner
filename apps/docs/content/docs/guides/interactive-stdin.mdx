@@ -1,0 +1,164 @@
+---
+title: Interactive Sessions
+description: The full backend + frontend flow for a live interactive stdin round-trip.
+icon: MessagesSquare
+---
+
+This guide ties the [backend SDK](/docs/guides/backend-sdk) and the
+[React SDK](/docs/guides/react-sdk) into one working interactive session. The example
+runs a Python program that prompts for input, and lets a browser type into it live.
+
+## Who does what
+
+There are three actors. Keeping their roles straight is the whole game:
+
+| Actor | Holds | Responsibilities |
+| --- | --- | --- |
+| **Browser** (React) | nothing secret | Subscribes to soketi output; relays user input to your backend. |
+| **Your backend** (Node SDK) | `EXECUTOR_API_TOKEN`, `SOKETI_APP_SECRET` | Calls the code-runner API; signs channel auth. |
+| **code-runner** | runs the sandbox | Executes, streams output, accepts stdin/control. |
+
+The browser **never** talks to code-runner directly — only to your backend, which
+forwards to the bearer-authed API.
+
+## Backend routes
+
+Expose a few thin routes that wrap the SDK. (Express shown; any framework works.)
+
+```ts
+import express from 'express';
+import {
+  CodeRunnerClient,
+  createChannelAuthorizer,
+} from '@teovilla/code-runner-sdk-node';
+
+const client = new CodeRunnerClient({
+  baseUrl: process.env.CODE_RUNNER_URL!,
+  token: process.env.EXECUTOR_API_TOKEN!,
+});
+const authorize = createChannelAuthorizer({
+  appKey: process.env.SOKETI_APP_KEY!,
+  appSecret: process.env.SOKETI_APP_SECRET!,
+});
+
+const app = express();
+app.use(express.json());
+
+// 1. Enqueue a job (do NOT start it yet)
+app.post('/api/jobs', async (req, res) => {
+  const job = await client.execute({
+    language: 'python',
+    files: [{ name: 'main.py', content: "name = input('name? ')\nprint(f'hello {name}')\n" }],
+  });
+  res.json(job); // { jobId, channel, status }
+});
+
+// 2. Channel auth — pusher-js POSTs here from the browser
+app.post('/code-runner/auth', (req, res) => {
+  const { socket_id, channel_name } = req.body;
+  res.json(authorize(socket_id, channel_name));
+});
+
+// 3. Start the job (after the browser has subscribed)
+app.post('/api/jobs/:id/start', (req, res) =>
+  client.start(req.params.id).then(() => res.json({ ok: true })),
+);
+
+// 4. Forward stdin / kill
+app.post('/api/jobs/:id/stdin', (req, res) =>
+  client.sendStdin(req.params.id, req.body.chunk).then(() => res.json({ ok: true })),
+);
+app.post('/api/jobs/:id/kill', (req, res) =>
+  client.kill(req.params.id).then(() => res.json({ ok: true })),
+);
+
+app.listen(3000);
+```
+
+## Frontend
+
+```tsx
+import { useState } from 'react';
+import {
+  CodeRunnerProvider,
+  useCodeRunnerJob,
+} from '@teovilla/code-runner-react';
+
+export function App() {
+  return (
+    <CodeRunnerProvider
+      appKey={import.meta.env.VITE_SOKETI_APP_KEY}
+      host="localhost"
+      port={6001}
+      authEndpoint="/code-runner/auth"
+    >
+      <Runner />
+    </CodeRunnerProvider>
+  );
+}
+
+function Runner() {
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  async function run() {
+    // 1. Ask our backend to enqueue
+    const job = await fetch('/api/jobs', { method: 'POST' }).then((r) => r.json());
+    setJobId(job.jobId);
+    // The hook below subscribes to the channel. Once subscribed, we start it.
+    await fetch(`/api/jobs/${job.jobId}/start`, { method: 'POST' });
+  }
+
+  return jobId ? <Job jobId={jobId} /> : <button onClick={run}>Run</button>;
+}
+
+function Job({ jobId }: { jobId: string }) {
+  const { stage, stdout, result, sendStdin } = useCodeRunnerJob({
+    jobId,
+    onStdin: (chunk) =>
+      fetch(`/api/jobs/${jobId}/stdin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chunk }),
+      }),
+  });
+
+  return (
+    <div>
+      <p>stage: {stage}</p>
+      <pre>{stdout}</pre>
+      <button onClick={() => sendStdin('World\n')}>Answer "World"</button>
+      {result && <p>exit {result.exitCode}</p>}
+    </div>
+  );
+}
+```
+
+<Callout type="warn" title="Subscribe before you start">
+  In the snippet above, `run()` calls `/start` immediately after `/api/jobs`. In a
+  robust implementation you should wait until the hook reports the channel is
+  subscribed before starting, so the very first output isn't missed. The simplest
+  pattern: render `<Job>` (which subscribes on mount), and trigger `/start` from an
+  effect once the subscription is confirmed. See the
+  [start-handshake](/docs/concepts/lifecycle#the-start-handshake).
+</Callout>
+
+## What the round-trip looks like
+
+```text
+browser  → POST /api/jobs                  → backend → POST /v1/execute → {jobId, channel}
+browser  ← subscribe private-run-<id>      (auth signed by your backend)
+browser  → POST /api/jobs/:id/start        → backend → POST /v1/jobs/:id/start
+worker   → python main.py
+worker   → stdout "name? "                 → soketi → browser renders prompt
+browser  → POST /api/jobs/:id/stdin "World\n" → backend → POST /v1/jobs/:id/stdin
+worker   → stdin pipe → process
+worker   → stdout "hello World\n"          → soketi → browser
+worker   → result { exitCode: 0 }          → soketi → browser
+```
+
+## Without a browser
+
+If you only need a programmatic round-trip (no browser), your backend can both submit
+**and** subscribe — connect pusher-js (or any Pusher client) server-side and sign the
+channel locally. The bundled `apps/stub` does exactly this and is the basis of
+`make e2e`. The mechanics are identical; the browser is just one possible subscriber.

@@ -1,0 +1,79 @@
+---
+title: The Local Stack
+description: What docker compose brings up, and the Make targets you'll use.
+icon: Container
+---
+
+The repo ships a `docker-compose.yml` that runs the whole system locally. A plain
+`docker compose up` is a true no-op for optional features — no telemetry, no extra
+services — so the default experience is minimal.
+
+## Services
+
+| Service | Image | Role | Exposed |
+| --- | --- | --- | --- |
+| `redis` | `redis:7-alpine` | Job queue, stdin/control pub-sub, job metadata. | internal |
+| `soketi` | `quay.io/soketi/soketi:latest-16-alpine` | Pusher-compatible WebSocket fan-out. | `6001` |
+| `api` | `apps/api/Dockerfile` | Hono gateway. | `8080` |
+| `worker` | `apps/worker/Dockerfile` | Go worker; mounts the host Docker socket. | internal |
+| `minio` | `minio/minio` | S3-compatible artifact storage (dev). | `9000`/`9001` |
+| `stub` | `apps/stub/Dockerfile` | Interactive E2E driver. | profile `stub` |
+| `otel-collector` | `otel/opentelemetry-collector-contrib` | OTLP receiver. | profile `observability` |
+| `jaeger` | `jaegertracing/all-in-one` | Trace UI at `:16686`. | profile `observability` |
+
+All services share the `code-runner` bridge network. The worker mounts
+`/var/run/docker.sock` — sandboxes run on your **host** daemon (no Docker-in-Docker).
+
+<Callout type="warn" title="Build the language images first">
+  The sandbox images (`executor/python:3.12`, etc.) are **not** built by compose —
+  they must already exist on the host daemon. Run `make build-images` before your
+  first job, or you'll get image-not-found errors at execution time.
+</Callout>
+
+## Compose profiles
+
+Optional services sit behind profiles so the default `up` stays lean:
+
+```bash
+docker compose up                              # core: redis, soketi, api, worker, minio
+docker compose --profile stub up               # + the interactive E2E stub
+docker compose --profile observability up      # + otel-collector + jaeger
+docker compose up --scale worker=2             # run two worker nodes
+```
+
+## Make targets
+
+| Target | What it does |
+| --- | --- |
+| `make build-images` | Build all four language images on the host daemon. |
+| `make python-image` / `rust-image` / `r-image` / `sqlite-image` | Build one image. |
+| `make up` | `docker compose up --build`. |
+| `make down` | `docker compose down -v`. |
+| `make e2e` | Full interactive "hello World" round-trip via the stub. |
+| `make artifacts-e2e` | Artifacts pull-loop E2E (writes a PNG, uploads, pulls). |
+| `make abuse` | The adversarial safety suite (Docker cgroup v2 + `redis:7` on `:6381`). |
+| `make test` | All unit/integration tests (Go + JS). |
+| `make contract` | Regenerate the wire contract (TS + Zod + Go). |
+| `make contract-check` | Fail if generated contract artifacts drifted. |
+| `make help` | List every target. |
+
+## Helper scripts
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/e2e.sh` | What `make e2e` runs: brings up the stack, runs the stub, tears down. |
+| `scripts/artifacts-e2e.sh` | Phase-9 artifact capture/upload/pull demo. |
+| `scripts/observability-e2e.sh` | Brings up the observability profile and proves one connected trace in Jaeger. |
+| `scripts/try-fly.sh` | A zero-checkout demo against a deployed Fly.io gateway (`TOKEN=… bash scripts/try-fly.sh`). |
+
+## Typical first run
+
+```bash
+cp .env.example .env
+make build-images
+docker compose up        # leave running
+make e2e                 # in another terminal — expect "E2E PASS"
+```
+
+From here, head to [Configuration](/docs/self-hosting/configuration) to understand
+every knob, or [Scaling](/docs/self-hosting/scaling) for the production topology.

@@ -1,0 +1,84 @@
+---
+title: Introduction
+description: What code-runner is, who it's for, and how the pieces fit together.
+icon: BookOpen
+---
+
+**code-runner** is an open-source (MIT), self-hostable remote code execution service.
+You hand it code, it runs that code in a hardened, resource-bounded sandbox with a
+**live interactive stdin session**, and it streams the output back in real time.
+
+Think [Piston](https://github.com/engineering-online/piston), but with first-class
+interactive stdin, a horizontally scalable Go worker pool, and an "add a language by
+adding a folder" extensibility model.
+
+<Callout type="warn" title="It is an internal service">
+  code-runner is **never exposed to the internet directly**. In front of it sits
+  *your own backend* (any stack), which authenticates with a bearer token and
+  consumes the API. Browsers only ever receive output — over soketi — and never
+  send trusted input directly to code-runner. See [Architecture](/docs/concepts/architecture).
+</Callout>
+
+## What it gives you
+
+- **Run untrusted code safely.** `network=none`, read-only rootfs, dropped Linux
+  capabilities, a deny-by-default seccomp profile, non-root user, and cgroup
+  memory/CPU/PID limits — applied to every sandbox unconditionally.
+- **Interactive sessions.** Write to a running process's stdin mid-execution and
+  watch stdout/stderr stream back over WebSockets, chunk by chunk.
+- **Bounded resource usage.** Three independent clocks — wall, idle, and CPU —
+  guarantee no sandbox, container, or session slot is ever leaked.
+- **Real-time output** via [soketi](https://soketi.app/) (a Pusher-compatible
+  WebSocket server). The worker triggers events; soketi fans them out to clients.
+- **Trivially extensible.** A language is a folder with a `manifest.json` and a
+  `Dockerfile`. No Go or API changes needed.
+- **Horizontally scalable & stateless.** Scale the worker fleet by Redis queue
+  depth. Scale-to-zero friendly.
+
+## The shape of the system
+
+code-runner is a **polyglot monorepo** — each component uses the right tool:
+
+| Component | Tech | Role |
+| --- | --- | --- |
+| `apps/api` | Hono / TypeScript | The single trusted entry point. Validates requests, enqueues jobs, relays stdin & control signals. |
+| `apps/worker` | Go | Claims jobs from Redis, launches hardened sandboxes via the host Docker daemon, keeps sessions alive, streams output to soketi. |
+| `packages/contract` | JSON Schema → TS + Zod + Go | The shared wire contract. One schema generates types for every language; a CI drift check guards the seam. |
+| `languages/` | manifest + Dockerfile | One folder per language. Auto-discovered at boot. |
+| Redis | — | Job queue + stdin/control pub-sub + job metadata. |
+| soketi | — | Output-only WebSocket fan-out to clients. |
+
+## Where to go next
+
+<Cards>
+  <Card
+    title="Quickstart"
+    href="/docs/quickstart"
+    description="Bring up the full stack locally and run an interactive job in a few minutes."
+  />
+  <Card
+    title="Architecture"
+    href="/docs/concepts/architecture"
+    description="The data flow, the trust boundary, and how a request travels end to end."
+  />
+  <Card
+    title="Integrate from your backend"
+    href="/docs/guides/backend-sdk"
+    description="Use the Node SDK to submit code, drive stdin, and sign channel auth."
+  />
+  <Card
+    title="Integrate in React"
+    href="/docs/guides/react-sdk"
+    description="Subscribe to live output with the useCodeRunnerJob hook."
+  />
+  <Card
+    title="REST API reference"
+    href="/docs/api/rest"
+    description="Every endpoint, request/response shape, and status code."
+  />
+  <Card
+    title="Self-hosting"
+    href="/docs/self-hosting/configuration"
+    description="Configuration, scaling, observability, and a Fly.io reference deploy."
+  />
+</Cards>
