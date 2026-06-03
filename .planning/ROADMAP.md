@@ -143,7 +143,7 @@ Plans:
 **Plans**: 2 plans
 Plans:
 - [ ] 07-01-PLAN.md — Complete README: quickstart, full /v1/* API contract + output events, deployment-per-target, add-a-language guide, channel-auth (DOCS-01..04, CHAN-01)
-- [ ] 07-02-PLAN.md — Broader CI matrix (.github/workflows/ci.yml): lint, go-unit, js+redis, contract-drift
+- [x] 07-02-PLAN.md — Broader CI matrix (.github/workflows/ci.yml): lint, go-unit, js+redis, contract-drift
 **UI hint**: yes
 
 ## Progress
@@ -159,4 +159,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
 | 5. Statelessness & Scale | 3/3 | Complete   | 2026-06-02 |
 | 6. Language Fan-out | 4/4 | Complete   | 2026-06-03 |
-| 7. OSS Release & Deployment | 0/TBD | Not started | - |
+| 7. OSS Release & Deployment | 1/2 | In Progress|  |

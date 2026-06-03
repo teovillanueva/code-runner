@@ -133,7 +133,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 - [ ] **OSS-01**: The repo ships an MIT `LICENSE`
 - [ ] **OSS-02**: A `.env.example` documents every env var
-- [ ] **DOCS-01**: The README has a quickstart: how to run the stack locally
+- [x] **DOCS-01**: The README has a quickstart: how to run the stack locally
 - [ ] **DOCS-02**: The README documents the API contract (`/v1/*` endpoints + wire events)
 - [ ] **DOCS-03**: The README documents deployment per target: dev (docker compose); prod (long-lived **worker nodes** on Fly or any Linux host that launch sandboxes internally, scaled to/from zero by queue depth, with **gVisor** `--runtime=runsc` for extra isolation; native-protocol Redis + soketi; API anywhere); and the **v2** `FlyMachinesRunner` microVM-per-execution option with its latency/streaming trade-offs noted
 - [ ] **DOCS-04**: The README documents how to add a new language (the package model guide)
@@ -253,7 +253,7 @@ Each v1 requirement maps to exactly one phase.
 | TEST-08 | Phase 4 | Complete |
 | OSS-01 | Phase 1 | Pending |
 | OSS-02 | Phase 1 | Pending |
-| DOCS-01 | Phase 7 | Pending |
+| DOCS-01 | Phase 7 | Complete |
 | DOCS-02 | Phase 7 | Pending |
 | DOCS-03 | Phase 7 | Pending |
 | DOCS-04 | Phase 7 | Pending |
