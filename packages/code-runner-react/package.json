@@ -3,6 +3,12 @@
   "version": "0.2.0",
   "description": "Browser real-time SDK for the code-runner service: a CodeRunnerProvider + useCodeRunnerJob hook that subscribes to private-run-<jobId> over soketi (pusher-js) and reassembles ordered stdout/stderr.",
   "license": "MIT",
+  "homepage": "https://github.com/teovillanueva/code-runner/tree/main/packages/code-runner-react",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teovillanueva/code-runner.git",
+    "directory": "packages/code-runner-react"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
