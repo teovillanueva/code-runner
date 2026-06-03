@@ -1,0 +1,61 @@
+# code-runner: system-wide R site profile (auto-sourced at every R startup).
+#
+# This file is COPYed to /etc/R/Rprofile.site, which is the ONLY R startup file
+# auto-sourced on the Debian r-base:4.4.2 image: R_HOME/etc/Rprofile.site
+# (/usr/lib/R/etc/Rprofile.site) is a symlink to /etc/R/Rprofile.site. (The old
+# /etc/R/Rsite.profile was DEAD CODE — R never sources a file by that name.)
+#
+# It does three things:
+#   1. Per-expression stdout/stderr flush (carried forward from the dead
+#      Rsite.profile) so interactive streaming never stalls in a buffer.
+#   2. A LAZY /workspace png device: opened on the FIRST real plot via the
+#      `before.plot.new` hook, so untrusted exam code that draws N plots WITHOUT
+#      opening a device yields exactly N /workspace/Rplot*.png — and a no-plot run
+#      yields ZERO PNGs (no blank artifacts, requirement G1).
+#   3. An onexit finalizer that closes the device on normal AND error shutdown,
+#      so a script that errors AFTER its first plot still flushes that frame.
+#
+# Why `before.plot.new`, NOT `plot.new` (verified during planning, fact B):
+#   Opening a device inside a `plot.new` hook resets device state and the
+#   subsequent plot.xy fails with "plot.new has not been called yet". The
+#   `before.plot.new` hook fires BEFORE plot.new on the fresh device, so opening
+#   the png device there works correctly. action="replace" keeps a single hook.
+
+# invisible() so the value of the local() block (the finalizer's NULL) is NOT
+# auto-printed to stdout when this profile is sourced at top level — otherwise a
+# stray "NULL" would pollute the first line of every R run's stdout.
+invisible(local({
+  # 1. Per-expression flush (streaming belt-and-suspenders).
+  addTaskCallback(
+    function(...) { flush(stdout()); flush(stderr()); TRUE },
+    name = "code_runner_flush"
+  )
+
+  # Private state env so the hook/finalizer share an "opened" flag.
+  .cr <- new.env()
+
+  # 2. Lazy png device — opened exactly once, on the first real plot.
+  setHook(
+    "before.plot.new",
+    function() {
+      if (!isTRUE(.cr$opened)) {
+        .cr$opened <- TRUE
+        grDevices::png(
+          "/workspace/Rplot%03d.png",
+          width = 800, height = 600, res = 100
+        )
+      }
+    },
+    action = "replace"
+  )
+
+  # 3. onexit finalizer: close every open device on normal OR error exit so the
+  #    in-progress frame is written. Runs at R shutdown regardless of how it ends.
+  reg.finalizer(
+    .cr,
+    function(e) {
+      while (grDevices::dev.cur() > 1) grDevices::dev.off()
+    },
+    onexit = TRUE
+  )
+}))
