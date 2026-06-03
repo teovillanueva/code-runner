@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Abuse Suite & Safety Validation** - Fork bomb, OOM, infinite loop, idle, EOF, giant output on Linux CI — gates the language fan-out (completed 2026-06-02)
 - [x] **Phase 5: Statelessness & Scale** - Slot capacity, backpressure 429, reliable claim, dead-worker reaper, N replicas, autoscaling-by-queue-depth + scale-to-zero design, native-Redis worker constraint (completed 2026-06-02)
 - [x] **Phase 6: Language Fan-out** - Rust (compile stage), R 4.4, SQLite 3 (interactive SQL shell) added as manifest + Dockerfile, zero core changes (completed 2026-06-03)
-- [ ] **Phase 7: OSS Release & Deployment** - README quickstart, API contract, add-a-language guide, deployment-per-target, channel-auth documentation
+- [x] **Phase 7: OSS Release & Deployment** - README quickstart, API contract, add-a-language guide, deployment-per-target, channel-auth documentation (completed 2026-06-03)
 
 ## Phase Details
 
@@ -142,7 +142,7 @@ Plans:
   4. The README documents how to add a new language (the package model guide) and how the upstream app authorizes the browser's private soketi channel via the app key/secret (HMAC), noting the optional non-core helper.
 **Plans**: 2 plans
 Plans:
-- [ ] 07-01-PLAN.md — Complete README: quickstart, full /v1/* API contract + output events, deployment-per-target, add-a-language guide, channel-auth (DOCS-01..04, CHAN-01)
+- [x] 07-01-PLAN.md — Complete README: quickstart, full /v1/* API contract + output events, deployment-per-target, add-a-language guide, channel-auth (DOCS-01..04, CHAN-01)
 - [x] 07-02-PLAN.md — Broader CI matrix (.github/workflows/ci.yml): lint, go-unit, js+redis, contract-drift
 **UI hint**: yes
 
@@ -159,4 +159,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
 | 5. Statelessness & Scale | 3/3 | Complete   | 2026-06-02 |
 | 6. Language Fan-out | 4/4 | Complete   | 2026-06-03 |
-| 7. OSS Release & Deployment | 1/2 | In Progress|  |
+| 7. OSS Release & Deployment | 2/2 | Complete   | 2026-06-03 |
