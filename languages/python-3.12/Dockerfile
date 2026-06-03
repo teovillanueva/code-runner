@@ -39,17 +39,57 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # --network needed.
 ENV MPLBACKEND=Agg
 
+# ── Single-threaded numeric stack (sandbox pids-limit friendly) ───────────────
+# OMP_NUM_THREADS / OPENBLAS_NUM_THREADS = 1: keep BLAS/OpenMP single-threaded so
+# the science stack (numpy/scipy/sklearn) does not spawn a worker-thread pool
+# inside the sandbox. Under the runtime pids limit + --cap-drop ALL, spawning
+# pthreads either fails noisily or wastes the small pid budget; untrusted exam
+# code does not need BLAS parallelism. Mirrors the R image's OPENBLAS rationale.
+ENV OMP_NUM_THREADS=1
+ENV OPENBLAS_NUM_THREADS=1
+
+# MPLCONFIGDIR=/tmp/mplconfig: the runtime UID 65534 has home /nonexistent, so
+# matplotlib would print a noisy "mkdir failed for /nonexistent/.config/matplotlib"
+# warning and fall back to a temp dir. Point its cache at /tmp (a writable tmpfs
+# in the sandbox; rootfs is read-only) to silence that warning. matplotlib only
+# needs a writable cache dir and degrades gracefully if it is absent.
+ENV MPLCONFIGDIR=/tmp/mplconfig
+
 # ── Bake in data-science / HTTP / plotting libraries at build time ────────────
 # Versions pinned to known-good releases.  These are top-tier PyPI packages
 # (T-03-SC); --no-cache-dir keeps the layer lean.
 # Runtime containers are --network=none, so all deps MUST be here (T-03-04).
 # matplotlib 3.10.3 ships manylinux wheels and is compatible with numpy 2.2.6;
 # under MPLBACKEND=Agg (above) it renders plot files headlessly with no GUI deps.
+#
+# University-exam scientific stack (all manylinux wheels, verified compatible
+# with numpy 2.2.6 / matplotlib 3.10.3 / pandas 2.2.3, no conflicts):
+#   scipy, statsmodels, scikit-learn, seaborn, cvxopt, swiglpk, PICOS.
+# swiglpk BUNDLES GLPK, so PICOS solves LPs with solver='glpk' out of the box —
+# NO apt libglpk package is needed and the image requires ZERO new apt deps.
+# NOTE for the executor: network IS available during `docker build`; if any single
+# pin ever fails to resolve, loosen that one pin to the nearest compatible release.
 RUN pip install --no-cache-dir \
     numpy==2.2.6 \
     pandas==2.2.3 \
     requests==2.32.3 \
-    matplotlib==3.10.3
+    matplotlib==3.10.3 \
+    scipy==1.15.3 \
+    statsmodels==0.14.4 \
+    scikit-learn==1.6.1 \
+    seaborn==0.13.2 \
+    cvxopt==1.3.2 \
+    swiglpk==5.0.12 \
+    PICOS==2.6.0
+
+# ── Auto-capture matplotlib figures as /workspace artifacts ───────────────────
+# COPY (after the pip install so site-packages exists) the sitecustomize.py hook
+# into site-packages; Python auto-imports `sitecustomize` at interpreter startup
+# with no env var. It captures any open matplotlib figures to /workspace/figure_*.png
+# at shutdown WITHOUT the user calling savefig(). COPY preserves 0644 so the
+# runtime UID 65534 can read it. A run that never imports matplotlib emits zero
+# figures (the saver only registers on the first matplotlib import).
+COPY sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
 
 # ── Workspace directory ────────────────────────────────────────────────────────
 # The runner (internal/runner/docker.go) sets WorkingDir=/workspace and
