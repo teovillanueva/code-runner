@@ -1,29 +1,30 @@
-import { Fragment } from 'react';
 import Link from 'next/link';
-import { ArrowRight, ChevronDown, ChevronRight, Lock, Shield } from 'lucide-react';
+import { ArrowRight, Lock, Shield } from 'lucide-react';
 
 /**
- * The trust payload: the exact path one execution takes through the system,
- * drawn as a single hardened schematic rather than boxes-and-arrows. The
- * trust boundary is a real wall — the control plane flows left → right into
- * it; the sandbox is quarantined on the far side carrying its hardening; the
- * two return paths (output / stdin) fold into the same readout and mark where
- * they cross the wall. Full-bleed inverted band, the first dark "machine"
- * moment. `.cr-on-dark` remaps the accent/status tokens for the emphasis
- * surface; the connector rail is a server-rendered CSS signal bus.
+ * The trust payload, drawn as one honest line. A request lifecycle is not a
+ * tangle of boxes and arrows: it is a single locked path read top to bottom —
+ * the trusted control plane descends into the trust boundary (the one hero
+ * element), the sandbox runs untrusted code beyond it, and output is the only
+ * thing that crosses back, through an output-only relay. stdin is the single
+ * exception, called out as a footnote. Iris is rationed to the boundary and
+ * the sandbox; the spine and trusted stations stay achromatic.
+ *
+ * Full-bleed inverted band — the first dark "machine" moment. `.cr-on-dark`
+ * remaps the accent tokens for the emphasis surface; `.cr-spine` is a
+ * server-rendered vertical signal bus that pulses a request down the path.
  */
 
-type Stage = { kicker: string; name: string; sub: string; external?: boolean };
+type Marker = 'external' | 'trusted' | 'sandbox' | 'exit';
+type Station = { marker: Marker; name: string; sub: string; hop?: string };
 
-const TRUSTED: Stage[] = [
-  { kicker: 'external', name: 'your backend', sub: 'any stack · bearer token', external: true },
-  { kicker: 'gateway', name: 'api', sub: 'Hono · validates, enqueues' },
-  { kicker: 'queue', name: 'redis', sub: 'job queue + stdin bus' },
-  { kicker: 'orchestrator', name: 'worker', sub: 'Go · claims a slot' },
+// the trusted control plane, in order. `hop` is the wire move to the next stop.
+const TRUSTED: Station[] = [
+  { marker: 'external', name: 'your backend', sub: 'any stack · bearer token', hop: 'POST /run' },
+  { marker: 'trusted', name: 'api', sub: 'Hono · validates, enqueues', hop: 'enqueue' },
+  { marker: 'trusted', name: 'redis', sub: 'job queue + stdin bus', hop: 'BRPOP · claim slot' },
+  { marker: 'trusted', name: 'worker', sub: 'Go · attaches stdio', hop: 'create · attach' },
 ];
-
-// one hop label per gap, including the final crossing into the wall.
-const HOPS = ['POST /run', 'enqueue', 'BRPOP · slot', 'create · attach'];
 
 const SANDBOX_FLAGS = ['network=none', 'ro-rootfs', 'cap-drop ALL', 'seccomp'];
 
@@ -49,196 +50,161 @@ export function ArchitectureBand() {
           </Link>
         </div>
 
-        {/* one framed schematic readout: control plane in → wall → sandbox,
-            then the two return paths fold in beneath the same frame */}
-        <div className="mt-11 overflow-hidden rounded-card border border-white/[0.1] bg-white/[0.015]">
-          {/* zone strip — names the trust split before the eye parses the nodes */}
-          <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] sm:px-6">
-            <span className="text-emphasis-ink/40">control plane · trusted</span>
-            <span className="inline-flex items-center gap-1.5 text-iris">
-              <Lock className="size-3" aria-hidden />
-              untrusted sandbox
-            </span>
-          </div>
+        {/* asymmetric split: the linear trace on the left, the trust model it
+            proves on the right — vertically centered so the band reads as one
+            composed plate rather than a diagram floating in a void */}
+        <div className="mt-11 grid grid-cols-1 gap-x-12 gap-y-9 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.78fr)] lg:items-center">
+          {/* one linear trace: trusted plane → wall → sandbox → output relay */}
+          <div className="overflow-hidden rounded-card border border-white/[0.1] bg-white/[0.015]">
+            {/* trusted control plane */}
+            <ol className="px-5 pt-6 pb-2 sm:px-7">
+              {TRUSTED.map((stage, i) => (
+                <StationRow key={stage.name} stage={stage} delay={i} />
+              ))}
+            </ol>
 
-          {/* control plane: trusted nodes → wall → sandbox */}
-          <div className="flex flex-col gap-3 p-4 sm:p-6 lg:flex-row lg:items-stretch lg:gap-0">
-            {TRUSTED.map((stage, i) => (
-              <Fragment key={stage.name}>
-                <Node stage={stage} />
-                <Connector label={HOPS[i]} delay={i} />
-              </Fragment>
-            ))}
+            {/* the hero: a hardened seam the path is forced through */}
             <Wall />
-            <SandboxNode />
+
+            {/* beyond the wall — the one iris-tinted zone */}
+            <div className="bg-iris/[0.04] px-5 pt-5 pb-6 sm:px-7">
+              <ol>
+              <StationRow
+                stage={{
+                  marker: 'sandbox',
+                  name: 'sandbox',
+                  sub: 'runs untrusted code',
+                  hop: 'output-only',
+                }}
+                delay={4}
+                last
+              >
+                <ul className="mt-2.5 flex flex-wrap gap-1.5">
+                  {SANDBOX_FLAGS.map((flag) => (
+                    <li
+                      key={flag}
+                      className="rounded-[5px] border border-iris/25 bg-iris/[0.07] px-1.5 py-0.5 font-mono text-[10px] text-iris/90"
+                    >
+                      {flag}
+                    </li>
+                  ))}
+                </ul>
+              </StationRow>
+              <StationRow
+                stage={{
+                  marker: 'exit',
+                  name: 'soketi → browser',
+                  sub: 'live stream, output-only',
+                }}
+                delay={5}
+                last
+                terminal
+              />
+              </ol>
+            </div>
           </div>
 
-          {/* return paths — same frame, hairline-separated, crossing marked */}
-          <div className="border-t border-white/[0.07]">
-            <ReturnLane
-              label="output"
-              nodes={['sandbox', 'soketi', 'browser']}
-              lockIndex={1}
-              crossingAfter={0}
-              note="soketi is output-only; it never accepts trusted input"
-            />
-            <div className="border-t border-white/[0.05]" />
-            <ReturnLane
-              label="stdin"
-              nodes={['your backend', 'redis', 'worker', 'sandbox']}
-              crossingAfter={2}
-              note="written mid-run; re-enters only through the trusted plane"
-            />
+          {/* the trust model the trace proves, reading down the same axis */}
+          <div className="flex flex-col gap-6">
+            <p className="max-w-[42ch] text-[15px] leading-relaxed text-emphasis-ink/70">
+              Everything above the wall is trusted and authenticated. Beyond it,
+              the sandbox runs with{' '}
+              <span className="text-emphasis-ink">no network</span> and a
+              read-only root. Output leaves through soketi, which is{' '}
+              <span className="text-emphasis-ink">output-only</span> toward the
+              client; nothing trusted ever enters that way.
+            </p>
+
+            {/* the single trust exception, as a note rather than a third flow */}
+            <p className="flex max-w-[40ch] items-start gap-2.5 border-t border-white/[0.08] pt-5 font-mono text-[12px] leading-relaxed text-emphasis-ink/55">
+              <Lock className="mt-0.5 size-3.5 shrink-0 text-iris/70" aria-hidden />
+              <span>
+                <span className="text-emphasis-ink/85">stdin</span> is the only
+                thing that re-enters mid-run, and only back through the trusted
+                worker, never through soketi.
+              </span>
+            </p>
           </div>
         </div>
-
-        <p className="mt-7 max-w-[68ch] text-[15px] leading-relaxed text-emphasis-ink/70">
-          Everything left of the wall is trusted and authenticated. Beyond it,
-          the sandbox runs untrusted code with{' '}
-          <span className="text-emphasis-ink">no network</span> and a read-only
-          root. Output leaves through soketi, which is{' '}
-          <span className="text-emphasis-ink">output-only</span> toward the
-          client; nothing trusted ever enters that way.
-        </p>
       </div>
     </section>
   );
 }
 
-function Node({ stage }: { stage: Stage }) {
-  return (
-    <div
-      className={`flex flex-col justify-center rounded-input px-3.5 py-3 lg:min-h-[82px] lg:min-w-0 lg:flex-[2] ${
-        stage.external
-          ? 'border border-dashed border-white/[0.2] bg-transparent'
-          : 'border border-white/[0.1] bg-white/[0.03]'
-      }`}
-    >
-      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-emphasis-ink/45">
-        {stage.kicker}
-      </p>
-      <p className="mt-1 font-mono text-[14px] text-emphasis-ink">{stage.name}</p>
-      <p className="mt-0.5 font-mono text-[11px] leading-snug text-emphasis-ink/55">
-        {stage.sub}
-      </p>
-    </div>
-  );
-}
+const MARKER: Record<Marker, string> = {
+  external:
+    'size-[9px] rounded-full border border-dashed border-emphasis-ink/45 bg-transparent',
+  trusted: 'size-[9px] rounded-full border border-emphasis-ink/40 bg-emphasis-ink/10',
+  sandbox: 'size-[11px] rounded-[3px] border border-iris bg-iris/30',
+  exit: 'size-[9px] rounded-full border border-iris/55 bg-iris/15',
+};
 
-function SandboxNode() {
+function StationRow({
+  stage,
+  delay,
+  last,
+  terminal,
+  children,
+}: {
+  stage: Station;
+  delay: number;
+  last?: boolean;
+  terminal?: boolean;
+  children?: React.ReactNode;
+}) {
   return (
-    <div className="flex flex-col justify-center rounded-input border border-iris/55 bg-iris/[0.08] px-3.5 py-3 lg:min-h-[82px] lg:min-w-0 lg:flex-[2.9]">
-      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-iris">
-        untrusted
-      </p>
-      <p className="mt-1 font-mono text-[14px] text-emphasis-ink">sandbox</p>
-      <ul className="mt-2 flex flex-wrap gap-1">
-        {SANDBOX_FLAGS.map((flag) => (
-          <li
-            key={flag}
-            className="rounded-[5px] border border-iris/25 bg-iris/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-iris/90"
-          >
-            {flag}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function Connector({ label, delay }: { label: string; delay: number }) {
-  return (
-    <div className="flex items-center justify-center lg:min-w-0 lg:flex-1 lg:flex-col lg:gap-2 lg:px-1">
-      {/* mobile: label + downward chevron between stacked nodes */}
-      <div className="flex items-center gap-2 lg:hidden">
-        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-emphasis-ink/40">
-          {label}
-        </span>
-        <ChevronDown className="size-4 text-iris" aria-hidden />
-      </div>
-
-      {/* desktop: label rides the bus; the rail sweeps a signal in sequence */}
-      <span className="hidden text-center font-mono text-[9.5px] uppercase leading-tight tracking-[0.07em] text-emphasis-ink/40 lg:block">
-        {label}
-      </span>
-      <div className="hidden w-full items-center lg:flex">
-        <div
-          className="cr-rail flex-1"
-          style={{ '--cr-seg-delay': `${delay * 300}ms` } as React.CSSProperties}
+    <li className="flex gap-4">
+      {/* spine column: continuous vertical trace + the station marker on it */}
+      <div className="relative flex w-3 flex-none justify-center">
+        {!terminal && (
+          <span
+            className="cr-spine"
+            style={{ '--cr-seg-delay': `${delay * 260}ms` } as React.CSSProperties}
+            aria-hidden
+          />
+        )}
+        <span
+          className={`absolute top-[6px] ${MARKER[stage.marker]}`}
+          aria-hidden
         />
-        <ChevronRight className="size-3.5 shrink-0 text-iris/70" aria-hidden />
       </div>
-    </div>
+
+      {/* station body */}
+      <div className={`min-w-0 flex-1 ${last ? 'pb-0' : 'pb-1'}`}>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+          <span className="inline-flex items-center gap-2 font-mono text-[14px] text-emphasis-ink">
+            {stage.name}
+            {stage.marker === 'sandbox' && (
+              <span className="cr-dot" aria-hidden />
+            )}
+          </span>
+          <span className="font-mono text-[11px] text-emphasis-ink/50">
+            {stage.sub}
+          </span>
+        </div>
+
+        {children}
+
+        {/* the hop label rides the gap leading to the next station */}
+        {stage.hop && (
+          <p className="mt-2 mb-3 font-mono text-[10px] uppercase tracking-[0.1em] text-emphasis-ink/40">
+            {stage.hop}
+          </p>
+        )}
+      </div>
+    </li>
   );
 }
 
 function Wall() {
   return (
-    <div className="flex shrink-0 items-center justify-center py-1 lg:w-[46px] lg:py-0">
-      {/* mobile: a horizontal hardened divider */}
-      <div className="flex w-full items-center gap-2.5 lg:hidden">
-        <span className="h-px flex-1 border-t border-dashed border-iris/40" />
-        <span className="inline-flex items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-[0.14em] text-iris/80">
-          <Shield className="size-3" aria-hidden />
-          trust boundary
-        </span>
-        <span className="h-px flex-1 border-t border-dashed border-iris/40" />
-      </div>
-
-      {/* desktop: a vertical hardened wall with a spine label cut into it */}
-      <div className="relative hidden h-full w-full items-center justify-center lg:flex">
-        <span className="absolute inset-y-1 left-1/2 -translate-x-1/2 border-l border-dashed border-iris/45" />
-        <span className="relative bg-emphasis px-1 py-2 font-mono text-[9px] uppercase tracking-[0.16em] text-iris/85 [writing-mode:vertical-rl] rotate-180">
-          trust boundary
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function ReturnLane({
-  label,
-  nodes,
-  note,
-  crossingAfter,
-  lockIndex,
-}: {
-  label: string;
-  nodes: string[];
-  note: string;
-  crossingAfter: number;
-  lockIndex?: number;
-}) {
-  return (
-    <div className="flex flex-col gap-2.5 px-4 py-4 sm:flex-row sm:items-center sm:gap-5 sm:px-6">
-      <span className="inline-flex w-fit shrink-0 items-center rounded-chip bg-iris-wash px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-iris">
-        {label}
+    <div className="relative flex items-center gap-3 px-5 py-1 sm:px-7">
+      <span className="h-px flex-1 bg-[linear-gradient(to_right,transparent,color-mix(in_oklab,var(--iris)_55%,transparent))]" />
+      <span className="inline-flex items-center gap-1.5 rounded-chip border border-iris/45 bg-iris/[0.1] px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-iris">
+        <Shield className="size-3" aria-hidden />
+        trust boundary
       </span>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 font-mono text-[12.5px]">
-        {nodes.map((node, i) => (
-          <span key={node} className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 text-emphasis-ink/85">
-              {node}
-              {i === lockIndex ? (
-                <Lock className="size-3 text-iris/70" aria-hidden />
-              ) : null}
-            </span>
-            {i < nodes.length - 1 ? (
-              i === crossingAfter ? (
-                <span className="inline-flex items-center gap-1.5" aria-hidden>
-                  <span className="h-3.5 w-px border-l border-dashed border-iris/55" />
-                  <ChevronRight className="size-3.5 text-iris" />
-                </span>
-              ) : (
-                <ChevronRight className="size-3.5 text-iris" aria-hidden />
-              )
-            ) : null}
-          </span>
-        ))}
-      </div>
-      <p className="font-mono text-[11px] leading-snug text-emphasis-ink/55 sm:ml-auto sm:max-w-[34ch] sm:text-right">
-        {note}
-      </p>
+      <span className="h-px flex-1 bg-[linear-gradient(to_left,transparent,color-mix(in_oklab,var(--iris)_55%,transparent))]" />
     </div>
   );
 }

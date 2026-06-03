@@ -9,9 +9,9 @@ import { ArrowRight } from 'lucide-react';
  *   <LogoCloud/>   a quiet hairline band beneath the language strip.
  *   <CaseStudy/>   the edalef × Universidad de San Andrés exam platform.
  *
- * The partner logos are flat achromatic PNGs (black on transparent), so they
- * sit inside the same achromatic system as the rest of the site: rendered as
- * ink in light, inverted to near-white in dark via `dark:invert`. No second
+ * The edalef partner mark is a flat achromatic PNG (black on transparent), so
+ * it sits inside the same achromatic system as the rest of the site: rendered
+ * as ink in light, inverted to near-white in dark via `dark:invert`. No second
  * brand color enters through a logo; the iris stays rationed.
  */
 
@@ -22,16 +22,6 @@ const EdalefMark = ({ className }: { className?: string }) => (
     width={486}
     height={518}
     aria-hidden
-    className={className}
-  />
-);
-
-const UdesaLogo = ({ className }: { className?: string }) => (
-  <Image
-    src="/partners/udesa.png"
-    alt="Universidad de San Andrés"
-    width={550}
-    height={100}
     className={className}
   />
 );
@@ -49,9 +39,6 @@ export function LogoCloud() {
           <span className="text-[19px] font-semibold tracking-[-0.02em] text-ink">
             edalef
           </span>
-        </li>
-        <li className="opacity-80 transition-opacity duration-150 ease-snap hover:opacity-100">
-          <UdesaLogo className="h-8 w-auto dark:invert" />
         </li>
       </ul>
     </section>
@@ -137,8 +124,7 @@ export function CaseStudy() {
 
           <div className="my-7 h-px bg-line" />
 
-          <UdesaLogo className="h-9 w-auto dark:invert" />
-          <p className="mt-3 text-[13px] text-ink-3">
+          <p className="text-[13px] text-ink-3">
             Universidad de San Andrés · Buenos Aires, Argentina
           </p>
         </div>

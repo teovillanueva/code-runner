@@ -419,54 +419,56 @@ html > body[data-scroll-locked] {
   }
 }
 
-/* ─────────────────── request-lifecycle schematic ───────────────────
-   The control-plane connectors are a signal bus: a dim iris rail with a
-   bright pulse that sweeps each segment in sequence, so a request reads
-   as propagating node → node along the one locked path. Reduced motion
-   holds the rail at a steady dim iris (no sweep). */
+/* ─────────────────── request-lifecycle spine ───────────────────
+   The lifecycle is one linear locked path drawn as a single vertical
+   trace. Each segment between stations is a dim achromatic rail; a
+   faint near-white pulse falls through them in sequence, so a request
+   reads as descending station → station down the one path. Iris is
+   rationed to the trust boundary + sandbox, never the spine. Reduced
+   motion holds the spine steady (no pulse). */
 
-.cr-rail {
+.cr-spine {
   position: relative;
-  height: 1px;
-  background: color-mix(in oklab, var(--iris) 30%, transparent);
+  align-self: stretch;
+  width: 1px;
+  background: color-mix(in oklab, var(--emphasis-ink) 13%, transparent);
   overflow: hidden;
 }
-.cr-rail::after {
+.cr-spine::after {
   content: '';
   position: absolute;
-  inset: 0;
+  left: -1px;
+  right: -1px;
+  top: 0;
+  height: 34%;
   background: linear-gradient(
-    90deg,
+    to bottom,
     transparent 0%,
-    var(--iris) 50%,
+    color-mix(in oklab, var(--emphasis-ink) 60%, transparent) 50%,
     transparent 100%
   );
-  background-size: 38% 100%;
-  background-repeat: no-repeat;
-  background-position-x: -45%;
   opacity: 0;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .cr-rail::after {
-    animation: cr-signal 3.4s var(--ease-snap) infinite;
+  .cr-spine::after {
+    animation: cr-descend 3.4s var(--ease-snap) infinite;
     animation-delay: var(--cr-seg-delay, 0ms);
   }
 }
-@keyframes cr-signal {
+@keyframes cr-descend {
   0% {
-    background-position-x: -45%;
+    transform: translateY(-130%);
     opacity: 0;
   }
-  6% {
+  8% {
     opacity: 1;
   }
-  30% {
-    background-position-x: 145%;
+  46% {
     opacity: 1;
   }
-  34%,
+  60%,
   100% {
-    background-position-x: 145%;
+    transform: translateY(360%);
     opacity: 0;
   }
 }
