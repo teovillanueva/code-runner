@@ -10,23 +10,26 @@ authenticated door**, and clients only ever *receive* output.
 
 ## The data flow
 
-```text
-Upstream App ──Bearer token──► API (Hono)
-                                   │  LPUSH jobs:queue
-                                   ▼
-                               Redis
-                                   │  BRPOP / SUBSCRIBE stdin:<jobId>
-                                   ▼
-                          Worker NODE (Go, long-lived)
-                          ┌─────────────────────────┐
-                          │  Sandbox  │  Sandbox  …  │  (up to WORKER_MAX_SANDBOXES)
-                          └─────────────────────────┘
-                                   │  Pusher HTTP trigger
-                                   ▼
-                              soketi (WebSocket fan-out)
-                                   │
-                                   ▼
-                            Browser / Client
+```mermaid
+flowchart TD
+    App["🧑‍💻 Upstream App<br/>your backend"]
+    API["API · Hono gateway<br/>stateless · N replicas"]
+    Redis[("Redis<br/>queue · pub-sub · metadata")]
+    subgraph Worker["Worker node · Go · long-lived"]
+        direction LR
+        S1["Sandbox"]
+        S2["Sandbox"]
+        S3["… up to<br/>WORKER_MAX_SANDBOXES"]
+    end
+    Soketi["soketi · WebSocket fan-out<br/>output only"]
+    Client["🌐 Browser / Client"]
+
+    App -- "Bearer token · POST /v1/execute" --> API
+    API -- "LPUSH jobs:queue" --> Redis
+    Redis -- "BRPOP · SUBSCRIBE stdin:jobId" --> Worker
+    Worker -- "Pusher HTTP trigger" --> Soketi
+    Soketi -- "channel private-run-jobId" --> Client
+    Client -. "stdin / control · via your backend → API" .-> App
 ```
 
 ## The components

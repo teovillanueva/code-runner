@@ -1,604 +1,427 @@
-# code-runner
+<!-- banner -->
+<p align="center">
+  <img src=".github/assets/banner.svg" alt="code-runner — run untrusted code in a hardened, interactive sandbox" width="100%" />
+</p>
 
-An **open-source (MIT), self-hostable** remote code execution service with live interactive stdin.
-Run untrusted code in a hardened sandbox and stream output in real time via soketi (Pusher-compatible).
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f.svg" alt="MIT License" /></a>
+  <a href="https://github.com/teovillanueva/code-runner/actions/workflows/ci.yml"><img src="https://github.com/teovillanueva/code-runner/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/teovillanueva/code-runner/actions/workflows/abuse.yml"><img src="https://github.com/teovillanueva/code-runner/actions/workflows/abuse.yml/badge.svg" alt="Abuse safety gate" /></a>
+  <a href="https://www.npmjs.com/package/@teovilla/code-runner-sdk-node"><img src="https://img.shields.io/npm/v/@teovilla/code-runner-sdk-node?logo=npm&label=sdk-node&color=cb3837" alt="sdk-node on npm" /></a>
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26" />
+  <img src="https://img.shields.io/badge/Node-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node 22+" />
+</p>
 
-## What it is
+<p align="center">
+  <b>An open-source, self-hostable remote code execution service with live interactive stdin.</b><br/>
+  Run untrusted code in a hardened sandbox and stream output in real time over soketi (Pusher-compatible).
+</p>
 
-code-runner is a **Piston-style remote execution service** built as a polyglot monorepo:
+<p align="center">
+  <a href="#-quickstart">Quickstart</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-api-reference">API</a> ·
+  <a href="#-client-sdks">SDKs</a> ·
+  <a href="#-adding-a-language">Add a language</a> ·
+  <a href="#-deployment">Deploy</a>
+</p>
 
-- **Hono/TypeScript API gateway** (`apps/api`) — the single trusted entry point. Validates requests, enqueues jobs, relays stdin/control signals.
-- **Go worker** (`apps/worker`) — claims jobs from Redis, launches hardened sandbox containers via the host Docker daemon, keeps sessions alive, streams output to soketi.
-- **Manifest-driven language packages** (`languages/`) — each language is a folder containing a `manifest.json` + `Dockerfile`. The loader auto-discovers them at boot; nothing is hardcoded in Go or the API.
-- **Shared JSON-Schema wire contract** (`packages/contract`) — TS types + Zod validators + Go structs are generated from a single schema. A CI drift check guards the polyglot seam.
+---
 
-### Architecture and data flow
+## ✨ What it is
 
+**code-runner** is a [Piston](https://github.com/engineering-online/piston)-style remote
+execution service, built as a polyglot monorepo, that does one thing well: take some
+code, run it in an isolated **hardened sandbox** with a **live interactive stdin
+session**, and stream the output back in real time — without ever leaking a container,
+a subscription, or a session slot.
+
+It is an **internal service**: never exposed to the internet directly. In front of it
+sits *your own backend* (any stack), which authenticates with a bearer token. Browsers
+only ever *receive* output — over soketi — and never send trusted input directly.
+
+| | |
+| --- | --- |
+| 🛡️ **Hardened by default** | `network=none`, read-only rootfs, dropped capabilities, deny-by-default seccomp, non-root user, cgroup memory/CPU/PID limits — on **every** sandbox, unconditionally. gVisor is a one-env-var swap. |
+| ⌨️ **Live interactive stdin** | Write to a running process mid-execution and watch stdout/stderr stream back chunk by chunk over WebSockets. |
+| ⏱️ **Three independent clocks** | Wall, idle, and CPU time bound every sandbox. Any clock firing kills it unconditionally — no leaks, ever. |
+| 🧩 **Polyglot by design** | A Hono/TypeScript gateway, a Go worker, and a JSON-Schema wire contract that generates TS types + Zod validators + Go structs from one source. |
+| 📦 **Add a language = a folder** | Each language is a `manifest.json` + `Dockerfile`, auto-discovered at boot. Zero changes to Go or the API. |
+| ☁️ **Stateless & scalable** | Autoscale the worker fleet by Redis queue depth. Scale-to-zero friendly. MIT, self-hostable, BYO OpenTelemetry. |
+
+> [!TIP]
+> There is a full documentation site under [`apps/docs`](apps/docs) (Next.js + Fumadocs).
+> Run it locally with `pnpm --filter docs dev` and open http://localhost:3000.
+
+---
+
+## 🏗️ Architecture
+
+All trusted input (code, stdin, control) enters through **one** bearer-authed door — the
+API. soketi is **output-only** toward the client; nothing trusted ever enters through it.
+
+```mermaid
+flowchart TD
+    App["🧑‍💻 Upstream App<br/>your backend"]
+    API["API · Hono gateway<br/>stateless · N replicas"]
+    Redis[("Redis<br/>queue · pub-sub · metadata")]
+    subgraph Worker["Worker node · Go · long-lived"]
+        direction LR
+        S1["Sandbox"]
+        S2["Sandbox"]
+        S3["… up to<br/>WORKER_MAX_SANDBOXES"]
+    end
+    Soketi["soketi · WebSocket fan-out<br/>output only"]
+    Client["🌐 Browser / Client"]
+
+    App -- "Bearer token · POST /v1/execute" --> API
+    API -- "LPUSH jobs:queue" --> Redis
+    Redis -- "BRPOP · SUBSCRIBE stdin:jobId" --> Worker
+    Worker -- "Pusher HTTP trigger" --> Soketi
+    Soketi -- "channel private-run-jobId" --> Client
+    Client -. "stdin / control · via your backend → API" .-> App
 ```
-Upstream App ──Bearer token──► API (Hono)
-                                   │  LPUSH jobs:queue
-                                   ▼
-                               Redis
-                                   │  BRPOP / SUBSCRIBE stdin:<jobId>
-                                   ▼
-                          Worker NODE (Go, long-lived)
-                          ┌─────────────────────────┐
-                          │  Sandbox  │  Sandbox  …  │  (up to WORKER_MAX_SANDBOXES)
-                          └─────────────────────────┘
-                                   │  Pusher HTTP trigger
-                                   ▼
-                              soketi (WebSocket fan-out)
-                                   │
-                                   ▼
-                            Browser / Client
-```
 
-**Data flow in full:**
+**The components**
 
-1. Upstream app `POST /v1/execute` → API validates, resolves the language manifest, writes job spec + status to Redis, LPUSHes the job ID, returns `202 {jobId, channel}`.
-2. Client subscribes to the private soketi channel `private-run-<jobId>`.
-3. Client sends `POST /v1/jobs/:id/start` (the start-handshake — see below).
-4. Worker BRPOPs the job ID, launches the sandbox, begins streaming output events to soketi.
-5. stdin chunks arrive via `POST /v1/jobs/:id/stdin` → API PUBLISHes to `stdin:<jobId>` → owning worker writes to the process pipe.
+- **`apps/api` — Hono / TypeScript.** The single trusted entry point. Validates requests
+  (constant-time bearer auth), resolves the language manifest, writes the job to Redis,
+  and relays stdin & control signals. Stateless → runs anywhere, scales to N replicas.
+- **`apps/worker` — Go.** Claims jobs from Redis, launches hardened sandboxes via the
+  host Docker daemon (behind a swappable `Runner` interface), enforces the three clocks,
+  pumps stdin in and streams output out. The **unit of scale**.
+- **`packages/contract` — JSON Schema → TS + Zod + Go.** The shared wire contract. One
+  schema generates types for every language; a CI drift check guards the seam.
+- **Redis** — job queue (`jobs:queue`), stdin/control pub-sub (`stdin:<id>`, `ctrl:<id>`),
+  and job metadata (`job:<id>:{spec,status,output}`).
+- **soketi** — Pusher-compatible WebSocket fan-out. The worker *triggers*; soketi
+  *delivers* to subscribers.
 
-**Trust boundary:** All trusted input (code, stdin, control) enters only through the bearer-authed API. soketi is **output-only** — nothing trusted enters via it. The soketi app secret is read from the environment only; it is never written to Redis or returned by any endpoint.
+> [!IMPORTANT]
+> The **worker requires native TCP Redis** (`redis://`/`rediss://`) — it uses blocking
+> `BRPOP` and `SUBSCRIBE`. Serverless REST-only Redis (e.g. Upstash's REST tier) works
+> for the API but **not** the worker. See [`docs/redis-constraint.md`](docs/redis-constraint.md).
 
-**Three-clocks model:** The worker enforces three independent resource clocks per sandbox — wall time (`wallTimeMs`), idle time (`idleMs`, killed when no output and no stdin), and CPU time (`cpuMs`, via cgroup). Any clock expiry kills the sandbox unconditionally.
+---
 
-## Quickstart
+## 🚀 Quickstart
 
 ### Prerequisites
 
 - **Docker Desktop** running (cgroup v2 required for resource limits)
-- **Node.js 22+** and **pnpm 10+** (for the API and stub)
-- **Go 1.26+** (for the worker)
-- Ports `8080` (API) and `6001` (soketi) free on the host
+- **Node.js 22+** and **pnpm 10+** · **Go 1.26+**
+- Ports `8080` (API) and `6001` (soketi) free
 
-### 1. Copy env
+### Five steps to a working interactive run
 
 ```bash
+# 1. Copy env (all defaults are safe for local dev)
 cp .env.example .env
-# All defaults are safe for local dev.
-```
 
-### 2. Build language images
+# 2. Build the language sandbox images on the host daemon (no Docker-in-Docker)
+make build-images       # executor/python:3.12  rust:1.83  r:4.4  sqlite:3
 
-Build all four language sandbox images on the host Docker daemon (the worker mounts the host socket — no Docker-in-Docker):
+# 3. Bring up the stack: redis + soketi + api + worker
+docker compose up       # or: make up
 
-```bash
-make build-images
-# Builds: executor/python:3.12  executor/rust:1.83  executor/r:4.4  executor/sqlite:3
-```
-
-### 3. Bring up the stack
-
-```bash
-docker compose up
-# Starts: redis, soketi, api, worker
-# (or: make up  —  equivalent to docker compose up --build)
-```
-
-The API will be available at `http://localhost:8080`. Health check: `GET /health` (no auth required).
-
-### 4. Run the interactive E2E demo
-
-```bash
+# 4. Run the interactive end-to-end demo
 make e2e
-# Equivalent to: ./scripts/e2e.sh
+
+# 5. Tear down
+make down
 ```
 
-The script starts the full stack, runs the stub (an interactive E2E driver), and tears down on exit. Expected output (abbreviated):
+`make e2e` drives an interactive Python program that prompts for a name, sends `World`
+over stdin, and asserts the round-trip:
 
-```
+```text
 [stub] stdout: name?
 [stub] detected prompt, sending stdin: World
 [stub] stdout: hello World
 [stub] result: exitCode=0 reason=exit durationMs=...
-[stub] E2E PASS: hello World received + exitCode 0 + clean result
 [PASS] ===== E2E PASS: interactive execute hello World round-trip succeeded =====
 ```
 
-### 5. Tear down
-
-```bash
-make down
-# Equivalent to: docker compose down -v
-```
-
-## API Reference
-
-All `/v1/*` endpoints require:
-
-```
-Authorization: Bearer <EXECUTOR_API_TOKEN>
-```
-
-Missing or invalid token → `401 {"error":"unauthorized"}` (constant-time comparison).
+Health check (no auth): `curl http://localhost:8080/health` → `{"status":"ok"}`.
 
 ---
 
-### GET /health
+## 🔄 Interactive flow
 
-**No authentication required.**
+The **start-handshake** is the crux: the worker parks the job until you signal `start`,
+so your client is guaranteed to be subscribed before any output is emitted (soketi
+pub-sub drops events that have no live subscriber).
 
-Returns `200 {"status":"ok"}`. Use this as a readiness probe.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Client (your backend)
+    participant API as API (Hono)
+    participant R as Redis
+    participant W as Worker (Go)
+    participant SK as soketi
+
+    U->>API: POST /v1/execute
+    API->>R: write spec/status · LPUSH jobs:queue
+    API-->>U: 202 · jobId + channel
+    W->>R: BRPOP jobs:queue (claim)
+    W->>R: SUBSCRIBE stdin:id + ctrl:id
+    Note over W: parked at the start gate
+    U->>SK: subscribe private-run-id
+    U->>API: POST /v1/jobs/:id/start
+    API->>R: PUBLISH ctrl:id (start)
+    W->>W: sandbox.Start() then run
+    W->>SK: stdout "name? "
+    SK-->>U: stdout event
+    U->>API: POST /v1/jobs/:id/stdin (chunk)
+    API->>R: PUBLISH stdin:id
+    R-->>W: chunk into process stdin
+    W->>SK: stdout "hello World"
+    SK-->>U: stdout event
+    W->>SK: result · exitCode 0
+    SK-->>U: result event (terminal)
+    W->>W: cleanup · free slot · unsubscribe
+```
+
+### The three clocks
+
+Each sandbox is bounded by three independent clocks; **any one firing kills it**:
+
+| Clock | Limit | Fires when… | Result field |
+| --- | --- | --- | --- |
+| **Wall** | `wallTimeMs` | total lifetime exceeds the limit | `timedOut` |
+| **Idle** | `idleMs` | no output **and** no stdin for the window (resets on activity) | `idleTimedOut` |
+| **CPU** | `cpuMs` | cumulative cgroup CPU time exceeds the limit | `timedOut` |
+
+Plus `memoryMb` (OOM kill, swap disabled), `pids` (fork-bomb guard), and `outputKb`
+(combined stdout+stderr budget; overflow → `truncated`).
 
 ---
 
-### POST /v1/execute
+## 📡 API Reference
 
-Submit code for execution. Returns immediately (before any process starts) with a job ID and soketi channel.
+All `/v1/*` endpoints require `Authorization: Bearer <EXECUTOR_API_TOKEN>`. A missing or
+invalid token → `401 {"error":"unauthorized"}` (constant-time comparison). `GET /health`
+is the only unauthenticated route.
 
-**Request body:**
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Readiness probe (no auth). |
+| `POST` | `/v1/execute` | Submit code → `202 {jobId, channel, status}`. |
+| `POST` | `/v1/jobs/:id/start` | The start-handshake signal. |
+| `POST` | `/v1/jobs/:id/stdin` | Write a chunk to the process stdin. |
+| `POST` | `/v1/jobs/:id/stdin/close` | Signal EOF (Ctrl-D). |
+| `POST` | `/v1/jobs/:id/kill` | SIGKILL the sandbox. |
+| `GET` | `/v1/jobs/:id` | Poll job status. |
+| `GET` | `/v1/jobs/:id/output` | Pull persisted output (needs `collectOutput`). |
+| `GET` | `/v1/languages` | List discovered languages. |
+| `POST` | `/v1/channel-auth` | Optional soketi channel-auth helper (`ENABLE_CHANNEL_AUTH=true`). |
 
-```json
+<details>
+<summary><b>POST /v1/execute</b> — request & responses</summary>
+
+```jsonc
+// Request body
 {
-  "language": "python",
-  "version": "3.12",
+  "language": "python",            // name or alias: "py", "rust", "rs", "sqlite", "sql", …
+  "version": "3.12",               // optional; omit to use the only/most-recent match
   "files": [
     { "name": "main.py", "content": "name = input('name? ')\nprint(f'hello {name}')\n" }
   ],
-  "limits": {
-    "wallTimeMs": 30000,
-    "idleMs": 10000,
-    "cpuMs": 15000,
-    "memoryMb": 128,
-    "pids": 64,
-    "outputKb": 512
-  }
+  "limits": {                      // optional per-request overrides; absent → manifest defaults
+    "wallTimeMs": 30000, "idleMs": 10000, "cpuMs": 15000,
+    "memoryMb": 128, "pids": 64, "outputKb": 512
+  },
+  "collectOutput": false           // true → persist a pullable RunResult
 }
 ```
 
-- `language` — language name or alias (e.g. `"python"`, `"py"`, `"rust"`, `"rs"`, `"sqlite"`, `"sql"`).
-- `version` — optional; omit to use the only/most-recent match.
-- `files` — array of `{name, content}` objects; at least one required.
-- `limits` — optional per-request override; absent fields fall back to manifest defaults.
-
-**Responses:**
-
 | Code | Body | When |
-|------|------|------|
-| `202` | `{"jobId":"<uuid>","channel":"private-run-<jobId>","status":"queued"}` | Accepted; job enqueued. |
-| `400` | `{"error":"...","details":[...]}` | Invalid body, unknown language, or unknown version. |
-| `429` | `{"error":"Executor at capacity...","retryAfterMs":1000}` | Queue depth >= `MAX_QUEUE_DEPTH`. Checked after manifest resolution, so invalid requests get `400` not `429`. |
+| --- | --- | --- |
+| `202` | `{"jobId","channel":"private-run-<jobId>","status":"queued"}` | Accepted; enqueued. |
+| `400` | `{"error","details":[…]}` | Invalid body / unknown language or version. |
+| `429` | `{"error":"Executor at capacity…","retryAfterMs":1000}` | `LLEN(jobs:queue) >= MAX_QUEUE_DEPTH`. |
 
----
+</details>
 
-### POST /v1/jobs/:id/start
+<details>
+<summary><b>Job status, output & languages</b> — response shapes</summary>
 
-Send the start signal after subscribing to the soketi channel. See the [Start-handshake](#start-handshake) section.
-
-**Responses:**
-
-| Code | Body | When |
-|------|------|------|
-| `202` | `{"ok":true}` | Signal published. |
-
----
-
-### POST /v1/jobs/:id/stdin
-
-Write a chunk to the running process stdin.
-
-**Request body:**
+**`GET /v1/jobs/:id`** → `200 JobStatus` / `404`:
 
 ```json
-{ "chunk": "World\n" }
+{ "jobId":"<uuid>", "channel":"private-run-<uuid>", "language":"python",
+  "version":"3.12", "state":"running", "updatedAtMs":1700000000000 }
 ```
 
-**Responses:**
+`state` ∈ `queued` · `starting` · `running` · `done` · `killed` · `error`.
 
-| Code | Body | When |
-|------|------|------|
-| `200` | `{"ok":true}` | Chunk published. |
-| `400` | `{"error":"...","details":[...]}` | Invalid body. |
-| `429` | — | Frame-rate or pending-byte cap exceeded. |
-
----
-
-### POST /v1/jobs/:id/stdin/close
-
-Signal EOF to the process stdin (equivalent to Ctrl-D).
-
-**Responses:**
-
-| Code | Body |
-|------|------|
-| `200` | `{"ok":true}` |
-
----
-
-### POST /v1/jobs/:id/kill
-
-Send SIGKILL to the sandbox.
-
-**Responses:**
-
-| Code | Body |
-|------|------|
-| `200` | `{"ok":true}` |
-
----
-
-### GET /v1/jobs/:id
-
-Poll job status.
-
-**Responses:**
-
-| Code | Body | When |
-|------|------|------|
-| `200` | `JobStatus` | Job found. |
-| `404` | `{"error":"Job not found: <id>"}` | Unknown job ID. |
-
-**JobStatus shape:**
+**`GET /v1/jobs/:id/output`** → `200 RunResult` / `404` (single 404 for all absence — callers can't probe which ids exist):
 
 ```json
-{
-  "jobId": "<uuid>",
-  "channel": "private-run-<uuid>",
-  "language": "python",
-  "version": "3.12",
-  "state": "running",
-  "updatedAtMs": 1700000000000
-}
+{ "exitCode":0, "signal":null, "timedOut":false, "idleTimedOut":false,
+  "truncated":false, "durationMs":312, "stdout":"hello World\n", "stderr":"",
+  "artifacts":[{ "name":"plot.png", "mimeType":"image/png", "bytes":20481, "url":"https://…" }],
+  "artifactsTruncated":false }
 ```
 
-`state` enum: `queued` | `starting` | `running` | `done` | `killed` | `error`
+**`GET /v1/languages`** → `200`:
+
+```json
+[ { "language":"python", "version":"3.12", "aliases":["py","py3","python3"], "interactive":true } ]
+```
+
+</details>
+
+<details>
+<summary><b>Output events</b> — emitted on <code>private-run-&lt;jobId&gt;</code></summary>
+
+soketi delivers each event's data as a **JSON-encoded string** — parse with `JSON.parse`.
+
+- **`stage`** — `{ "phase": "queued" | "compiling" | "running" }`
+- **`stdout` / `stderr`** — `{ "chunk": "name? ", "seq": 0 }` (reassemble by `seq`)
+- **`result`** (terminal, once) — `{ exitCode, signal, timedOut, idleTimedOut, truncated, durationMs }`
+- **`artifact`** — `{ name, mimeType, bytes, url }` (presigned GET URL, no bearer)
+
+</details>
 
 ---
 
-### GET /v1/languages
+## 📚 Client SDKs
 
-Returns the list of available languages discovered from `languages/*/manifest.json`. Zero language identifiers are hardcoded.
+Three published packages cover both sides of the trust boundary:
 
-**Response `200`:**
+| Package | Side | Role |
+| --- | --- | --- |
+| [`@teovilla/code-runner-sdk-node`](packages/code-runner-sdk-node) | **server** | Typed `CodeRunnerClient` over the gateway + soketi channel-auth signing. |
+| [`@teovilla/code-runner-react`](packages/code-runner-react) | **browser** | `CodeRunnerProvider` + `useCodeRunnerJob` hook for live output. Token-free. |
+| [`@teovilla/code-runner-contract`](packages/contract) | shared | The generated wire contract (types, Zod, channel/event helpers). |
 
-```json
-[
-  { "language": "python", "version": "3.12", "aliases": ["py","py3","python3"], "interactive": true },
-  { "language": "rust",   "version": "1.83", "aliases": ["rs"],                  "interactive": true },
-  { "language": "r",      "version": "4.4",  "aliases": ["R"],                   "interactive": false },
-  { "language": "sqlite", "version": "3",    "aliases": ["sql"],                  "interactive": true }
-]
-```
-
----
-
-### POST /v1/channel-auth
-
-**Optional.** Only registered when `ENABLE_CHANNEL_AUTH=true`. Used by the stub for local demos. In production the upstream app handles channel auth directly (see [Channel Auth](#channel-auth)).
-
-**Request body:**
-
-```json
-{ "socket_id": "123.456", "channel_name": "private-run-<jobId>" }
-```
-
-**Responses:**
-
-| Code | Body | When |
-|------|------|------|
-| `200` | Pusher auth response `{"auth":"<key>:<hmac>"}` | Channel authorized. |
-| `400` | `{"error":"Missing required fields: socket_id, channel_name"}` | Missing fields. |
-| `403` | `{"error":"Only private-run-<jobId> channels can be authorized here"}` | Non-`private-run-` channel. |
-
----
-
-### Start-handshake
-
-The worker parks the job at the queue until it receives the start signal. The sequence ensures the client is subscribed to the soketi channel before output begins:
-
-```
-1. POST /v1/execute            → 202 {jobId, channel}
-2. Subscribe soketi private-run-<jobId>   (confirm subscription)
-3. POST /v1/jobs/:id/start     → 202 {ok:true}
-4. Worker starts the sandbox   → output flows to soketi
-```
-
-For batch jobs (no stdin expected): follow the same sequence. The worker reclaims the slot if `/start` never arrives within `WORKER_WARMUP_MS`.
-
----
-
-### Output events
-
-All events are emitted on the soketi channel `private-run-<jobId>`. soketi delivers event data as a JSON-encoded string; parse it with `JSON.parse`. The contract is generated from `packages/contract/schema/wire.schema.json`.
-
-#### `stage`
-
-```json
-{ "phase": "queued" }
-```
-
-`phase` enum: `queued` | `compiling` | `running`
-
-#### `stdout` / `stderr`
-
-```json
-{ "chunk": "name? ", "seq": 0 }
-```
-
-- `chunk` — UTF-8 output text.
-- `seq` — monotonic sequence number for ordering.
-
-#### `result`
-
-Terminal event. Emitted exactly once when the sandbox exits.
-
-```json
-{
-  "exitCode": 0,
-  "signal": null,
-  "timedOut": false,
-  "idleTimedOut": false,
-  "truncated": false,
-  "durationMs": 312
-}
-```
-
-All fields are required. `exitCode` is `null` when the process was killed by signal. `timedOut` covers wall-clock and CPU-clock expiry; `idleTimedOut` covers idle-clock expiry.
-
-## Channel Auth
-
-Authorizing the browser's `private-run-<jobId>` soketi channel is the **upstream app's responsibility**, not a core function of code-runner.
-
-**How it works:** The upstream app signs HMAC-SHA256 over `"<socket_id>:<channel_name>"` using `SOKETI_APP_SECRET` and returns `"<SOKETI_APP_KEY>:<hmac>"` as the Pusher auth response to the browser. This is the standard Pusher private-channel auth pattern.
-
-**Trust boundary:** The app secret is read from the environment only. It is never written to Redis, never returned by any endpoint, and never sent to the browser. The secret stays inside the upstream/API trust boundary.
-
-**Worked example:** `apps/stub/src/index.ts` implements the HMAC locally:
+**Backend (submit + drive):**
 
 ```ts
-import { createHmac } from "node:crypto";
-function signChannel(socketId: string, channelName: string): string {
-  const stringToSign = `${socketId}:${channelName}`;
-  const hmac = createHmac("sha256", SOKETI_APP_SECRET)
-    .update(stringToSign)
-    .digest("hex");
-  return `${SOKETI_APP_KEY}:${hmac}`;
-}
+import { CodeRunnerClient } from "@teovilla/code-runner-sdk-node";
+
+const client = new CodeRunnerClient({ baseUrl: "http://localhost:8080", token: process.env.EXECUTOR_API_TOKEN! });
+const job = await client.execute({ language: "python", files: [{ name: "main.py", content: "print(input())" }] });
+// subscribe on the browser, then:
+await client.start(job.jobId);
+await client.sendStdin(job.jobId, "world\n");
 ```
 
-**Optional helper:** When `ENABLE_CHANNEL_AUTH=true`, the API registers `POST /v1/channel-auth` (see [API Reference](#post-v1channel-auth)). This helper is intended for local demos — it performs the same HMAC signing so a single service can handle both execution and channel auth. In production, your own backend should implement the signing using its copy of the app secret.
+**Browser (subscribe to live output):**
 
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `EXECUTOR_API_TOKEN` | `dev-insecure-token-change-me` | Bearer token for API auth. Use `openssl rand -hex 32` in prod. |
-| `REDIS_URL` | `redis://redis:6379` | Redis connection URL. Must be native TCP (`redis://` or `rediss://`). See [docs/redis-constraint.md](docs/redis-constraint.md). |
-| `SOKETI_HOST` | `soketi` | Hostname of the soketi server. |
-| `SOKETI_PORT` | `6001` | Port of the soketi server. |
-| `SOKETI_USE_TLS` | `false` | Set `true` to connect to soketi over TLS. |
-| `SOKETI_APP_ID` | `code-runner` | Pusher app ID. |
-| `SOKETI_APP_KEY` | `code-runner-key` | Pusher app key (given to clients for WebSocket connections). |
-| `SOKETI_APP_SECRET` | `code-runner-secret` | Pusher app secret. **Never returned by any endpoint; never written to Redis.** Change in prod. |
-| `API_PORT` | `8080` | API listen port. |
-| `WORKER_MAX_SANDBOXES` | `8` | Max concurrent live sandboxes per worker node. |
-| `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker endpoint the worker uses. No Docker-in-Docker. |
-| `SANDBOX_RUNTIME` | _(unset = runc)_ | Optional container runtime override. Set to `runsc` to enable gVisor. |
-| `WORKER_WARMUP_MS` | `30000` | Slot reclaim timeout (ms): if `/start` never arrives after `/execute`, the slot is released. |
-| `WORKER_HEARTBEAT_INTERVAL_MS` | `5000` | How often (ms) the worker writes its Redis heartbeat key. |
-| `WORKER_HEARTBEAT_TTL_MS` | `20000` | TTL (ms) applied to the heartbeat key on each write. Must be several times the interval. |
-| `MAX_QUEUE_DEPTH` | `256` | Maximum queue depth. `POST /v1/execute` returns `429` when `LLEN(jobs:queue) >= this`. |
-| `API_BASE_URL` | `http://api:8080` | Base URL of the API as seen from the stub (inside docker compose). |
-| `CHANNEL_AUTH_URL` | `http://api:8080/v1/channel-auth` | Channel-auth endpoint used by the stub. |
-| `ENABLE_CHANNEL_AUTH` | `true` | Register the optional `POST /v1/channel-auth` helper. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset = no-op)_ | OTLP collector endpoint. **Setting this is the telemetry ON switch.** Unset = no exporter, no connection, zero overhead. In compose: `http://otel-collector:4318`. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | OTLP transport. `http/protobuf` (:4318) or `grpc` (:4317). |
-| `OTEL_SERVICE_NAME_API` | `code-runner-api` | `service.name` for the API half of the trace (compose maps it to `OTEL_SERVICE_NAME`). |
-| `OTEL_SERVICE_NAME_WORKER` | `code-runner-worker` | `service.name` for the worker half of the trace. |
-| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=code-runner` | Resource attributes on every span/metric/log. |
-| `OTEL_TRACES_SAMPLER` | `parentbased_traceidratio` | Trace sampler. Honors the caller's decision when a parent context is present. |
-| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Sampling ratio (1.0 = keep every trace). **Lower in production** (e.g. `0.05`). |
-| `OTEL_SDK_DISABLED` | _(unset)_ | Set `true` to hard-disable the SDK regardless of the endpoint. |
-
-## Deployment
-
-### Dev (docker compose)
-
-The local stack runs redis, soketi, api, and worker. The stub is a separate on-demand service.
-
-```bash
-# Build all language images on the host daemon first
-make build-images
-
-# Start the stack
-docker compose up          # or: make up
-
-# Scale workers locally
-docker compose up --scale worker=2
-
-# Tear down
-make down
+```tsx
+const { stage, stdout, stderr, result, sendStdin } = useCodeRunnerJob({
+  jobId,
+  onStdin: (chunk) => fetch(`/api/jobs/${jobId}/stdin`, { method: "POST", body: JSON.stringify({ chunk }) }),
+});
 ```
 
-### Production
+The bearer token and soketi `APP_SECRET` never leave the server — the browser receives
+output only and routes actions back through your backend. See each package's README for
+the full API.
 
-**Scaling unit:** The long-lived **worker NODE** — a Go process that claims jobs from the Redis queue and launches sandboxes internally (up to `WORKER_MAX_SANDBOXES` concurrently). The scaling unit is the node, not a microVM per execution.
+---
 
-**Autoscaling by queue depth:** Scale the worker fleet by `LLEN(jobs:queue)`.
+## 🧩 Adding a language
 
-- **Fly.io:** use [`fly-autoscaler`](https://github.com/superfly/fly-autoscaler) with the Redis LLEN metric:
-  ```toml
-  [metrics.redis_queue_depth]
-  type   = "redis"
-  url    = "redis://your-redis-host:6379"
-  metric = "llen"
-  key    = "jobs:queue"
+Languages are self-contained packages in `languages/<lang>-<version>/`. Adding one needs
+**zero** changes to the worker or the API — only a folder, a `manifest.json`, and a
+`Dockerfile`. A language is defined entirely by `image + compile? + run`.
 
-  [scaling]
-  min   = 1
-  max   = 50
-  count = "min(50, max(1, qdepth / 2))"
-  ```
-- **Kubernetes:** use KEDA with the Redis scaler on `LLEN jobs:queue`, or an HPA with a custom metric from a Redis exporter.
-
-**gVisor (extra sandbox isolation):** Set `SANDBOX_RUNTIME=runsc` on the worker. This passes `HostConfig.Runtime="runsc"` to every container launch — no worker code changes required. gVisor's Sentry kernel intercepts all syscalls and provides Firecracker-class isolation with no per-execution create latency.
-
-**Redis:** The **worker requires native TCP Redis** (`redis://` or `rediss://`) — it uses `BRPOP` and `SUBSCRIBE`, which are blocking operations unavailable over HTTP REST. Upstash's REST tier is not viable for the worker (it is fine for the API). See [docs/redis-constraint.md](docs/redis-constraint.md).
-
-**API:** stateless; can run anywhere (serverless, VMs, k8s). Does not need native Redis.
-
-**soketi:** run as a sidecar or standalone service accessible from the worker.
-
-See [docs/scaling.md](docs/scaling.md) for the full topology, fly-autoscaler LLEN example, scale-to-zero caveats, and the per-deploy-target table.
-
-### Future / v2
-
-**Kubernetes with RuntimeClass=gvisor:** Deploy workers as a `Deployment` with `SANDBOX_RUNTIME=runsc` and a `RuntimeClass=gvisor` node selector. Use KEDA's Redis scaler or an HPA custom metric for autoscaling.
-
-**FlyMachinesRunner (v2, deferred):** A `Runner` backend that calls the Fly Machines REST API to create an ephemeral Firecracker microVM per execution. This gives per-execution isolation but costs seconds of create latency and has unproven interactive-stdin streaming semantics. It will be implemented as a parallel `Runner` backend once those trade-offs are resolved.
-
-## Observability (bring-your-own OpenTelemetry)
-
-code-runner is fully instrumented with OpenTelemetry, but ships **telemetry-off by default**. Both the API and the worker emit nothing — no exporter, no connection, zero overhead — until you set `OTEL_EXPORTER_OTLP_ENDPOINT`. When enabled, one execution produces **a single connected trace** spanning the API and the worker: the caller's [Node SDK](packages/code-runner-sdk-node) injects a W3C `traceparent` into `POST /v1/execute`, the API starts an `execute` span, and the worker extracts that context and links its phase spans (`claim`, `sandbox.create`, `handshake.wait`, `compile`, `run`, `publish.result`) into the same `trace_id`.
-
-### One-flag example stack (collector + Jaeger)
-
-An example backend ships **inert** under the `observability` compose profile — a plain `docker compose up` never starts it. Bring it up with the profile flag:
-
-```bash
-# 1. Enable the OTLP endpoint (the ON switch) in .env:
-#    OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
-cp .env.example .env   # then uncomment the OTEL_* block
-
-# 2. Start the stack WITH the collector + Jaeger:
-docker compose --profile observability up --build
-
-# 3. Run one execution and open the trace in Jaeger:
-bash scripts/observability-e2e.sh
-#    → Jaeger UI: http://localhost:16686  (service: code-runner-api)
-```
-
-In the Jaeger UI, the latest `code-runner-api` trace contains both the API `execute` span and the worker phase spans under one `trace_id`. The example [`observability/otel-collector.yaml`](observability/otel-collector.yaml) forwards **traces → Jaeger** and prints **metrics + logs** (e.g. `code_runner.jobs.terminal`, `code_runner.queue.time`, trace-correlated log records) via the collector `debug` exporter.
-
-### Configuring telemetry
-
-| Knob | Default | Notes |
-|------|---------|-------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset → off)_ | The ON switch. Point at any OTLP/HTTP collector. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `grpc` (:4317) also supported. |
-| `OTEL_TRACES_SAMPLER` / `_ARG` | `parentbased_traceidratio` / `1.0` | The example keeps **every** trace. **Lower the ratio in production** (e.g. `OTEL_TRACES_SAMPLER_ARG=0.05` for 5%). For "sample low but always keep errors", enable collector-side tail sampling — see the commented `tail_sampling` block in `observability/otel-collector.yaml`. |
-| `OTEL_SDK_DISABLED` / `OTEL_TRACES_EXPORTER=none` | _(unset)_ | Hard kill-switches that override the endpoint. |
-
-Point the example collector (or your own) at a real backend — Prometheus/Grafana for metrics, Loki/Elastic for logs, Tempo/Jaeger for traces — by editing `observability/otel-collector.yaml`. Replace `jaegertracing/all-in-one` with your trace store; nothing in the app changes.
-
-### Redis & soketi self-instrumentation (operator-added, not shipped)
-
-code-runner instruments **its own** API and worker. It deliberately **does not ship exporters for the Redis or soketi infrastructure** — those are operator-owned components, and bundling their metrics would over-couple the service to a particular ops stack. To observe them, add the standard sidecar exporters to *your* deployment (they sit alongside the existing services on the `code-runner` network and scrape Redis / soketi directly):
-
-- **Redis:** run [`oliver006/redis_exporter`](https://github.com/oliver006/redis_exporter) pointed at `REDIS_URL`; scrape it with Prometheus (key signals: queue depth via `LLEN jobs:queue`, memory, connected clients). Note the worker already emits `code_runner.queue.time` and a queue-depth gauge from the application side.
-- **soketi:** soketi exposes its own Prometheus metrics endpoint (enable `METRICS_ENABLED=true` / `SOKETI_METRICS_SERVER_PORT`); scrape it for connection/channel/message counts.
-
-These are documentation pointers only — no Redis/soketi exporter is part of this repo or the compose stack.
-
-## Adding a Language
-
-Languages are self-contained packages in `languages/<lang-version>/`. Adding a language requires **zero changes** to the Go worker or the API — only a new folder, a manifest, and a Dockerfile.
-
-### Package model
-
-```
-languages/
-  python-3.12/
-    manifest.json
-    Dockerfile
-  rust-1.83/
-    manifest.json
-    Dockerfile
-  sqlite-3/
-    manifest.json
-    Dockerfile
-```
-
-### Manifest fields
-
-`manifest.json` defines everything the worker needs to run the language:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `language` | `string` | Primary name (e.g. `"python"`, `"rust"`, `"sqlite"`). |
-| `version` | `string` | Version string (e.g. `"3.12"`, `"1.83"`, `"3"`). |
-| `aliases` | `string[]` | Alternative names accepted by `POST /v1/execute` (e.g. `["py","py3","python3"]`). |
-| `image` | `string` | Pre-built Docker image (e.g. `"executor/python:3.12"`). |
-| `entrypoint` | `string` | Main file name written into the sandbox workspace (e.g. `"main.py"`). |
-| `compile` | `string[] \| null` | Compile command argv for compiled languages; `null` for interpreted languages. |
-| `run` | `string[]` | Run command argv. |
-| `interactive` | `boolean` | Whether the language supports live interactive stdin. |
-| `defaultLimits` | `object` | Resource limits: `wallTimeMs`, `idleMs`, `cpuMs`, `memoryMb`, `pids`, `outputKb`. |
-
-**Compile stage:** For compiled languages, set `compile` to the compiler argv. The worker runs the compile step first (with its own resource limits) and only starts the `run` command if compilation succeeds. For interpreted languages, set `compile` to `null`.
-
-### Worked example: Rust (compiled language)
-
-```json
+```jsonc
+// languages/rust-1.83/manifest.json  (a compiled language)
 {
-  "language": "rust",
-  "version": "1.83",
-  "aliases": ["rs"],
-  "image": "executor/rust:1.83",
-  "entrypoint": "main.rs",
-  "compile": ["rustc", "-O", "main.rs", "-o", "/workspace/prog"],
+  "language": "rust", "version": "1.83", "aliases": ["rs"],
+  "image": "executor/rust:1.83", "entrypoint": "main.rs",
+  "compile": ["rustc", "-O", "main.rs", "-o", "/workspace/prog"],   // null for interpreted langs
   "run": ["/workspace/prog"],
   "interactive": true,
-  "defaultLimits": {
-    "wallTimeMs": 120000,
-    "idleMs": 15000,
-    "cpuMs": 60000,
-    "memoryMb": 512,
-    "pids": 128,
-    "outputKb": 1024
-  }
+  "defaultLimits": { "wallTimeMs": 120000, "idleMs": 15000, "cpuMs": 60000, "memoryMb": 512, "pids": 128, "outputKb": 1024 }
 }
 ```
 
-The compiler runs `rustc -O main.rs -o /workspace/prog`; the run stage executes `/workspace/prog`.
-
-### Worked example: SQLite (non-general-purpose tool)
-
-```json
-{
-  "language": "sqlite",
-  "version": "3",
-  "aliases": ["sql"],
-  "image": "executor/sqlite:3",
-  "entrypoint": "main.sql",
-  "compile": null,
-  "run": ["sqlite3", "-batch", ":memory:", "-init", "main.sql"],
-  "interactive": true,
-  "defaultLimits": {
-    "wallTimeMs": 30000,
-    "idleMs": 10000,
-    "cpuMs": 15000,
-    "memoryMb": 64,
-    "pids": 32,
-    "outputKb": 512
-  }
-}
+```bash
+make rust-image          # build executor/rust:1.83 on the host daemon (or: make build-images)
+docker compose up --build  # the manifest loader auto-discovers the new folder at boot
+curl localhost:8080/v1/languages -H "Authorization: Bearer $EXECUTOR_API_TOKEN"  # verify
 ```
 
-SQLite is not a general-purpose language — it is the `sqlite3` shell run against an ephemeral in-memory database. `compile` is `null`; the `.sql` file is passed with `-init`. This deliberately validates that the `language = image + compile? + run` abstraction holds for non-traditional runtimes.
+Bundled languages: **Python 3.12**, **Rust 1.83**, **R 4.4**, **SQLite 3** — the last two
+prove the abstraction holds for a non-interactive language and a non-general-purpose tool.
 
-### Steps to add a language
+> [!WARNING]
+> Before a new language merges, its image must survive the **abuse suite** — see
+> [Safety gate](#-safety-gate).
 
-1. Create `languages/<lang-version>/manifest.json` and `languages/<lang-version>/Dockerfile`.
-2. Build the image on the **host Docker daemon** (the worker mounts the host socket):
-   ```bash
-   make <lang>-image      # e.g. make python-image, make rust-image
-   # or build all at once:
-   make build-images
-   ```
-3. Restart the stack — the manifest loader auto-discovers the new folder at boot. No code changes needed.
-4. Verify: `GET /v1/languages` should list the new language.
+---
 
-## Contributing
+## ☁️ Deployment
 
-Contributions are welcome. The main constraint before merging a new language or a worker change is the safety gate:
+**Scaling unit: the worker node.** A long-lived Go process that claims jobs and launches
+sandboxes internally (up to `WORKER_MAX_SANDBOXES`). Autoscale the fleet by
+`LLEN jobs:queue`.
 
-**The abuse suite must be green before any new language merges.** The suite (`internal/worker/abuse_test.go`, build tag `abuse`) drives hostile jobs through the full worker path on real Linux cgroup v2 — OOM kills, CPU throttling, wall-time expiry, idle timeout, PID exhaustion, output truncation, and clean-exit containment.
+- **Fly.io** — [`fly-autoscaler`](https://github.com/superfly/fly-autoscaler) on the Redis
+  `llen` metric; a four-app reference deploy lives in [`deploy/fly`](deploy/fly) and is
+  documented in [`docs/deploy-fly.md`](docs/deploy-fly.md).
+- **Kubernetes** — KEDA's Redis scaler on `LLEN jobs:queue`, or an HPA custom metric.
+- **Extra isolation** — set `SANDBOX_RUNTIME=runsc` to run under [gVisor](https://gvisor.dev)
+  with no code changes; the Sentry intercepts all syscalls.
 
-Run it locally (requires Docker with cgroup v2, `redis:7` on port `6381`, and `executor/python:3.12`):
+The **API** is stateless (runs anywhere, serverless OK). **soketi** runs as a sidecar or
+standalone. See [`docs/scaling.md`](docs/scaling.md) for the full topology and
+scale-to-zero caveats.
+
+<details>
+<summary><b>Environment variables</b> — the full table</summary>
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `EXECUTOR_API_TOKEN` | `dev-insecure-token-change-me` | Bearer token. **Change in prod** (`openssl rand -hex 32`). |
+| `REDIS_URL` | `redis://redis:6379` | Native TCP Redis. |
+| `API_PORT` | `8080` | API listen port. |
+| `MAX_QUEUE_DEPTH` | `256` | `/v1/execute` → `429` when `LLEN(jobs:queue) >=` this. |
+| `SOKETI_HOST` / `SOKETI_PORT` | `soketi` / `6001` | soketi address. |
+| `SOKETI_USE_TLS` | `false` | Connect to soketi over TLS. |
+| `SOKETI_APP_ID` / `_APP_KEY` | `code-runner` / `code-runner-key` | Pusher app id & **public** key. |
+| `SOKETI_APP_SECRET` | `code-runner-secret` | **Never returned by any endpoint, never written to Redis. Change in prod.** |
+| `WORKER_MAX_SANDBOXES` | `8` | Max concurrent sandboxes per worker node. |
+| `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker endpoint. No Docker-in-Docker. |
+| `SANDBOX_RUNTIME` | _(unset = runc)_ | `runsc` to enable gVisor. |
+| `WORKER_WARMUP_MS` | `30000` | Slot reclaim timeout if `/start` never arrives. |
+| `WORKER_HEARTBEAT_INTERVAL_MS` / `_TTL_MS` | `5000` / `20000` | Worker liveness heartbeat. |
+| `BUCKET_NAME` + `AWS_*` | _(unset = artifacts off)_ | S3-compatible artifact storage (MinIO/Tigris/S3/R2). |
+| `RUN_RESULT_TTL` / `PRESIGNED_URL_TTL` / `ARTIFACT_S3_OBJECT_TTL` | `600s` / `24h` / `3d` | Retention TTLs (object TTL must be ≥ presigned). |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset = off)_ | **The telemetry ON switch.** Point at an OTLP collector. |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Sampling ratio. **Lower in prod** (e.g. `0.05`). |
+
+The full list (including all `OTEL_*` and stub variables) is in [`.env.example`](.env.example).
+
+</details>
+
+### 🔭 Observability (bring-your-own OpenTelemetry)
+
+Both API and worker are fully OpenTelemetry-instrumented but ship **telemetry-off by
+default** — zero overhead until you set `OTEL_EXPORTER_OTLP_ENDPOINT`. When enabled, one
+execution produces **a single connected trace** spanning the API and the worker
+(`claim → sandbox.create → handshake.wait → compile → run → publish.result`). An example
+collector + Jaeger ships **inert** under the `observability` compose profile:
+
+```bash
+docker compose --profile observability up --build
+bash scripts/observability-e2e.sh    # → Jaeger UI: http://localhost:16686
+```
+
+---
+
+## 🔒 Safety gate
+
+The adversarial **abuse suite** (`internal/worker/abuse_test.go`, build tag `abuse`) is the
+required gate before any language is added. It drives 7 hostile jobs through the full
+worker path on **real Linux cgroup v2** — OOM kills, CPU throttling, wall-time expiry,
+idle timeout, PID exhaustion, output truncation, and clean-exit containment.
 
 ```bash
 make python-image
@@ -606,59 +429,47 @@ docker run -d -p 6381:6379 redis:7
 make abuse
 ```
 
-The CI workflow (`.github/workflows/abuse.yml`) runs the suite on every pull request on ubuntu-latest (real cgroup v2). Enable **"abuse / abuse"** as a required status check on `main` so fan-out PRs cannot merge unless the abuse run is green.
+CI ([`.github/workflows/abuse.yml`](.github/workflows/abuse.yml)) runs it on every PR on
+`ubuntu-latest`. Repo owners should make **"abuse / abuse"** a required status check on
+`main` so fan-out PRs can't merge unless it's green.
 
-### Make targets
+---
+
+## 🛠️ Make targets
 
 | Target | Description |
-|--------|-------------|
-| `build-images` | Build all language sandbox images on the host daemon (python, rust, r, sqlite). |
-| `up` | Bring up the local dev stack (`docker compose up --build`). |
-| `down` | Tear down the local dev stack (`docker compose down -v`). |
-| `e2e` | Run the end-to-end interactive demo against the local stack. |
-| `abuse` | Run the adversarial abuse/safety suite (requires Docker cgroup v2 + redis:7 on port 6381 + executor/python:3.12). |
-| `test` | Run all unit/integration tests (Go + JS). |
-| `contract` | Regenerate the wire contract (TS types + Zod + Go structs). |
-| `contract-check` | Fail if generated contract artifacts have drifted from the schema. |
+| --- | --- |
+| `build-images` | Build all language sandbox images on the host daemon. |
+| `up` / `down` | Bring the local stack up (`--build`) / tear down (`-v`). |
+| `e2e` | Interactive end-to-end demo. |
+| `artifacts-e2e` | Artifacts pull-loop end-to-end. |
+| `abuse` | Adversarial safety suite (Docker cgroup v2 + redis:7 on `:6381`). |
+| `test` | All unit/integration tests (Go + JS). |
+| `contract` / `contract-check` | Regenerate the wire contract / fail on drift. |
 
-## Interactive Flow
+---
 
-```
-stub → POST /v1/execute  { language: python, files: [{name:main.py, content:...}] }
-API  → 202 { jobId, channel: "private-run-<id>", status: "queued" }
+## 📂 Repository layout
 
-worker ← BRPOP jobs:queue    # claims job
-worker → SUBSCRIBE ctrl:<id> + stdin:<id>   # ready, waiting for /start
-
-stub → subscribe soketi private-run-<id>   # channel auth (HMAC with app secret)
-stub → POST /v1/jobs/:id/start             # start-handshake AFTER subscribe
-
-API  → PUBLISH ctrl:<id> { type: "start" }
-worker → sandbox.Start() → python main.py
-sandbox stdout "name? " → worker → soketi channel → stub prints "name?"
-
-stub → POST /v1/jobs/:id/stdin  { chunk: "World\n" }
-API  → PUBLISH stdin:<id> "World\n"
-worker → sandbox stdin pipe
-sandbox stdout "hello World\n" → worker → soketi channel → stub prints "hello World"
-
-sandbox exits 0 → worker → soketi result { exitCode: 0, reason: "exit" } → stub asserts
-worker → cleanup (remove container, free slot, unsubscribe)
+```text
+apps/
+  api/        Hono/TypeScript gateway          packages/
+  worker/     Go worker + sandbox runner         contract/              wire contract (schema → TS+Zod+Go)
+  stub/       interactive E2E driver             code-runner-sdk-node/  server SDK
+  docs/       Fumadocs documentation site        code-runner-react/     browser SDK
+internal/     Go packages (runner, session,    languages/    one folder per language (manifest + Dockerfile)
+              jobstore, publisher, reaper, …)  profiles/     seccomp profile
+deploy/fly/   Fly.io reference deploy          observability/ OTel collector config
 ```
 
-## Safety Gate
+---
 
-The adversarial abuse suite (`internal/worker/abuse_test.go`, build tag `abuse`) is the **required safety gate before any language is added**.
+## 🤝 Contributing
 
-The suite drives 7 hostile Python jobs through the full worker path on real Linux cgroup v2, exercising OOM kills, CPU throttling, wall-time expiry, idle timeout, pid exhaustion, output truncation, and clean-exit containment. Behavior on macOS Docker Desktop diverges from production Linux; the CI gate closes that gap.
+Contributions are welcome. The one hard rule before merging a new language or a worker
+change: **the abuse suite must be green.** See [Safety gate](#-safety-gate). Run
+`make test` and `make contract-check` before opening a PR.
 
-**CI workflow** (`.github/workflows/abuse.yml`):
+## 📄 License
 
-- Runs on every pull request and on push to `main` (ubuntu-latest — real cgroup v2).
-- Builds `executor/python:3.12` via `make python-image`, starts redis:7, then runs `make abuse`.
-- Adding a new language reuses this same harness — the gate must pass for the new image before the PR merges.
-- Repo owners should enable **"abuse / abuse"** as a required status check on `main` (branch protection) so fan-out PRs cannot merge unless the abuse run is green.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE) — self-hostable, no strings attached.

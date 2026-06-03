@@ -1,6 +1,17 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/teovillanueva/code-runner/main/.github/assets/banner-react.svg" alt="@teovilla/code-runner-react" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@teovilla/code-runner-react"><img src="https://img.shields.io/npm/v/@teovilla/code-runner-react?logo=npm&color=cb3837" alt="npm" /></a>
+  <img src="https://img.shields.io/badge/React-%E2%89%A518-61dafb?logo=react&logoColor=white" alt="React >=18" />
+  <img src="https://img.shields.io/badge/pusher--js-%E2%89%A58-300d4f" alt="pusher-js >=8" />
+  <a href="https://github.com/teovillanueva/code-runner/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f.svg" alt="MIT" /></a>
+</p>
+
 # @teovilla/code-runner-react
 
-Browser real-time SDK for the [code-runner](https://github.com/teovillanueva/code-runner) service.
+The **browser** real-time SDK for the [code-runner](https://github.com/teovillanueva/code-runner) service.
 
 - `<CodeRunnerProvider>` — one pusher-js client wired to your self-hosted soketi.
 - `useCodeRunnerJob(...)` — subscribe to a job's `private-run-<jobId>` channel and get ordered `stdout` / `stderr`, the current `stage`, and the terminal `result`.
@@ -82,6 +93,22 @@ function JobView({ jobId }: { jobId: string }) {
 they always render correctly even if soketi delivers out of order.
 
 ## The full circle
+
+```mermaid
+sequenceDiagram
+    participant B as Browser (this SDK)
+    participant Y as Your backend (sdk-node)
+    participant CR as code-runner gateway
+    participant SK as soketi
+    Y->>CR: execute() + start()  (bearer token)
+    Y-->>B: { jobId }
+    B->>Y: authorize private-run-id (authEndpoint)
+    Y-->>B: signed auth (APP_SECRET stays server-side)
+    B->>SK: subscribe private-run-id
+    SK-->>B: stage / stdout / stderr / result
+    B->>Y: sendStdin / kill
+    Y->>CR: forward to gateway
+```
 
 1. Your backend enqueues + starts a job with [`@teovilla/code-runner-sdk-node`](https://www.npmjs.com/package/@teovilla/code-runner-sdk-node) and returns `{ jobId }`.
 2. The browser calls `useCodeRunnerJob({ jobId })`; pusher-js authorizes the

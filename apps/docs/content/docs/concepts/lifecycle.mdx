@@ -10,24 +10,32 @@ the worker, and soketi. Understanding the order — especially the **start-hands
 
 ## The full sequence
 
-```text
-1. POST /v1/execute            → 202 {jobId, channel: "private-run-<id>", status: "queued"}
-       API validates, resolves the manifest, writes job spec + status to Redis,
-       LPUSHes the job ID onto jobs:queue.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Client (your backend)
+    participant API as API (Hono)
+    participant R as Redis
+    participant W as Worker (Go)
+    participant SK as soketi
 
-2. Worker BRPOPs the job ID, SUBSCRIBEs to stdin:<id> + ctrl:<id>, then parks at
-   the start gate, publishing the "queued" stage event.
-
-3. Client subscribes to soketi private-run-<id>  (and confirms the subscription).
-
-4. POST /v1/jobs/:id/start     → 202 {ok:true}
-       API PUBLISHes {type:"start"} on ctrl:<id>.
-
-5. Worker receives "start" → launches the sandbox → output flows to soketi:
-       stage(running) → stdout/stderr chunks … → result (terminal).
-
-6. (interactive) POST /v1/jobs/:id/stdin {chunk}
-       API PUBLISHes the chunk on stdin:<id> → worker writes it to the process pipe.
+    U->>API: POST /v1/execute
+    API->>R: write spec/status · LPUSH jobs:queue
+    API-->>U: 202 · jobId + channel
+    W->>R: BRPOP jobs:queue (claim)
+    W->>R: SUBSCRIBE stdin:id + ctrl:id
+    Note over W: parked · publishes stage "queued"
+    U->>SK: subscribe private-run-id
+    U->>API: POST /v1/jobs/:id/start
+    API->>R: PUBLISH ctrl:id (start)
+    W->>W: sandbox.Start() then run
+    W->>SK: stage "running" · stdout / stderr …
+    SK-->>U: live output events
+    U->>API: POST /v1/jobs/:id/stdin (chunk)
+    API->>R: PUBLISH stdin:id
+    R-->>W: chunk into process stdin
+    W->>SK: result (terminal)
+    SK-->>U: result event
 ```
 
 ## The start-handshake
@@ -47,11 +55,12 @@ The **start-handshake** closes that race:
   to be listening.
 </Callout>
 
-```text
-1. POST /v1/execute            → 202 {jobId, channel}
-2. Subscribe soketi private-run-<jobId>   (await subscription_succeeded)
-3. POST /v1/jobs/:id/start     → 202 {ok:true}
-4. Worker starts the sandbox   → output flows to soketi
+```mermaid
+flowchart LR
+    A["1 · POST /v1/execute<br/>202 jobId + channel"] --> B["2 · subscribe<br/>private-run-jobId"]
+    B --> C["3 · await<br/>subscription_succeeded"]
+    C --> D["4 · POST /v1/jobs/:id/start"]
+    D --> E["5 · worker starts<br/>→ output flows to soketi"]
 ```
 
 This applies to **batch jobs too** (no stdin expected) — follow the same sequence.

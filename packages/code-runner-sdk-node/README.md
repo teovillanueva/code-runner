@@ -1,6 +1,17 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/teovillanueva/code-runner/main/.github/assets/banner-sdk-node.svg" alt="@teovilla/code-runner-sdk-node" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@teovilla/code-runner-sdk-node"><img src="https://img.shields.io/npm/v/@teovilla/code-runner-sdk-node?logo=npm&color=cb3837" alt="npm" /></a>
+  <img src="https://img.shields.io/badge/Node-%E2%89%A522-339933?logo=nodedotjs&logoColor=white" alt="Node >=22" />
+  <img src="https://img.shields.io/badge/ESM%20+%20CJS-typed-3178c6?logo=typescript&logoColor=white" alt="ESM + CJS, typed" />
+  <a href="https://github.com/teovillanueva/code-runner/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f.svg" alt="MIT" /></a>
+</p>
+
 # @teovilla/code-runner-sdk-node
 
-Server-side SDK for the [code-runner](https://github.com/teovillanueva/code-runner) service.
+The **server-side** SDK for the [code-runner](https://github.com/teovillanueva/code-runner) service.
 
 - A typed `CodeRunnerClient` over the code-runner Hono gateway (bearer auth, typed errors).
 - Zero-dependency soketi private-channel auth signing (`signChannelAuth` / `createChannelAuthorizer`) using only `node:crypto`.
@@ -79,6 +90,18 @@ Every non-2xx response is mapped to a typed error you can branch on with `instan
 All extend `CodeRunnerError`.
 
 ## Channel auth (the full circle)
+
+```mermaid
+sequenceDiagram
+    participant B as Browser (react SDK)
+    participant Y as Your backend (this SDK)
+    participant SK as soketi
+    B->>Y: pusher-js POST socket_id + channel_name
+    Y->>Y: createChannelAuthorizer() signs with APP_SECRET
+    Y-->>B: { auth: "key:hmac" }
+    B->>SK: subscribe private-run-id (with auth)
+    SK-->>B: live stdout / stderr / result
+```
 
 The browser subscribes to a private `private-run-<jobId>` soketi channel via
 [`@teovilla/code-runner-react`](https://www.npmjs.com/package/@teovilla/code-runner-react).

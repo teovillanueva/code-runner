@@ -10,31 +10,31 @@ replicas.
 
 ## The topology
 
-```text
-  Client / Upstream App
-         │
-         ▼
-  ┌──────────────┐
-  │  API (Hono)  │  N replicas — stateless, scale freely
-  └──────┬───────┘
-         │  LPUSH jobs:queue
-         ▼
-  ┌──────────────┐
-  │    Redis     │  native TCP (blocking ops required by the worker)
-  └──────┬───────┘
-         │  BRPOP / SUBSCRIBE stdin:<jobId>
-         ▼
-  ┌────────────────────────────────┐
-  │  Worker NODE (Go, long-lived)  │  M replicas — scaled by queue depth
-  │  ┌──────────┐  ┌──────────┐    │
-  │  │ Sandbox  │  │ Sandbox  │ …  │  up to WORKER_MAX_SANDBOXES per node
-  │  └──────────┘  └──────────┘    │
-  └────────────────────────────────┘
-         │  Pusher HTTP trigger
-         ▼
-  ┌──────────────┐
-  │   soketi     │  WebSocket fan-out (output only)
-  └──────────────┘
+```mermaid
+flowchart TD
+    Client["Client / Upstream App"]
+    API["API · Hono<br/>N replicas · stateless"]
+    Redis[("Redis<br/>native TCP · blocking ops")]
+    subgraph Fleet["Worker fleet · scaled by queue depth"]
+        direction LR
+        subgraph W1["Worker node (Go)"]
+            direction LR
+            A1["Sandbox"]
+            A2["… up to<br/>WORKER_MAX_SANDBOXES"]
+        end
+        subgraph W2["Worker node (Go)"]
+            direction LR
+            B1["Sandbox"]
+            B2["…"]
+        end
+    end
+    Soketi["soketi · WebSocket fan-out<br/>output only · keep min 1"]
+
+    Client --> API
+    API -- "LPUSH jobs:queue" --> Redis
+    Redis -- "BRPOP · SUBSCRIBE stdin:jobId" --> Fleet
+    Fleet -- "Pusher HTTP trigger" --> Soketi
+    Soketi --> Client
 ```
 
 ## The scaling unit is the worker node

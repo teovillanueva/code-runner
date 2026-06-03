@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/teovillanueva/code-runner/main/.github/assets/banner-contract.svg" alt="@teovilla/code-runner-contract" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@teovilla/code-runner-contract"><img src="https://img.shields.io/npm/v/@teovilla/code-runner-contract?logo=npm&color=cb3837" alt="npm" /></a>
+  <img src="https://img.shields.io/badge/JSON%20Schema-TS%20·%20Zod%20·%20Go-a78bfa" alt="JSON Schema → TS · Zod · Go" />
+  <a href="https://github.com/teovillanueva/code-runner/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f.svg" alt="MIT" /></a>
+</p>
+
 # @teovilla/code-runner-contract
 
 The shared **wire contract** for [code-runner](https://github.com/teovillanueva/code-runner) — the
