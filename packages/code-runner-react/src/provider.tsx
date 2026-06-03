@@ -62,7 +62,13 @@ export function CodeRunnerProvider(props: CodeRunnerProviderProps): JSX.Element 
       enabledTransports: ["ws", "wss"],
       cluster: cluster ?? "",
       authEndpoint,
-      auth: authHeaders ? { headers: authHeaders } : undefined,
+      // Spread conditionally — NEVER emit the `auth` key with an `undefined`
+      // value. pusher-js's buildChannelAuth does `if ('auth' in opts)` (key
+      // presence) then dereferences `opts.auth` with no guard, so `auth:
+      // undefined` crashes with "Cannot use 'in' operator to search for
+      // 'params' in undefined". Omitting the key uses authEndpoint defaults
+      // (same-origin cookie auth).
+      ...(authHeaders ? { auth: { headers: authHeaders } } : {}),
     });
     pusherRef.current = instance;
     return instance;

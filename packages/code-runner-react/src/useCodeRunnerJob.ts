@@ -35,6 +35,14 @@ export interface UseCodeRunnerJobArgs {
   onStdin?: (chunk: string) => void | Promise<void>;
   /** Called by `kill`; should POST to the user's backend. */
   onKill?: () => void | Promise<void>;
+  /**
+   * Called once the soketi subscription is confirmed
+   * (`pusher:subscription_succeeded`). This is the signal to fire the
+   * start-handshake: subscribe FIRST, then `POST /v1/jobs/:id/start` from your
+   * backend, so no output is emitted before a subscriber is listening. See
+   * /docs/concepts/lifecycle#the-start-handshake.
+   */
+  onSubscribed?: () => void | Promise<void>;
 }
 
 export interface UseCodeRunnerJobResult {
@@ -64,10 +72,21 @@ function reassemble(buffer: Map<number, string>): string {
 export function useCodeRunnerJob(
   args: UseCodeRunnerJobArgs,
 ): UseCodeRunnerJobResult {
-  const { jobId, channel, onStdin, onKill } = args;
+  const { jobId, channel, onStdin, onKill, onSubscribed } = args;
   const pusher = usePusher();
 
-  const channelName = channel ?? `private-run-${jobId}`;
+  // No jobId yet → channelName is null and we DON'T subscribe. Subscribing to a
+  // half-formed `private-run-` channel churns auth + opens connections for a job
+  // that doesn't exist. The caller sets jobId once `execute` returns.
+  const channelName = channel ?? (jobId ? `private-run-${jobId}` : null);
+
+  // Keep onSubscribed in a ref so it never enters the subscribe effect deps —
+  // an unstable callback there would re-subscribe (and re-fire start) every
+  // render.
+  const onSubscribedRef = useRef(onSubscribed);
+  useEffect(() => {
+    onSubscribedRef.current = onSubscribed;
+  }, [onSubscribed]);
 
   const [stage, setStage] = useState<StagePhase | null>(null);
   const [stdout, setStdout] = useState("");
@@ -92,7 +111,16 @@ export function useCodeRunnerJob(
     setArtifacts([]);
     setStatus("idle");
 
+    // No channel yet (no jobId) — nothing to subscribe to.
+    if (!channelName) return;
+
     const ch = pusher.subscribe(channelName);
+
+    // Fire the start-handshake signal once soketi confirms the subscription.
+    const onSubscriptionSucceeded = () => {
+      void onSubscribedRef.current?.();
+    };
+    ch.bind("pusher:subscription_succeeded", onSubscriptionSucceeded);
 
     const onStage = (data: StageEvent) => {
       setStage(data.phase);
@@ -125,6 +153,7 @@ export function useCodeRunnerJob(
     ch.bind(EVENTS.artifact, onArtifact);
 
     return () => {
+      ch.unbind("pusher:subscription_succeeded", onSubscriptionSucceeded);
       ch.unbind(EVENTS.stage, onStage);
       ch.unbind(EVENTS.stdout, onStdout);
       ch.unbind(EVENTS.stderr, onStderr);
