@@ -4,8 +4,8 @@
   "aliases": ["rs"],
   "image": "executor/rust:1.83",
   "entrypoint": "main.rs",
-  "compile": ["rustc", "-O", "main.rs", "-o", "/tmp/prog"],
-  "run": ["/tmp/prog"],
+  "compile": ["rustc", "-O", "main.rs", "-o", "/workspace/prog"],
+  "run": ["/workspace/prog"],
   "interactive": true,
   "defaultLimits": {
     "wallTimeMs": 120000,

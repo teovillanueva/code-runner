@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,15 +33,44 @@ import (
 	"github.com/teovillanueva/code-runner/packages/contract/gen/go/wire"
 )
 
-// compileHoldCmd is the entrypoint used when spec.Compile is non-nil: a
-// generic long-lived process that keeps the container alive while the compile
-// exec step runs and produces its artifact, then keeps the container alive for
-// the subsequent run step. We use "cat" reading from /dev/null so it blocks
-// indefinitely without consuming CPU.
+// compileRunMarker is the file path that the compile step touches after a
+// successful compile to signal the compile-run bridge script that the artifact
+// is ready and the run argv can be exec'd.
 //
-// This is driven purely from spec.Compile being non-nil — never from a language
-// name — so it works for any compiled language.
-var compileHoldCmd = strslice.StrSlice{"cat"}
+// The marker lives in /workspace (the writable anonymous volume that persists
+// across the compile exec → run exec boundary in the same container).
+const compileRunMarker = "/workspace/.compile_ready"
+
+// buildCompileHoldCmd constructs the entrypoint used when spec.Compile is
+// non-nil. Instead of a bare "cat", we use a POSIX sh one-liner that:
+//   1. Reads stdin/writes stdout so the attach connection stays open.
+//   2. Polls for the compileRunMarker file (written by Compile after exit 0).
+//   3. On marker detected: removes it and exec's the run argv, replacing
+//      itself as PID 1 so stdin/stdout/stderr stay wired to the run process.
+//
+// The loop is intentionally tight-but-bounded: each iteration sleeps 50 ms.
+// A 120 s compile budget → at most 2400 iterations, negligible CPU overhead.
+//
+// This is language-agnostic and argv-driven — no language name is embedded.
+func buildCompileHoldCmd(runArgv []string) strslice.StrSlice {
+	if len(runArgv) == 0 {
+		// Degenerate: no run command; fall back to a plain infinite sleep.
+		return strslice.StrSlice{"sh", "-c", "sleep infinity"}
+	}
+	// Build a quoted representation of the run argv for use with "exec".
+	// We use printf %q-style shell quoting via a simple shell-safe join:
+	// each element is single-quoted and embedded single quotes are escaped.
+	quoted := make([]string, len(runArgv))
+	for i, arg := range runArgv {
+		quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
+	}
+	runShell := strings.Join(quoted, " ")
+	script := fmt.Sprintf(
+		`while [ ! -f %s ]; do sleep 0.05; done; rm -f %s; exec %s`,
+		compileRunMarker, compileRunMarker, runShell,
+	)
+	return strslice.StrSlice{"sh", "-c", script}
+}
 
 // Compile-time assertions: DockerSocketRunner must implement Runner;
 // dockerSandbox must implement Sandbox.
@@ -163,14 +193,16 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 	}
 
 	// ── Container config ────────────────────────────────────────────────────
-	// When spec.Compile is non-nil, start the container with a generic long-
-	// lived hold command (compileHoldCmd) rather than the run argv. This keeps
-	// the container alive through: compile exec → artifact in /workspace →
-	// run exec. When spec.Compile is nil the container starts with spec.Run
-	// exactly as before — byte-for-byte unchanged Python path.
+	// When spec.Compile is non-nil, start the container with a compile-run
+	// bridge script (buildCompileHoldCmd) rather than the run argv directly.
+	// The bridge polls for /workspace/.compile_ready; once the Compile exec
+	// writes that marker, the bridge exec's spec.Run — replacing itself as PID 1
+	// so stdin/stdout/stderr stay wired to the compiled binary throughout the
+	// session. When spec.Compile is nil the container starts with spec.Run
+	// directly (byte-for-byte unchanged Python/R/SQLite path).
 	containerCmd := strslice.StrSlice(spec.Run)
 	if spec.Compile != nil {
-		containerCmd = compileHoldCmd
+		containerCmd = buildCompileHoldCmd(spec.Run)
 	}
 
 	containerCfg := &container.Config{
@@ -597,10 +629,37 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, stderrFn fun
 		}, fmt.Errorf("docker: Compile ExecInspect: %w", err)
 	}
 
-	return CompileResult{
+	result := CompileResult{
 		ExitCode:   insp.ExitCode,
 		DurationMs: int(time.Since(start).Milliseconds()),
-	}, nil
+	}
+
+	// On exit 0: write the compile-run marker so the bridge script (started
+	// by buildCompileHoldCmd in Create) detects success and exec's spec.Run.
+	// On non-zero: do NOT write the marker — the bridge continues polling and
+	// the worker's compile-gate will tear down the job before run executes.
+	if insp.ExitCode == 0 {
+		markerCtx, markerCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer markerCancel()
+		markerExec, markerErr := s.cli.ContainerExecCreate(markerCtx, s.containerID, container.ExecOptions{
+			User:         sandboxUser,
+			WorkingDir:   sandboxWorkDir,
+			Cmd:          []string{"sh", "-c", "touch " + compileRunMarker},
+			AttachStdout: false,
+			AttachStderr: false,
+			AttachStdin:  false,
+		})
+		if markerErr == nil {
+			_ = s.cli.ContainerExecStart(markerCtx, markerExec.ID, container.ExecStartOptions{})
+			// Brief pause to give the shell script time to detect the marker and
+			// exec the run command. The bridge polls every 50 ms; 200 ms is four
+			// iterations — enough on a loaded host without meaningfully delaying
+			// the session start.
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+
+	return result, nil
 }
 
 // isNotFound reports whether err is a Docker "not found" error (container
