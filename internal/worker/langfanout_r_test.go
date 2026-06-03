@@ -230,17 +230,17 @@ func TestLangFanout_R_Batch(t *testing.T) {
 	mainR := `cat("hi r\n")`
 
 	spec := wire.JobSpec{
-		JobId:      jobID,
-		Language:   "r",
-		Version:    "4.4",
-		Image:      "executor/r:4.4",
-		Compile:    nil, // R: null compile
-		Run:        []string{"Rscript", "main.R"},
-		Entrypoint: "main.R",
-		Channel:    fmt.Sprintf("private-run-%s", jobID),
+		JobId:       jobID,
+		Language:    "r",
+		Version:     "4.4",
+		Image:       "executor/r:4.4",
+		Compile:     nil, // R: null compile
+		Run:         []string{"Rscript", "main.R"},
+		Entrypoint:  "main.R",
+		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
-		Files:      []wire.FileInput{{Name: "main.R", Content: mainR}},
-		Limits:     rDefaultLimits(),
+		Files:       []wire.FileInput{{Name: "main.R", Content: mainR}},
+		Limits:      rDefaultLimits(),
 	}
 
 	require.NoError(t, store.WriteSpec(ctx, spec))
@@ -370,17 +370,17 @@ flush(stdout())
 `
 
 	spec := wire.JobSpec{
-		JobId:      jobID,
-		Language:   "r",
-		Version:    "4.4",
-		Image:      "executor/r:4.4",
-		Compile:    nil,
-		Run:        []string{"Rscript", "main.R"},
-		Entrypoint: "main.R",
-		Channel:    fmt.Sprintf("private-run-%s", jobID),
+		JobId:       jobID,
+		Language:    "r",
+		Version:     "4.4",
+		Image:       "executor/r:4.4",
+		Compile:     nil,
+		Run:         []string{"Rscript", "main.R"},
+		Entrypoint:  "main.R",
+		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
-		Files:      []wire.FileInput{{Name: "main.R", Content: mainR}},
-		Limits:     rDefaultLimits(),
+		Files:       []wire.FileInput{{Name: "main.R", Content: mainR}},
+		Limits:      rDefaultLimits(),
 	}
 
 	require.NoError(t, store.WriteSpec(ctx, spec))

@@ -23,8 +23,8 @@ import (
 // -----------------------------------------------------------------------------
 
 type fakeSandbox struct {
-	mu          sync.Mutex
-	killCount   int
+	mu           sync.Mutex
+	killCount    int
 	cleanupCount int
 
 	// waitResult is returned by Wait.
@@ -43,7 +43,7 @@ type fakeSandbox struct {
 type nopWriteCloser struct{}
 
 func (nopWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
-func (nopWriteCloser) Close() error                 { return nil }
+func (nopWriteCloser) Close() error                { return nil }
 
 func newFakeSandbox() *fakeSandbox {
 	return &fakeSandbox{

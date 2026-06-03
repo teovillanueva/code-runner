@@ -39,9 +39,9 @@ func (r *stubRunner) Create(_ context.Context, _ wire.JobSpec) (Sandbox, error) 
 // stubSandbox is a no-op Sandbox. Pipes are backed by in-memory buffers.
 // Kill is a no-op. Cleanup is idempotent via sync.Once.
 type stubSandbox struct {
-	stdin      *syncBuffer
-	stdout     *bytes.Buffer
-	stderr     *bytes.Buffer
+	stdin       *syncBuffer
+	stdout      *bytes.Buffer
+	stderr      *bytes.Buffer
 	cleanupOnce sync.Once
 }
 

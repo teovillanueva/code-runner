@@ -13,7 +13,7 @@ import (
 func TestStubCreate(t *testing.T) {
 	r := runner.NewStub()
 	sb, err := r.Create(context.Background(), wire.JobSpec{
-		JobId:   "test-job-1",
+		JobId:    "test-job-1",
 		Language: "python",
 		Version:  "3.12",
 		Image:    "code-runner/python:3.12",

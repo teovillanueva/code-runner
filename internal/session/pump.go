@@ -18,11 +18,11 @@ import (
 // An optional activity channel (non-nil) receives an empty struct on every chunk
 // forwarded to the sink, allowing the idle clock to reset on output activity.
 type Pump struct {
-	r          io.Reader
-	budget     *atomic.Int64 // shared across stdout+stderr pumps; counts down
-	truncated  *atomic.Bool  // shared flag set when budget hits 0
-	sink       func([]byte)  // called for each forwarded chunk (at most budget bytes total)
-	activity   chan<- struct{} // optional; non-nil signals the idle clock on each chunk
+	r         io.Reader
+	budget    *atomic.Int64   // shared across stdout+stderr pumps; counts down
+	truncated *atomic.Bool    // shared flag set when budget hits 0
+	sink      func([]byte)    // called for each forwarded chunk (at most budget bytes total)
+	activity  chan<- struct{} // optional; non-nil signals the idle clock on each chunk
 }
 
 // NewPump creates a Pump. The caller must call Run() to start pumping.

@@ -38,8 +38,8 @@ type closureSandbox struct {
 }
 
 func (s *closureSandbox) Stdin() io.WriteCloser { return &discardWriteCloser{} }
-func (s *closureSandbox) Stdout() io.Reader { return &eofReader{} }
-func (s *closureSandbox) Stderr() io.Reader { return &eofReader{} }
+func (s *closureSandbox) Stdout() io.Reader     { return &eofReader{} }
+func (s *closureSandbox) Stderr() io.Reader     { return &eofReader{} }
 
 func (s *closureSandbox) Wait(ctx context.Context) (runner.Result, error) {
 	if s.waitFn != nil {

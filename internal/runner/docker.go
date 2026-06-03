@@ -43,10 +43,10 @@ const compileRunMarker = "/workspace/.compile_ready"
 
 // buildCompileHoldCmd constructs the entrypoint used when spec.Compile is
 // non-nil. Instead of a bare "cat", we use a POSIX sh one-liner that:
-//   1. Reads stdin/writes stdout so the attach connection stays open.
-//   2. Polls for the compileRunMarker file (written by Compile after exit 0).
-//   3. On marker detected: removes it and exec's the run argv, replacing
-//      itself as PID 1 so stdin/stdout/stderr stay wired to the run process.
+//  1. Reads stdin/writes stdout so the attach connection stays open.
+//  2. Polls for the compileRunMarker file (written by Compile after exit 0).
+//  3. On marker detected: removes it and exec's the run argv, replacing
+//     itself as PID 1 so stdin/stdout/stderr stay wired to the run process.
 //
 // The loop is intentionally tight-but-bounded: each iteration sleeps 50 ms.
 // A 120 s compile budget → at most 2400 iterations, negligible CPU overhead.
@@ -272,10 +272,10 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 		// HARD-03: memory cap with swap disabled (Memory == MemorySwap)
 		// HARD-04: CPU quota + pids limit
 		Resources: container.Resources{
-			Memory:    memBytes,
+			Memory:     memBytes,
 			MemorySwap: memBytes, // equal → no swap (Pitfall 5, HARD-03)
-			NanoCPUs:  nanoCPUs,
-			PidsLimit: &pidsLimit,
+			NanoCPUs:   nanoCPUs,
+			PidsLimit:  &pidsLimit,
 		},
 
 		// HARD-05: drop all capabilities, restrict syscalls
@@ -425,7 +425,7 @@ type dockerSandbox struct {
 	cli         *client.Client
 	containerID string
 	attachResp  types.HijackedResponse
-	stdinW      *io.PipeWriter  // write end of the stdin pipe (pump goroutine reads it)
+	stdinW      *io.PipeWriter // write end of the stdin pipe (pump goroutine reads it)
 	stdoutR     *io.PipeReader
 	stderrR     *io.PipeReader
 	spec        wire.JobSpec
@@ -668,4 +668,3 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, stderrFn fun
 func isNotFound(err error) bool {
 	return client.IsErrNotFound(err)
 }
-

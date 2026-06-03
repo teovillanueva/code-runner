@@ -270,8 +270,8 @@ func newAbuseStack(t *testing.T) *abuseStack {
 		case <-time.After(15 * time.Second):
 			t.Log("abuse: worker did not stop within 15s of context cancel")
 		}
-		redisClient.Close()  //nolint:errcheck
-		dockerCli.Close()    //nolint:errcheck
+		redisClient.Close() //nolint:errcheck
+		dockerCli.Close()   //nolint:errcheck
 	})
 
 	return s
@@ -660,7 +660,7 @@ while True:
 			CpuMs:      2500,  // tight: kill after 2.5s CPU
 			MemoryMb:   128,
 			Pids:       64,
-			OutputKb:   256,   // large enough for heartbeats
+			OutputKb:   256, // large enough for heartbeats
 		},
 	}
 
@@ -699,12 +699,12 @@ func TestAbuseIdleBlockedStdin(t *testing.T) {
 
 	jobID := makeJobID("idleblocked")
 	spec := wire.JobSpec{
-		JobId:    jobID,
-		Language: "python",
-		Version:  "3.12",
-		Image:    "executor/python:3.12",
-		Run:      []string{"python", "-c", "import sys; line = sys.stdin.readline(); print('got:', line)"},
-		Channel:  fmt.Sprintf("private-run-%s", jobID),
+		JobId:       jobID,
+		Language:    "python",
+		Version:     "3.12",
+		Image:       "executor/python:3.12",
+		Run:         []string{"python", "-c", "import sys; line = sys.stdin.readline(); print('got:', line)"},
+		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
 		Limits: wire.Limits{
 			IdleMs:     2000,  // small — fires quickly
@@ -774,10 +774,10 @@ for line in sys.stdin:
     sys.stdout.write("got " + line.strip() + "\n")
     sys.stdout.flush()
 `},
-		Channel:  fmt.Sprintf("private-run-%s", jobID),
+		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
 		Limits: wire.Limits{
-			IdleMs:     8000,  // generous — must NOT idle-time-out before close
+			IdleMs:     8000, // generous — must NOT idle-time-out before close
 			WallTimeMs: 15000,
 			CpuMs:      15000,
 			MemoryMb:   128,

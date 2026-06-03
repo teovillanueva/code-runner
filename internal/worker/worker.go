@@ -266,7 +266,7 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	if err != nil {
 		log.Error("worker: SubscribeControl failed", "err", err)
 		stdinSub.Close() //nolint:errcheck
-		releaseSlot() // early return — slot was acquired but we can't proceed
+		releaseSlot()    // early return — slot was acquired but we can't proceed
 		return
 	}
 

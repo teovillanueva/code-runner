@@ -17,7 +17,7 @@ import (
 // fakeTriggerer records every (channel, event, data) triple passed to Trigger.
 // It is safe for concurrent use.
 type fakeTriggerer struct {
-	mu   sync.Mutex
+	mu    sync.Mutex
 	calls []triggerCall
 }
 

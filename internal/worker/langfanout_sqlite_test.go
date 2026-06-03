@@ -334,13 +334,13 @@ func TestLangFanout_SQLite_InteractiveStdin(t *testing.T) {
 	mainSQL := "CREATE TABLE demo(val TEXT);\n"
 
 	spec := wire.JobSpec{
-		JobId:    jobID,
-		Language: "sqlite",
-		Version:  "3",
-		Image:    "executor/sqlite:3",
-		Run:      []string{"sqlite3", "-batch", ":memory:", "-init", "main.sql"},
-		Entrypoint: "main.sql",
-		Channel:    fmt.Sprintf("private-run-%s", jobID),
+		JobId:       jobID,
+		Language:    "sqlite",
+		Version:     "3",
+		Image:       "executor/sqlite:3",
+		Run:         []string{"sqlite3", "-batch", ":memory:", "-init", "main.sql"},
+		Entrypoint:  "main.sql",
+		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
 		Files: []wire.FileInput{
 			{Name: "main.sql", Content: mainSQL},

@@ -47,8 +47,8 @@ func (f *fakeSandboxForCompileTest) Stderr() io.Reader { return bytes.NewReader(
 func (f *fakeSandboxForCompileTest) Wait(_ context.Context) (runner.Result, error) {
 	return runner.Result{}, nil
 }
-func (f *fakeSandboxForCompileTest) Kill(_ context.Context) error    { return nil }
-func (f *fakeSandboxForCompileTest) Cleanup() error                  { return nil }
+func (f *fakeSandboxForCompileTest) Kill(_ context.Context) error { return nil }
+func (f *fakeSandboxForCompileTest) Cleanup() error               { return nil }
 
 func (f *fakeSandboxForCompileTest) Compile(_ context.Context, argv []string, stderrFn func([]byte)) (runner.CompileResult, error) {
 	f.mu.Lock()

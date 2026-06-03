@@ -13,9 +13,9 @@ import (
 // cpu.stat usage_usec (multiplied by 1000 to get nanoseconds).
 func TestCgroupUsageNanosToMs(t *testing.T) {
 	tests := []struct {
-		name     string
-		nanos    uint64
-		wantMs   int
+		name   string
+		nanos  uint64
+		wantMs int
 	}{
 		{
 			name:   "zero usage",

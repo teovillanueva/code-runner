@@ -47,10 +47,10 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 type countingRunner struct {
-	inner    runnerPkg.Runner
-	active   atomic.Int64
-	peak     atomic.Int64
-	peakMu   sync.Mutex // protects peak update
+	inner  runnerPkg.Runner
+	active atomic.Int64
+	peak   atomic.Int64
+	peakMu sync.Mutex // protects peak update
 }
 
 func (cr *countingRunner) Create(ctx context.Context, spec wire.JobSpec) (runnerPkg.Sandbox, error) {
@@ -79,9 +79,9 @@ type countingSandbox struct {
 
 var _ runnerPkg.Sandbox = (*countingSandbox)(nil)
 
-func (cs *countingSandbox) Stdin() io.WriteCloser  { return cs.inner.Stdin() }
-func (cs *countingSandbox) Stdout() io.Reader      { return cs.inner.Stdout() }
-func (cs *countingSandbox) Stderr() io.Reader      { return cs.inner.Stderr() }
+func (cs *countingSandbox) Stdin() io.WriteCloser          { return cs.inner.Stdin() }
+func (cs *countingSandbox) Stdout() io.Reader              { return cs.inner.Stdout() }
+func (cs *countingSandbox) Stderr() io.Reader              { return cs.inner.Stderr() }
 func (cs *countingSandbox) Kill(ctx context.Context) error { return cs.inner.Kill(ctx) }
 func (cs *countingSandbox) Wait(ctx context.Context) (runnerPkg.Result, error) {
 	return cs.inner.Wait(ctx)

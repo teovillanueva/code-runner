@@ -37,10 +37,10 @@ type compileSandbox struct {
 	mu sync.Mutex
 
 	// Compile scripting
-	compileExit    int
-	compileStderr  []byte
-	compileErr     error
-	compileCalled  bool
+	compileExit   int
+	compileStderr []byte
+	compileErr    error
+	compileCalled bool
 
 	// Run scripting
 	runInteractiveCalled bool
@@ -60,9 +60,9 @@ func newCompileSandbox(compileExit int, compileStderr []byte) *compileSandbox {
 	}
 }
 
-func (s *compileSandbox) Stdin() io.WriteCloser  { return s.inner.Stdin() }
-func (s *compileSandbox) Stdout() io.Reader      { return s.inner.Stdout() }
-func (s *compileSandbox) Stderr() io.Reader      { return s.inner.Stderr() }
+func (s *compileSandbox) Stdin() io.WriteCloser { return s.inner.Stdin() }
+func (s *compileSandbox) Stdout() io.Reader     { return s.inner.Stdout() }
+func (s *compileSandbox) Stderr() io.Reader     { return s.inner.Stderr() }
 
 func (s *compileSandbox) Wait(ctx context.Context) (runner.Result, error) {
 	s.mu.Lock()
@@ -71,8 +71,8 @@ func (s *compileSandbox) Wait(ctx context.Context) (runner.Result, error) {
 	return s.inner.Wait(ctx)
 }
 
-func (s *compileSandbox) Kill(ctx context.Context) error   { return s.inner.Kill(ctx) }
-func (s *compileSandbox) Cleanup() error                   { return s.inner.Cleanup() }
+func (s *compileSandbox) Kill(ctx context.Context) error { return s.inner.Kill(ctx) }
+func (s *compileSandbox) Cleanup() error                 { return s.inner.Cleanup() }
 
 func (s *compileSandbox) Compile(_ context.Context, _ []string, stderrFn func([]byte)) (runner.CompileResult, error) {
 	s.mu.Lock()
