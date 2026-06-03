@@ -8,18 +8,25 @@
 # It does three things:
 #   1. Per-expression stdout/stderr flush (carried forward from the dead
 #      Rsite.profile) so interactive streaming never stalls in a buffer.
-#   2. A LAZY /workspace png device: opened on the FIRST real plot via the
-#      `before.plot.new` hook, so untrusted exam code that draws N plots WITHOUT
-#      opening a device yields exactly N /workspace/Rplot*.png — and a no-plot run
-#      yields ZERO PNGs (no blank artifacts, requirement G1).
+#   2. A LAZY /workspace png device: opened on the FIRST real plot, so untrusted
+#      exam code that draws N plots WITHOUT opening a device yields exactly N
+#      /workspace/Rplot*.png — and a no-plot run yields ZERO PNGs (no blank
+#      artifacts, requirement G1).
 #   3. An onexit finalizer that closes the device on normal AND error shutdown,
 #      so a script that errors AFTER its first plot still flushes that frame.
 #
-# Why `before.plot.new`, NOT `plot.new` (verified during planning, fact B):
-#   Opening a device inside a `plot.new` hook resets device state and the
-#   subsequent plot.xy fails with "plot.new has not been called yet". The
-#   `before.plot.new` hook fires BEFORE plot.new on the fresh device, so opening
-#   the png device there works correctly. action="replace" keeps a single hook.
+# Why `options(device = ...)`, NOT a `before.plot.new`/`plot.new` setHook:
+#   The image bakes ENV R_DEFAULT_DEVICE=pdf. When user code calls plot() with no
+#   device open, R auto-opens the DEFAULT device BEFORE any plot.new hook fires.
+#   With R_DEFAULT_DEVICE=pdf that auto-opens an Rplots.pdf in /workspace, so a
+#   `before.plot.new` hook that ALSO opens a png leaves a stray blank Rplots.pdf
+#   captured as an artifact on every plotting run — violating G1's zero-blank
+#   intent. Setting `options(device = <png opener>)` makes the auto-opened DEFAULT
+#   device BE our /workspace png (the `device` option takes precedence over the
+#   R_DEFAULT_DEVICE env var), so no pdf is ever created. The png()'s %03d page
+#   counter advances per plot.new, giving N files for N plots on one device.
+#   Verified: 3 plots => Rplot001..003 (no pdf); 0 plots => 0 PNGs; error after
+#   the first plot => Rplot001 still flushed.
 
 # invisible() so the value of the local() block (the finalizer's NULL) is NOT
 # auto-printed to stdout when this profile is sourced at top level — otherwise a
@@ -31,23 +38,23 @@ invisible(local({
     name = "code_runner_flush"
   )
 
-  # Private state env so the hook/finalizer share an "opened" flag.
+  # Private state env so the device opener / finalizer share an "opened" flag.
   .cr <- new.env()
 
-  # 2. Lazy png device — opened exactly once, on the first real plot.
-  setHook(
-    "before.plot.new",
-    function() {
-      if (!isTRUE(.cr$opened)) {
-        .cr$opened <- TRUE
-        grDevices::png(
-          "/workspace/Rplot%03d.png",
-          width = 800, height = 600, res = 100
-        )
-      }
-    },
-    action = "replace"
-  )
+  # 2. Lazy png device as the DEFAULT graphics device. R invokes this when user
+  #    code plots with no device open; the guard keeps it to a single /workspace
+  #    png device whose %03d page counter advances per plot (=> N plots, N files).
+  #    No plot => never invoked => zero PNGs (G1). Overrides R_DEFAULT_DEVICE=pdf,
+  #    so no stray Rplots.pdf is ever written.
+  options(device = function(...) {
+    if (!isTRUE(.cr$opened)) {
+      .cr$opened <- TRUE
+      grDevices::png(
+        "/workspace/Rplot%03d.png",
+        width = 800, height = 600, res = 100
+      )
+    }
+  })
 
   # 3. onexit finalizer: close every open device on normal OR error exit so the
   #    in-progress frame is written. Runs at R shutdown regardless of how it ends.
