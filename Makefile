@@ -10,7 +10,7 @@ help: ## Show this help
 
 .PHONY: tools
 tools: ## Install codegen tools (go-jsonschema)
-	go install github.com/omissis/go-jsonschema/cmd/go-jsonschema@latest
+	go install github.com/atombender/go-jsonschema@latest
 
 .PHONY: install
 install: ## Install JS deps
