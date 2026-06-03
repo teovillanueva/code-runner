@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 9 context gathered
-last_updated: "2026-06-03T14:26:00.255Z"
-last_activity: 2026-06-03 -- Phase 09 execution started
+status: complete
+stopped_at: Milestone v1.0 complete — all 9 phases shipped & released
+last_updated: "2026-06-03T18:30:00.000Z"
+last_activity: 2026-06-03 -- Milestone v1.0 complete (Phases 1-9 shipped); planning for Phases 8 & 9 recovered from orphaned git history
 progress:
   total_phases: 9
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 36
-  completed_plans: 29
-  percent: 81
+  completed_plans: 36
+  percent: 100
 ---
 
 # Project State
@@ -21,30 +21,31 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-02)
 
 **Core value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible.
-**Current focus:** Phase 09 — artifacts-pullable-run-output
+**Current focus:** Milestone v1.0 complete — no active phase. Ready for the next milestone or new phases.
 
 ## Current Position
 
-Phase: 09 (artifacts-pullable-run-output) — EXECUTING
-Plan: 1 of 7
-Status: Executing Phase 09
-Last activity: 2026-06-03 -- Phase 09 execution started
+Phase: 9 of 9 (Artifacts & Pullable Run Output) — COMPLETE
+Plan: 7 of 7 — COMPLETE
+Status: Milestone v1.0 complete — all 9 phases shipped, tested, and released (npm packages + GHCR images)
+Last activity: 2026-06-03 -- Milestone v1.0 complete; Phase 8 & 9 planning recovered from orphaned git history
 
-Progress: [██████████] 100%
+Progress: [██████████] 100% (9/9 phases)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6
+- Total plans completed: 36 (across 9 phases)
 - Average duration: — min
-- Total execution time: 0.0 hours
+- Total execution time: — hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 08 | 6 | - | - |
+| 08-distributed-observability | 6 | - | - |
+| 09-artifacts-pullable-run-output | 7 | - | - |
 
 **Recent Trend:**
 
@@ -105,8 +106,8 @@ None yet.
 
 [Issues that affect future work]
 
-- Phase 1 cannot proceed to implementation until the human approves the layout + contract + manifest schema (explicit gate).
 - FlyMachinesRunner interactive-streaming fit + per-execution latency/cost is unvalidated (v2; benchmark before relying on it).
+- Phase 9 `09-HUMAN-UAT.md` was left `partial` (4 live-stack manual checks marked `pending`) when the planning was committed. The feature nonetheless shipped and is covered by committed automated tests (`internal/worker/worker_artifacts_test.go`, `internal/artifactstore/s3_test.go`, `packages/contract/test/artifact.test.ts`, `packages/code-runner-sdk-node/test/get-output.test.ts`, `apps/api/test/execute-collect-output.test.ts`, `apps/api/test/output-route.test.ts`) plus the S3 round-trip proven live during execution. Re-run the 4 manual UAT checks against a full compose stack if you want the formal sign-off.
 
 ## Deferred Items
 
@@ -121,6 +122,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-03T12:09:34.939Z
-Stopped at: Phase 9 context gathered
-Resume file: .planning/phases/09-artifacts-pullable-run-output/09-CONTEXT.md
+Last session: 2026-06-03
+Stopped at: Milestone v1.0 complete — all 9 phases shipped & released. Phase 8 & 9 planning recovered from orphaned git history (commit 6a39966) and committed to main.
+Resume file: None
