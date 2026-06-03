@@ -1,0 +1,164 @@
+# ci.yml — Broader CI matrix (lint, go-unit, js, contract-drift)
+#
+# This is the contribution-ready CI guard beyond the abuse safety gate (abuse.yml).
+# abuse.yml runs the adversarial Docker/cgroup suite and is not touched here.
+#
+# Jobs:
+#   lint          – gofmt + go vet + pnpm -r typecheck
+#   go-unit       – go test ./... (Docker-free)
+#   js            – pnpm -r test with a live Redis service on port 6380
+#   contract-drift – make tools + make contract-check (schema/codegen drift gate)
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # lint: gofmt / go vet / TypeScript typecheck
+  # ---------------------------------------------------------------------------
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt check
+        run: test -z "$(gofmt -l .)"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack (pnpm)
+        run: corepack enable
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript typecheck
+        run: pnpm -r typecheck
+
+  # ---------------------------------------------------------------------------
+  # go-unit: Docker-free Go unit/integration tests
+  # ---------------------------------------------------------------------------
+  go-unit:
+    name: go-unit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Go tests
+        run: go test ./...
+
+  # ---------------------------------------------------------------------------
+  # js: API vitest + contract node:test suites (needs live Redis on port 6380)
+  #
+  # Port mapping: 6380:6379 — matches the vitest.config.ts default:
+  #   REDIS_URL ?? TEST_REDIS_URL ?? "redis://localhost:6380"
+  # No extra REDIS_URL env needed because the service maps the expected port.
+  # LANGUAGES_DIR is set to the workspace languages/ dir (vitest default
+  # resolves relative to __dirname which is apps/api; set it explicitly for CI).
+  # EXECUTOR_API_TOKEN has a safe "test-default-token" default in vitest.config.ts.
+  # ENABLE_CHANNEL_AUTH is hardcoded "false" in vitest.config.ts.
+  # ---------------------------------------------------------------------------
+  js:
+    name: js
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      LANGUAGES_DIR: ${{ github.workspace }}/languages
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack (pnpm)
+        run: corepack enable
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run JS tests (API vitest + contract node:test)
+        run: pnpm -r test
+
+  # ---------------------------------------------------------------------------
+  # contract-drift: regenerate wire contract and fail on any diff
+  #
+  # Sequence: make tools installs go-jsonschema (omissis/go-jsonschema) on PATH,
+  # which is required by pnpm --filter @code-runner/contract generate (via
+  # packages/contract/scripts/generate.mjs). Then make contract-check runs
+  # the generation and asserts git diff --exit-code on packages/contract/gen.
+  # ---------------------------------------------------------------------------
+  contract-drift:
+    name: contract-drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack (pnpm)
+        run: corepack enable
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install go-jsonschema (make tools)
+        run: make tools
+
+      - name: Check contract drift
+        run: make contract-check
