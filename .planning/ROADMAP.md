@@ -140,7 +140,10 @@ Plans:
   2. The README documents the API contract (`/v1/*` endpoints + wire events) accurately against the shipped contract.
   3. The README documents deployment per target: dev (docker compose), prod (Fly Machines/Firecracker workers + native Redis + soketi; API anywhere), and future k8s `RuntimeClass=gvisor`.
   4. The README documents how to add a new language (the package model guide) and how the upstream app authorizes the browser's private soketi channel via the app key/secret (HMAC), noting the optional non-core helper.
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 07-01-PLAN.md — Complete README: quickstart, full /v1/* API contract + output events, deployment-per-target, add-a-language guide, channel-auth (DOCS-01..04, CHAN-01)
+- [ ] 07-02-PLAN.md — Broader CI matrix (.github/workflows/ci.yml): lint, go-unit, js+redis, contract-drift
 **UI hint**: yes
 
 ## Progress
