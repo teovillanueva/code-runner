@@ -21,27 +21,27 @@ FROM r-base:4.4.2
 #
 # Three-layer defence (all applied here):
 #
-#   1. Rscript --vanilla flag is appended by Rsite.profile below so every
-#      Rscript invocation skips reading .Rprofile / Renviron — avoids any
-#      accidental re-buffering from user init files.
+#   1. R_DEFAULT_DEVICE=pdf suppresses device prompts that could cause hangs.
 #
-#   2. R_DEFAULT_DEVICE=pdf suppresses device prompts that could cause hangs.
+#   2. /etc/R/Rsite.profile (the system-wide R startup file, sourced before
+#      any user code) calls flush(stdout())+flush(stderr()) after every
+#      top-level expression via addTaskCallback.  This is the belt-and-suspenders
+#      flush for code that writes to connection objects without an explicit flush().
 #
-#   3. /etc/R/Rsite.profile (the system-wide R startup file, sourced before
-#      any user code) calls sink() + flush.console() on every command via
-#      addTaskCallback.  The key unbuffering mechanism is:
-#      options(OutDec=getOption("OutDec"))  # no-op to trigger .onLoad flush
-#      combined with Rscript automatically flushing when its output fd is a
-#      non-TTY pipe (Rscript uses line-buffering when writing to a pipe on
-#      R 4.2+).  Rscript 4.2+ enables line-buffering on stdout by default
-#      when connected to a pipe — this is confirmed R behaviour and does NOT
-#      need PYTHONUNBUFFERED-style env var.  We document it here so maintainers
-#      understand why no ENV is required.
+#   3. Rscript 4.2+ already line-buffers stdout to a non-TTY pipe by default —
+#      this is confirmed R behaviour and does NOT need PYTHONUNBUFFERED-style
+#      env var.  The explicit flush callback in Rsite.profile covers edge cases.
 #
-# TL;DR: Rscript 4.2+ already line-buffers stdout to a pipe; we add
-# explicit flush() calls in Rsite.profile as belt-and-suspenders for any
-# code that writes to connection objects directly.
+# TL;DR: Rscript 4.2+ line-buffers stdout to a pipe; we add explicit flush()
+# calls in Rsite.profile as belt-and-suspenders.
 ENV R_DEFAULT_DEVICE=pdf
+
+# OPENBLAS_NUM_THREADS=1: prevent OpenBLAS from trying to spawn worker threads
+# inside the sandbox (which fails with pids-limit enforcement, producing noisy
+# "pthread_create failed" warnings to stderr on every Rscript invocation).
+# R does not need BLAS parallelism for typical scripts; single-threaded BLAS is
+# the correct choice for an untrusted-code sandbox.
+ENV OPENBLAS_NUM_THREADS=1
 
 # Belt-and-suspenders: write a system Rsite.profile that installs a task
 # callback to flush stdout after every top-level expression.  This covers
@@ -68,6 +68,22 @@ RUN Rscript -e "\
         quiet = TRUE, \
         clean = TRUE) \
 "
+
+# R_DEFAULT_PACKAGES: restrict default package loading to "base" only.
+# Must be set AFTER the install.packages step above (which requires the utils
+# package to be available during the build).
+#
+# In the hardened sandbox (--cap-drop ALL + custom seccomp profile), R's 'utils'
+# package initialization calls system("which uname") via popen(), which requires
+# fork+exec in a subprocess.  With all capabilities dropped, this popen fails with
+# EPERM, producing confusing "package utils/stats not found" warnings to stderr on
+# every Rscript invocation even though R itself works correctly.
+#
+# Setting R_DEFAULT_PACKAGES=base skips auto-loading of datasets, grDevices,
+# graphics, methods, stats, and utils at startup.  Users who need these packages
+# can load them explicitly with library().  The baked-in packages (jsonlite,
+# data.table) are unaffected — they are loaded by user code, not at startup.
+ENV R_DEFAULT_PACKAGES=base
 
 # ── Workspace directory ────────────────────────────────────────────────────────
 # The runner (internal/runner/docker.go) sets WorkingDir=/workspace and

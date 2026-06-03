@@ -12,7 +12,7 @@
     "idleMs": 10000,
     "cpuMs": 15000,
     "memoryMb": 256,
-    "pids": 64,
+    "pids": 128,
     "outputKb": 512
   }
 }
