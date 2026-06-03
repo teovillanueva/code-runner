@@ -23,16 +23,16 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Shared Wire Contract (`packages/contract`)
 
-- [ ] **CONT-01**: A single canonical JSON Schema defines every wire message exchanged between the API and the worker
-- [ ] **CONT-02**: TypeScript types are generated from the schema and consumed by the Hono API (not hand-written)
-- [ ] **CONT-03**: Runtime validators (zod) are generated from the schema so API validation stays in lockstep with the contract
-- [ ] **CONT-04**: Go structs (with JSON tags) are generated from the schema and consumed by the worker
-- [ ] **CONT-05**: A CI/script drift check regenerates the artifacts and fails on any diff
-- [ ] **CONT-06**: The contract covers the job spec, stdin chunk, control messages (start/kill/stdin-close), and output events (stage/stdout/stderr/result)
+- [x] **CONT-01**: A single canonical JSON Schema defines every wire message exchanged between the API and the worker
+- [x] **CONT-02**: TypeScript types are generated from the schema and consumed by the Hono API (not hand-written)
+- [x] **CONT-03**: Runtime validators (zod) are generated from the schema so API validation stays in lockstep with the contract
+- [x] **CONT-04**: Go structs (with JSON tags) are generated from the schema and consumed by the worker
+- [x] **CONT-05**: A CI/script drift check regenerates the artifacts and fails on any diff
+- [x] **CONT-06**: The contract covers the job spec, stdin chunk, control messages (start/kill/stdin-close), and output events (stage/stdout/stderr/result)
 
 ### Worker & Runner (Go)
 
-- [ ] **RUN-01**: A `Runner`/`Sandbox` interface abstracts "create hardened sandbox, attach pipes, enforce limits, kill, cleanup" so the backend can swap (Docker → gVisor → Firecracker) without touching core logic
+- [x] **RUN-01**: A `Runner`/`Sandbox` interface abstracts "create hardened sandbox, attach pipes, enforce limits, kill, cleanup" so the backend can swap (Docker → gVisor → Firecracker) without touching core logic
 - [x] **RUN-02**: A `DockerSocketRunner` launches an ephemeral container per execution via the mounted host socket (no Docker-in-Docker)
 - [x] **RUN-03**: The runner attaches and demuxes stdout/stderr separately and forwards them to the session
 - [x] **RUN-04**: `kill` destroys the whole container (process tree), never just a PID
@@ -52,7 +52,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **STDIN-01**: stdin is routed without service discovery: the API `PUBLISH`es to `stdin:<jobId>` and the owning worker writes it to the process pipe
 - [x] **STDIN-02**: `/stdin/close` delivers EOF to the process exactly once
 - [x] **STDIN-03**: Control messages (start/kill) route to the owning worker via a per-job control channel
-- [ ] **STDIN-04**: The stdin transport sits behind an interface so Redis pub/sub (MVP) can be swapped for Redis Streams (`XREAD BLOCK`) later without core changes
+- [x] **STDIN-04**: The stdin transport sits behind an interface so Redis pub/sub (MVP) can be swapped for Redis Streams (`XREAD BLOCK`) later without core changes
 
 ### Sandbox Hardening
 
@@ -83,9 +83,9 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Language Packages (manifest-driven)
 
-- [ ] **LANG-01**: Adding a language is adding a `languages/<lang-version>/` folder with `manifest.json` + `Dockerfile` — no changes to the Go worker or the API
-- [ ] **LANG-02**: `manifest.json` declares `language, version, aliases, image, entrypoint, compile (nullable), run, interactive, defaultLimits{wallTimeMs,idleMs,cpuMs,memoryMb,pids,outputKb}`
-- [ ] **LANG-03**: The core loads all manifests at boot and exposes the available languages; no languages are hardcoded in Go or the API
+- [x] **LANG-01**: Adding a language is adding a `languages/<lang-version>/` folder with `manifest.json` + `Dockerfile` — no changes to the Go worker or the API
+- [x] **LANG-02**: `manifest.json` declares `language, version, aliases, image, entrypoint, compile (nullable), run, interactive, defaultLimits{wallTimeMs,idleMs,cpuMs,memoryMb,pids,outputKb}`
+- [x] **LANG-03**: The core loads all manifests at boot and exposes the available languages; no languages are hardcoded in Go or the API
 - [x] **LANG-04**: Per-request `limits` override a manifest's `defaultLimits`
 - [x] **LANG-05**: The Python 3.12 package runs `python main.py` with numpy/pandas/requests baked into the image
 - [x] **LANG-06**: The Rust package compiles with `rustc -O main.rs -o /tmp/prog` (compile stage with its own limits) then runs the produced binary
@@ -105,7 +105,7 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **CFG-01**: All configuration is via env vars (`EXECUTOR_API_TOKEN`, `REDIS_URL`, `SOKETI_HOST/PORT/USE_TLS/APP_ID/APP_KEY/APP_SECRET`) — there are no configuration endpoints
 - [x] **CFG-02**: No endpoint returns secrets, and the soketi secret is never persisted in Redis
 - [x] **CFG-03**: soketi credentials are read from env by the worker (to trigger) and by the API (if it signs channel auth)
-- [ ] **CFG-04**: The chosen Redis must support native pub/sub and blocking operations for the worker (a managed serverless Redis that lacks TCP `SUBSCRIBE`/`BLPOP`, e.g. Upstash, is only usable for the API, not the worker)
+- [x] **CFG-04**: The chosen Redis must support native pub/sub and blocking operations for the worker (a managed serverless Redis that lacks TCP `SUBSCRIBE`/`BLPOP`, e.g. Upstash, is only usable for the API, not the worker)
 
 ### Channel Authorization (upstream responsibility)
 
@@ -131,8 +131,8 @@ Requirements for the initial release. Each maps to roadmap phases.
 
 ### Open Source & Documentation
 
-- [ ] **OSS-01**: The repo ships an MIT `LICENSE`
-- [ ] **OSS-02**: A `.env.example` documents every env var
+- [x] **OSS-01**: The repo ships an MIT `LICENSE`
+- [x] **OSS-02**: A `.env.example` documents every env var
 - [x] **DOCS-01**: The README has a quickstart: how to run the stack locally
 - [x] **DOCS-02**: The README documents the API contract (`/v1/*` endpoints + wire events)
 - [x] **DOCS-03**: The README documents deployment per target: dev (docker compose); prod (long-lived **worker nodes** on Fly or any Linux host that launch sandboxes internally, scaled to/from zero by queue depth, with **gVisor** `--runtime=runsc` for extra isolation; native-protocol Redis + soketi; API anywhere); and the **v2** `FlyMachinesRunner` microVM-per-execution option with its latency/streaming trade-offs noted
@@ -185,13 +185,13 @@ Each v1 requirement maps to exactly one phase.
 | API-09 | Phase 3 | Complete |
 | API-10 | Phase 3 | Complete |
 | API-11 | Phase 3 | Complete |
-| CONT-01 | Phase 1 | Pending |
-| CONT-02 | Phase 1 | Pending |
-| CONT-03 | Phase 1 | Pending |
-| CONT-04 | Phase 1 | Pending |
-| CONT-05 | Phase 1 | Pending |
-| CONT-06 | Phase 1 | Pending |
-| RUN-01 | Phase 1 | Pending |
+| CONT-01 | Phase 1 | Complete |
+| CONT-02 | Phase 1 | Complete |
+| CONT-03 | Phase 1 | Complete |
+| CONT-04 | Phase 1 | Complete |
+| CONT-05 | Phase 1 | Complete |
+| CONT-06 | Phase 1 | Complete |
+| RUN-01 | Phase 1 | Complete |
 | RUN-02 | Phase 2 | Complete |
 | RUN-03 | Phase 2 | Complete |
 | RUN-04 | Phase 2 | Complete |
@@ -205,7 +205,7 @@ Each v1 requirement maps to exactly one phase.
 | STDIN-01 | Phase 3 | Complete |
 | STDIN-02 | Phase 3 | Complete |
 | STDIN-03 | Phase 3 | Complete |
-| STDIN-04 | Phase 1 | Pending |
+| STDIN-04 | Phase 1 | Complete |
 | HARD-01 | Phase 2 | Complete |
 | HARD-02 | Phase 2 | Complete |
 | HARD-03 | Phase 2 | Complete |
@@ -221,9 +221,9 @@ Each v1 requirement maps to exactly one phase.
 | OUT-04 | Phase 2 | Complete |
 | LIFE-01 | Phase 2 | Complete |
 | LIFE-02 | Phase 2 | Complete |
-| LANG-01 | Phase 1 | Pending |
-| LANG-02 | Phase 1 | Pending |
-| LANG-03 | Phase 1 | Pending |
+| LANG-01 | Phase 1 | Complete |
+| LANG-02 | Phase 1 | Complete |
+| LANG-03 | Phase 1 | Complete |
 | LANG-04 | Phase 3 | Complete |
 | LANG-05 | Phase 3 | Complete |
 | LANG-06 | Phase 6 | Complete |
@@ -237,7 +237,7 @@ Each v1 requirement maps to exactly one phase.
 | CFG-01 | Phase 3 | Complete |
 | CFG-02 | Phase 3 | Complete |
 | CFG-03 | Phase 3 | Complete |
-| CFG-04 | Phase 1 | Pending |
+| CFG-04 | Phase 1 | Complete |
 | CHAN-01 | Phase 7 | Complete |
 | CHAN-02 | Phase 3 | Complete |
 | DEV-01 | Phase 3 | Complete |
@@ -251,8 +251,8 @@ Each v1 requirement maps to exactly one phase.
 | TEST-06 | Phase 4 | Complete |
 | TEST-07 | Phase 4 | Complete |
 | TEST-08 | Phase 4 | Complete |
-| OSS-01 | Phase 1 | Pending |
-| OSS-02 | Phase 1 | Pending |
+| OSS-01 | Phase 1 | Complete |
+| OSS-02 | Phase 1 | Complete |
 | DOCS-01 | Phase 7 | Complete |
 | DOCS-02 | Phase 7 | Complete |
 | DOCS-03 | Phase 7 | Complete |

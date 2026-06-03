@@ -36,9 +36,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   6. OSS scaffolding is in place: MIT `LICENSE` and a `.env.example` documenting every env var; the layout + contract + manifest schema are presented and **explicitly approved by the human before implementation begins**.
 **Plans**: 3 plans
 Plans:
-- [ ] 01-01-PLAN.md — Go internal/keys (contract mirror) + internal/manifest loader/validator/resolver + sample python manifest; verify committed contract & OSS scaffolding
-- [ ] 01-02-PLAN.md — Runner/Sandbox interface + StdinTransport interface (stubs) and native-Redis-for-worker constraint (config + docs)
-- [ ] 01-03-PLAN.md — Worker boot entrypoint (loads manifests, lists languages, wires stubs) + shared TS manifest loader so the API is non-hardcoded
+- [x] 01-01-PLAN.md — Go internal/keys (contract mirror) + internal/manifest loader/validator/resolver + sample python manifest; verify committed contract & OSS scaffolding
+- [x] 01-02-PLAN.md — Runner/Sandbox interface + StdinTransport interface (stubs) and native-Redis-for-worker constraint (config + docs)
+- [x] 01-03-PLAN.md — Worker boot entrypoint (loads manifests, lists languages, wires stubs) + shared TS manifest loader so the API is non-hardcoded
 
 ### Phase 2: Sandbox Hardening & Runner
 **Goal**: Build the highest-risk component — a hardened Go `DockerSocketRunner` that creates an ephemeral container per execution, enforces the three clocks and resource caps, tree-kills, and tears down idempotently — so safety is baked in, never retrofitted.
