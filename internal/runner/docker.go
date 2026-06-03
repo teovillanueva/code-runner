@@ -29,9 +29,53 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/teovillanueva/code-runner/internal/config"
 	"github.com/teovillanueva/code-runner/packages/contract/gen/go/wire"
 )
+
+// instrumentationName is the meter scope for runner-emitted sandbox metrics.
+const instrumentationName = "code-runner-worker"
+
+// sandboxCreateDuration / sandboxKillDuration resolve the create/kill latency
+// HISTOGRAMS from the CURRENT global MeterProvider on each call. Resolving
+// lazily (rather than caching an instrument bound to the no-op meter at package
+// init) ensures a MeterProvider installed after init — otelinit.Init at boot or a
+// ManualReader in tests — routes the measurements correctly. The no-op provider
+// returns no-op instruments at zero cost.
+//
+// These are HISTOGRAMS (unit "s"), distinct from the "sandbox.create" SPAN wired
+// by 08-02 in worker.go: the span context is threaded into ContainerCreate/
+// Attach/Start; these histograms only record the elapsed Create/Kill wall time.
+// job_id is NEVER a metric attribute (RESEARCH anti-pattern: high cardinality);
+// only the low-cardinality `language` attribute is attached.
+func sandboxCreateDuration() metric.Float64Histogram {
+	h, _ := otel.Meter(instrumentationName).Float64Histogram(
+		"code_runner.sandbox.create.duration",
+		metric.WithUnit("s"),
+		metric.WithDescription("Wall time to create + start a sandbox container, in seconds."),
+	)
+	return h
+}
+
+func sandboxKillDuration() metric.Float64Histogram {
+	h, _ := otel.Meter(instrumentationName).Float64Histogram(
+		"code_runner.sandbox.kill.duration",
+		metric.WithUnit("s"),
+		metric.WithDescription("Wall time to kill + remove a sandbox container, in seconds."),
+	)
+	return h
+}
+
+// langAttr returns the low-cardinality language attribute set used on sandbox
+// latency histograms. language comes from the manifest (a bounded set), never
+// from user input — safe as a metric dimension.
+func langAttr(language string) metric.MeasurementOption {
+	return metric.WithAttributes(attribute.String("language", language))
+}
 
 // compileRunMarker is the file path that the compile step touches after a
 // successful compile to signal the compile-run bridge script that the artifact
@@ -148,6 +192,13 @@ func NewDockerSocketRunner(cfg config.Config, seccompProfilePath string) (*Docke
 // a dockerSandbox ready for pipe attachment. The container is created and
 // started; stdin/stdout/stderr are attached and demuxed via stdcopy.StdCopy.
 //
+// Tracing (08-02): the caller (worker.runJobFromSpec) starts a "sandbox.create"
+// span and passes its context here, so ContainerCreate/ContainerAttach/
+// ContainerStart all execute WITHIN that span — no span is started in this
+// function. (08-04 adds the create/kill latency histogram .Record calls inside
+// this same function; the two changes are disjoint — span context-threading
+// here, histogram there.)
+//
 // All hardening flags are set unconditionally in one place here (HARD-01..05):
 //   - NetworkMode="none"                           (HARD-01, T-02-09)
 //   - ReadonlyRootfs=true + tmpfs /tmp             (HARD-02)
@@ -156,6 +207,17 @@ func NewDockerSocketRunner(cfg config.Config, seccompProfilePath string) (*Docke
 //   - CapDrop=ALL, no-new-privileges, seccomp      (HARD-05, T-02-08)
 //   - non-root user, no docker socket in mounts    (T-02-12)
 func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (Sandbox, error) {
+	// ── Create-latency histogram (08-04) ──────────────────────────────────────
+	// Record the wall time of the whole create path (ContainerCreate → copy →
+	// attach → start) regardless of which return path is taken. This is a
+	// HISTOGRAM, disjoint from the 08-02 sandbox.create SPAN (whose ctx is
+	// threaded in above) — span context-threading there, latency record here.
+	createStart := time.Now()
+	defer func() {
+		sandboxCreateDuration().Record(ctx,
+			time.Since(createStart).Seconds(), langAttr(spec.Language))
+	}()
+
 	// ── Derive limits ────────────────────────────────────────────────────────
 	memBytes := int64(spec.Limits.MemoryMb) * 1024 * 1024
 	if memBytes <= 0 {
@@ -503,6 +565,15 @@ func (s *dockerSandbox) Wait(ctx context.Context) (Result, error) {
 // RemoveVolumes=true removes the anonymous /workspace volume so no host-disk
 // residue survives the job.
 func (s *dockerSandbox) Kill(ctx context.Context) error {
+	// ── Kill-latency histogram (08-04) ────────────────────────────────────────
+	// Record the wall time of the tree-kill (ContainerKill + ContainerRemove)
+	// regardless of error. Low-cardinality language attribute only; no job_id.
+	killStart := time.Now()
+	defer func() {
+		sandboxKillDuration().Record(ctx,
+			time.Since(killStart).Seconds(), langAttr(s.spec.Language))
+	}()
+
 	// ContainerKill sends SIGKILL; ignore not-found errors (already killed).
 	_ = s.cli.ContainerKill(ctx, s.containerID, "KILL")
 	return s.cli.ContainerRemove(ctx, s.containerID, container.RemoveOptions{

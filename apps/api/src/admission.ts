@@ -18,6 +18,7 @@
 import { keys } from "@teovilla/code-runner-contract";
 import { getRedis } from "./redis.ts";
 import { config } from "./config.ts";
+import { admissionRejections } from "./metrics.ts";
 
 /**
  * Returns true when the job queue has reached or exceeded the configured
@@ -42,6 +43,11 @@ export function admissionError(
   depth: number,
   cap: number,
 ): { error: string; retryAfterMs: number } {
+  // Emit the rejection metric here — this helper is invoked ONLY on the 429
+  // admission-rejection path, so the counter increments exactly once per
+  // rejected request without touching execute.ts (08-03's file). No attributes:
+  // admission rejection is a single dimension (no job_id — cardinality contract).
+  admissionRejections.add(1);
   return {
     error: `Executor at capacity (queue depth ${depth} ≥ ${cap}). Retry shortly.`,
     retryAfterMs: 1000,

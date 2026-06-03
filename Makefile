@@ -18,12 +18,12 @@ install: ## Install JS deps
 
 .PHONY: contract
 contract: ## Regenerate the wire contract (TS types + zod + Go structs)
-	pnpm --filter @code-runner/contract generate
+	pnpm --filter @teovilla/code-runner-contract generate
 	cd . && go mod tidy
 
 .PHONY: contract-check
 contract-check: ## Fail if generated contract artifacts drift from the schema
-	pnpm --filter @code-runner/contract generate
+	pnpm --filter @teovilla/code-runner-contract generate
 	git diff --exit-code -- packages/contract/gen || \
 		( echo ""; echo "✗ contract drift: run 'make contract' and commit the result"; exit 1 )
 

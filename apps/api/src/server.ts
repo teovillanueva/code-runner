@@ -5,11 +5,18 @@ import { serve } from "@hono/node-server";
 import { makeApp } from "./app.ts";
 import { config } from "./config.ts";
 import { getManifests } from "./manifests.ts";
+import { getLogger } from "./logger.ts";
+
+// NOTE: the OTel SDK is NOT imported here. It is `--import`ed ahead of this
+// file (see telemetry.ts + package.json/Dockerfile) so the ioredis ESM hook
+// registers before ioredis loads.
 
 async function main() {
+  const log = getLogger();
+
   // Fail fast if manifests cannot be loaded (misconfigured LANGUAGES_DIR)
   const manifests = await getManifests();
-  console.log(`[api] loaded ${manifests.length} language manifest(s)`);
+  log.info({ count: manifests.length }, "loaded language manifests");
 
   const app = makeApp();
 
@@ -19,12 +26,15 @@ async function main() {
       port: config.apiPort,
     },
     (info) => {
-      console.log(`[api] listening on http://localhost:${info.port}`);
+      log.info({ port: info.port }, "api listening");
     },
   );
 }
 
 main().catch((err) => {
-  console.error("[api] fatal startup error:", err);
+  getLogger().error(
+    { err: err instanceof Error ? err.message : String(err) },
+    "fatal startup error",
+  );
   process.exit(1);
 });

@@ -3,6 +3,7 @@
 
 import Redis from "ioredis";
 import { config } from "./config.ts";
+import { getLogger } from "./logger.ts";
 
 let _redis: Redis | null = null;
 
@@ -16,7 +17,8 @@ export function getRedis(): Redis {
 
     _redis.on("error", (err: Error) => {
       // Log but do not crash — ioredis will auto-reconnect.
-      console.error("[redis] connection error:", err.message);
+      // Log only err.message (no secrets/connection string) — T-08-12.
+      getLogger().error({ err: err.message }, "redis connection error");
     });
   }
   return _redis;

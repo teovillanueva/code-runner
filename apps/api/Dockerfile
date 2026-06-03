@@ -34,5 +34,7 @@ ENV NODE_ENV=production
 
 EXPOSE 8080
 
-# tsx handles .js -> .ts specifier remapping and runs src/server.ts directly.
-CMD ["node_modules/.bin/tsx", "src/server.ts"]
+# tsx handles .js -> .ts specifier remapping. telemetry.ts is loaded via
+# --import BEFORE src/server.ts so the OTel ioredis ESM hook registers before
+# ioredis is imported (RESEARCH Pitfall 1 — load-order fix).
+CMD ["node", "--import", "tsx", "--import", "./src/telemetry.ts", "src/server.ts"]

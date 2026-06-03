@@ -119,6 +119,17 @@ export class CodeRunnerClient {
       init.body = JSON.stringify(body);
     }
 
+    // Distributed tracing (OBS-02-ext): if the caller has an active OTel
+    // context, inject the W3C `traceparent`/`tracestate` headers so the
+    // execution shows up as one connected trace spanning caller → API → worker.
+    // Injected ONLY on /v1/execute — the single request that enqueues a job, and
+    // the one the API/worker extract from. `@opentelemetry/api` is an OPTIONAL
+    // peer: if it is not installed (or there is no active span) this is a silent
+    // no-op and the request is byte-for-byte unchanged.
+    if (path === "/v1/execute") {
+      await injectTraceparent(headers);
+    }
+
     const res = await this.fetchImpl(`${this.baseUrl}${path}`, init);
 
     if (!res.ok) {
@@ -175,5 +186,44 @@ export class CodeRunnerClient {
       default:
         throw new CodeRunnerError(errMessage, res.status, parsed);
     }
+  }
+}
+
+/**
+ * The slice of the `@opentelemetry/api` surface we use: inject the active trace
+ * context into a carrier as W3C `traceparent`/`tracestate` headers.
+ */
+interface OTelApi {
+  propagation: {
+    inject(context: unknown, carrier: Record<string, string>): void;
+  };
+  context: {
+    active(): unknown;
+  };
+}
+
+/**
+ * Optionally inject W3C trace-context headers from the caller's active OTel
+ * span into `headers`, in place.
+ *
+ * `@opentelemetry/api` is an OPTIONAL peer dependency: callers that do not use
+ * OpenTelemetry never install it, so the dynamic `import()` rejects and we
+ * silently no-op — the request is unchanged. When OTel IS present but no span
+ * is active, `propagation.inject` writes nothing meaningful and the request
+ * still succeeds. Either way this never throws (T-08-14: only the non-secret
+ * `traceparent`/`tracestate` headers are added, and only on /v1/execute).
+ *
+ * A `globalThis.__OTEL_API__` override is honored first as a test seam (and as
+ * an escape hatch for bundlers that cannot resolve the optional peer); it lets
+ * the suite assert injection without depending on module resolution.
+ */
+async function injectTraceparent(headers: Record<string, string>): Promise<void> {
+  try {
+    const override = (globalThis as { __OTEL_API__?: OTelApi }).__OTEL_API__;
+    const api: OTelApi = override ?? ((await import("@opentelemetry/api")) as unknown as OTelApi);
+    api.propagation.inject(api.context.active(), headers);
+  } catch {
+    // OTel absent (optional peer not installed) or no active span → unchanged
+    // behavior (OBS-02-ext). Never propagate a tracing error to the caller.
   }
 }

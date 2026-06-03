@@ -358,3 +358,101 @@ describe("GET /v1/languages", () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ── execute span + traceparent injection (OBS-04) ─────────────────────────────
+//
+// With an active TracerProvider, POST /v1/execute must start an `execute` span
+// and inject a W3C traceparent into the JobSpec written to Redis BEFORE the
+// LPUSH. The injected traceparent's trace_id must match the recorded span's
+// trace_id (the cross-language correlation seam 08-02 extracts).
+
+describe("POST /v1/execute — execute span + traceparent injection", () => {
+  let app: Hono;
+  let provider: import("@opentelemetry/sdk-node").tracing.BasicTracerProvider;
+  let exporter: import("@opentelemetry/sdk-node").tracing.InMemorySpanExporter;
+
+  beforeAll(async () => {
+    const { tracing, core } = await import("@opentelemetry/sdk-node");
+    const { trace, propagation, context } = await import("@opentelemetry/api");
+    const { AsyncLocalStorageContextManager } = await import(
+      "@opentelemetry/context-async-hooks"
+    );
+
+    // The real NodeSDK registers an AsyncLocalStorage context manager so the
+    // active span flows through async boundaries (Hono handler). Without it,
+    // context.active() returns ROOT inside startActiveSpan and inject() is a
+    // no-op. Mirror that here.
+    context.setGlobalContextManager(
+      new AsyncLocalStorageContextManager().enable(),
+    );
+
+    exporter = new tracing.InMemorySpanExporter();
+    provider = new tracing.BasicTracerProvider({
+      spanProcessors: [new tracing.SimpleSpanProcessor(exporter)],
+    });
+    trace.setGlobalTracerProvider(provider);
+    // The real NodeSDK registers the W3C propagator; mirror it so
+    // propagation.inject() writes a traceparent (cross-language seam).
+    propagation.setGlobalPropagator(new core.W3CTraceContextPropagator());
+
+    app = await getApp();
+    await flushRedis();
+  });
+
+  beforeEach(async () => {
+    exporter.reset();
+    await flushRedis();
+  });
+
+  afterAll(async () => {
+    await provider.shutdown();
+    const { trace, propagation, context } = await import("@opentelemetry/api");
+    trace.disable();
+    propagation.disable();
+    context.disable();
+    const { disconnectRedis } = await import("../src/redis.ts");
+    await disconnectRedis();
+    if (redisClient) {
+      await redisClient.quit();
+      redisClient = null;
+    }
+  });
+
+  it("records an `execute` span and injects a matching traceparent into the JobSpec", async () => {
+    let r: import("ioredis").default;
+    try {
+      r = await getTestRedis();
+    } catch {
+      return; // skip if Redis unavailable
+    }
+
+    const res = await postExecute(app, {
+      language: "python",
+      files: [{ name: "main.py", content: "print('trace')" }],
+    });
+    expect(res.status).toBe(202);
+    const { jobId } = (await res.json()) as { jobId: string };
+
+    // An `execute` span was recorded.
+    const spans = exporter.getFinishedSpans();
+    const executeSpan = spans.find((s) => s.name === "execute");
+    expect(executeSpan, "expected an `execute` span").toBeDefined();
+    const spanTraceId = executeSpan!.spanContext().traceId;
+
+    // The JobSpec written to Redis carries a W3C traceparent whose trace_id
+    // matches the recorded span (BEFORE the LPUSH — the spec was set in the
+    // same pipeline as the queue push).
+    const specJson = await r.get(`job:${jobId}:spec`);
+    expect(specJson).not.toBeNull();
+    const spec = JSON.parse(specJson!) as Record<string, unknown>;
+
+    const traceparent = spec["traceparent"];
+    expect(typeof traceparent).toBe("string");
+    // W3C format: 00-<32 hex trace_id>-<16 hex span_id>-<2 hex flags>
+    expect(traceparent as string).toMatch(
+      /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/,
+    );
+    const injectedTraceId = (traceparent as string).split("-")[1];
+    expect(injectedTraceId).toBe(spanTraceId);
+  });
+});

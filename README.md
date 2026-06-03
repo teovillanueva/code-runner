@@ -384,6 +384,14 @@ function signChannel(socketId: string, channelName: string): string {
 | `API_BASE_URL` | `http://api:8080` | Base URL of the API as seen from the stub (inside docker compose). |
 | `CHANNEL_AUTH_URL` | `http://api:8080/v1/channel-auth` | Channel-auth endpoint used by the stub. |
 | `ENABLE_CHANNEL_AUTH` | `true` | Register the optional `POST /v1/channel-auth` helper. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset = no-op)_ | OTLP collector endpoint. **Setting this is the telemetry ON switch.** Unset = no exporter, no connection, zero overhead. In compose: `http://otel-collector:4318`. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | OTLP transport. `http/protobuf` (:4318) or `grpc` (:4317). |
+| `OTEL_SERVICE_NAME_API` | `code-runner-api` | `service.name` for the API half of the trace (compose maps it to `OTEL_SERVICE_NAME`). |
+| `OTEL_SERVICE_NAME_WORKER` | `code-runner-worker` | `service.name` for the worker half of the trace. |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace=code-runner` | Resource attributes on every span/metric/log. |
+| `OTEL_TRACES_SAMPLER` | `parentbased_traceidratio` | Trace sampler. Honors the caller's decision when a parent context is present. |
+| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Sampling ratio (1.0 = keep every trace). **Lower in production** (e.g. `0.05`). |
+| `OTEL_SDK_DISABLED` | _(unset)_ | Set `true` to hard-disable the SDK regardless of the endpoint. |
 
 ## Deployment
 
@@ -441,6 +449,49 @@ See [docs/scaling.md](docs/scaling.md) for the full topology, fly-autoscaler LLE
 **Kubernetes with RuntimeClass=gvisor:** Deploy workers as a `Deployment` with `SANDBOX_RUNTIME=runsc` and a `RuntimeClass=gvisor` node selector. Use KEDA's Redis scaler or an HPA custom metric for autoscaling.
 
 **FlyMachinesRunner (v2, deferred):** A `Runner` backend that calls the Fly Machines REST API to create an ephemeral Firecracker microVM per execution. This gives per-execution isolation but costs seconds of create latency and has unproven interactive-stdin streaming semantics. It will be implemented as a parallel `Runner` backend once those trade-offs are resolved.
+
+## Observability (bring-your-own OpenTelemetry)
+
+code-runner is fully instrumented with OpenTelemetry, but ships **telemetry-off by default**. Both the API and the worker emit nothing — no exporter, no connection, zero overhead — until you set `OTEL_EXPORTER_OTLP_ENDPOINT`. When enabled, one execution produces **a single connected trace** spanning the API and the worker: the caller's [Node SDK](packages/code-runner-sdk-node) injects a W3C `traceparent` into `POST /v1/execute`, the API starts an `execute` span, and the worker extracts that context and links its phase spans (`claim`, `sandbox.create`, `handshake.wait`, `compile`, `run`, `publish.result`) into the same `trace_id`.
+
+### One-flag example stack (collector + Jaeger)
+
+An example backend ships **inert** under the `observability` compose profile — a plain `docker compose up` never starts it. Bring it up with the profile flag:
+
+```bash
+# 1. Enable the OTLP endpoint (the ON switch) in .env:
+#    OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+cp .env.example .env   # then uncomment the OTEL_* block
+
+# 2. Start the stack WITH the collector + Jaeger:
+docker compose --profile observability up --build
+
+# 3. Run one execution and open the trace in Jaeger:
+bash scripts/observability-e2e.sh
+#    → Jaeger UI: http://localhost:16686  (service: code-runner-api)
+```
+
+In the Jaeger UI, the latest `code-runner-api` trace contains both the API `execute` span and the worker phase spans under one `trace_id`. The example [`observability/otel-collector.yaml`](observability/otel-collector.yaml) forwards **traces → Jaeger** and prints **metrics + logs** (e.g. `code_runner.jobs.terminal`, `code_runner.queue.time`, trace-correlated log records) via the collector `debug` exporter.
+
+### Configuring telemetry
+
+| Knob | Default | Notes |
+|------|---------|-------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset → off)_ | The ON switch. Point at any OTLP/HTTP collector. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `grpc` (:4317) also supported. |
+| `OTEL_TRACES_SAMPLER` / `_ARG` | `parentbased_traceidratio` / `1.0` | The example keeps **every** trace. **Lower the ratio in production** (e.g. `OTEL_TRACES_SAMPLER_ARG=0.05` for 5%). For "sample low but always keep errors", enable collector-side tail sampling — see the commented `tail_sampling` block in `observability/otel-collector.yaml`. |
+| `OTEL_SDK_DISABLED` / `OTEL_TRACES_EXPORTER=none` | _(unset)_ | Hard kill-switches that override the endpoint. |
+
+Point the example collector (or your own) at a real backend — Prometheus/Grafana for metrics, Loki/Elastic for logs, Tempo/Jaeger for traces — by editing `observability/otel-collector.yaml`. Replace `jaegertracing/all-in-one` with your trace store; nothing in the app changes.
+
+### Redis & soketi self-instrumentation (operator-added, not shipped)
+
+code-runner instruments **its own** API and worker. It deliberately **does not ship exporters for the Redis or soketi infrastructure** — those are operator-owned components, and bundling their metrics would over-couple the service to a particular ops stack. To observe them, add the standard sidecar exporters to *your* deployment (they sit alongside the existing services on the `code-runner` network and scrape Redis / soketi directly):
+
+- **Redis:** run [`oliver006/redis_exporter`](https://github.com/oliver006/redis_exporter) pointed at `REDIS_URL`; scrape it with Prometheus (key signals: queue depth via `LLEN jobs:queue`, memory, connected clients). Note the worker already emits `code_runner.queue.time` and a queue-depth gauge from the application side.
+- **soketi:** soketi exposes its own Prometheus metrics endpoint (enable `METRICS_ENABLED=true` / `SOKETI_METRICS_SERVER_PORT`); scrape it for connection/channel/message counts.
+
+These are documentation pointers only — no Redis/soketi exporter is part of this repo or the compose stack.
 
 ## Adding a Language
 

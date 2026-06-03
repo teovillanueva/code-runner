@@ -22,13 +22,115 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/teovillanueva/code-runner/internal/jobstore"
+	"github.com/teovillanueva/code-runner/internal/logging"
 	"github.com/teovillanueva/code-runner/internal/publisher"
 	"github.com/teovillanueva/code-runner/internal/runner"
 	"github.com/teovillanueva/code-runner/internal/session"
 	"github.com/teovillanueva/code-runner/internal/stdintransport"
 	"github.com/teovillanueva/code-runner/packages/contract/gen/go/wire"
 )
+
+// instrumentationName is the tracer/meter scope name for worker telemetry.
+// The cross-language trace is keyed only by trace_id (shared via the linked
+// API span), not by scope; this name simply groups worker-emitted spans/metrics.
+const instrumentationName = "code-runner-worker"
+
+// tracer returns the worker tracer from the CURRENT global TracerProvider.
+// It is resolved per-job (not cached at package init) so that a TracerProvider
+// installed after init — e.g. otelinit.Init at boot, or a tracetest recorder in
+// tests — is honoured. When OTEL is unconfigured the global is the SDK no-op
+// (zero cost, no exporter).
+func tracer() trace.Tracer { return otel.Tracer(instrumentationName) }
+
+// terminalCounter / queueTime construct the worker instruments from the CURRENT
+// global MeterProvider on each call. Resolving lazily (rather than caching an
+// instrument bound to the no-op meter at package init) ensures a MeterProvider
+// installed after init routes the measurements correctly. Construction is cheap
+// and the no-op provider returns no-op instruments.
+//
+// terminalCounter (D-07): ONE counter for all terminal outcomes, distinguished
+// only by the low-cardinality terminal_state attribute. job_id is NEVER a metric
+// attribute (RESEARCH anti-pattern: high-cardinality; it belongs on spans/logs).
+//
+// queueTime (OBS-06): seconds a job waited in the queue before being claimed
+// (semconv unit "s") — recorded once per claim.
+func terminalCounter() metric.Int64Counter {
+	c, _ := otel.Meter(instrumentationName).Int64Counter(
+		"code_runner.jobs.terminal",
+		metric.WithUnit("{job}"),
+		metric.WithDescription("Count of jobs reaching a terminal state, by terminal_state."),
+	)
+	return c
+}
+
+func queueTimeHist() metric.Float64Histogram {
+	h, _ := otel.Meter(instrumentationName).Float64Histogram(
+		"code_runner.queue.time",
+		metric.WithUnit("s"),
+		metric.WithDescription("Time a job waited in the queue before being claimed, in seconds."),
+	)
+	return h
+}
+
+// Terminal-state attribute values (D-07 low-cardinality set). These are the
+// ONLY values ever placed on terminal_state — never raw error strings.
+const (
+	terminalDone         = "done"
+	terminalKilled       = "killed"
+	terminalIdleTimedOut = "idle_timed_out"
+	terminalTimedOut     = "timed_out"
+	terminalError        = "error"
+)
+
+// extractLinkedSpanContext derives the SpanContext to LINK the worker root span
+// to, from the (untrusted) traceparent/tracestate carried on the JobSpec across
+// the Redis seam. It fails closed: nil or malformed input yields an invalid
+// SpanContext (a fresh trace, no link) and never panics (threat T-08-03 /
+// RESEARCH Security V5). This is the production replacement for the 08-01
+// test-only extract helper.
+func extractLinkedSpanContext(spec wire.JobSpec) trace.SpanContext {
+	carrier := propagation.MapCarrier{}
+	if spec.Traceparent != nil {
+		carrier["traceparent"] = *spec.Traceparent
+	}
+	if spec.Tracestate != nil {
+		carrier["tracestate"] = *spec.Tracestate
+	}
+	parentCtx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+	return trace.SpanContextFromContext(parentCtx)
+}
+
+// recordTerminal increments the terminal-state counter with the low-cardinality
+// terminal_state attribute. The counter carries no job_id.
+func recordTerminal(ctx context.Context, state string) {
+	terminalCounter().Add(ctx, 1, metric.WithAttributes(attribute.String("terminal_state", state)))
+}
+
+// terminalStateFor maps a runner.Result + wire.JobState to the low-cardinality
+// terminal_state attribute value (D-07).
+func terminalStateFor(result runner.Result, state wire.JobState) string {
+	switch {
+	case result.IdleTimedOut:
+		return terminalIdleTimedOut
+	case result.TimedOut:
+		return terminalTimedOut
+	case state == wire.JobStateKilled:
+		return terminalKilled
+	case state == wire.JobStateError:
+		return terminalError
+	case state == wire.JobStateDone:
+		return terminalDone
+	default:
+		return terminalError
+	}
+}
 
 // DockerSandbox extends runner.Sandbox with the accessors that the
 // DockerSocketRunner provides but are not on the interface. The worker uses
@@ -154,6 +256,88 @@ func (w *Worker) WorkerIDForTest() string {
 	return w.workerID
 }
 
+// gaugeCallbackTimeout bounds the Redis LLEN issued from inside the queue-depth
+// observable-gauge callback. The callback runs on the metric export interval; it
+// must never block the export cycle on a slow/unreachable Redis (RESEARCH
+// Pitfall 5). On timeout/error the callback SKIPS the observation rather than
+// forcing a stale zero.
+const gaugeCallbackTimeout = 250 * time.Millisecond
+
+// RegisterMetrics registers the worker's OBSERVABLE GAUGES (OBS-06) against the
+// CURRENT global MeterProvider:
+//
+//   - code_runner.queue.depth (Int64ObservableGauge, unit "{job}") — observes
+//     LLEN jobs:queue via store.QueueDepth with a short-timeout ctx; on Redis
+//     error the observation is SKIPPED (no stale/forced zero — Pitfall 5).
+//   - code_runner.slots.used  (Int64ObservableGauge, unit "{slot}") — observes
+//     used capacity from the IN-MEMORY semaphore (MaxSandboxes − len(slots)); no
+//     Redis call, so it cannot be affected by a Redis outage.
+//   - code_runner.slots.max   (Int64ObservableGauge, unit "{slot}") — observes
+//     the configured capacity ceiling so dashboards can plot used/max.
+//
+// Both gauges carry NO attributes (low-cardinality by construction; no job_id).
+//
+// It returns a deregister func (the MeterProvider Registration's Unregister) so
+// callers/tests can detach the callback; a nil store yields a queue-depth gauge
+// that always skips (used/max still report). It returns an error only if the
+// instruments cannot be constructed.
+func (w *Worker) RegisterMetrics() (func() error, error) {
+	meter := otel.Meter(instrumentationName)
+
+	queueDepth, err := meter.Int64ObservableGauge(
+		"code_runner.queue.depth",
+		metric.WithUnit("{job}"),
+		metric.WithDescription("Current depth of the job queue (LLEN jobs:queue)."),
+	)
+	if err != nil {
+		return nil, err
+	}
+	slotsUsed, err := meter.Int64ObservableGauge(
+		"code_runner.slots.used",
+		metric.WithUnit("{slot}"),
+		metric.WithDescription("Sandbox slots currently in use (in-memory semaphore)."),
+	)
+	if err != nil {
+		return nil, err
+	}
+	slotsMax, err := meter.Int64ObservableGauge(
+		"code_runner.slots.max",
+		metric.WithUnit("{slot}"),
+		metric.WithDescription("Configured maximum concurrent sandbox slots."),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	reg, err := meter.RegisterCallback(
+		func(ctx context.Context, o metric.Observer) error {
+			// Slots come from the in-memory semaphore — no Redis, never skipped.
+			used := int64(w.cfg.MaxSandboxes - len(w.slots))
+			if used < 0 {
+				used = 0
+			}
+			o.ObserveInt64(slotsUsed, used)
+			o.ObserveInt64(slotsMax, int64(w.cfg.MaxSandboxes))
+
+			// Queue depth reads Redis under a short-timeout ctx; SKIP on error
+			// (no stale/forced-zero observation — Pitfall 5).
+			if w.store != nil {
+				cctx, cancel := context.WithTimeout(ctx, gaugeCallbackTimeout)
+				defer cancel()
+				if depth, qErr := w.store.QueueDepth(cctx); qErr == nil {
+					o.ObserveInt64(queueDepth, depth)
+				}
+			}
+			return nil
+		},
+		queueDepth, slotsUsed, slotsMax,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return reg.Unregister, nil
+}
+
 // Run is the main event loop. It blocks until ctx is cancelled. On each
 // iteration it acquires a slot, claims a job from the queue (BRPOP), and
 // handles the job in a goroutine. The slot is released inside the single
@@ -230,6 +414,26 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	jobID := spec.JobId
 	log := slog.With("jobID", jobID)
 
+	// ── Trace: extract the API-injected traceparent and start the root span. ──
+	// The worker LINKS (not parents) the API's execute span because /v1/execute
+	// returns 202 before the run starts (D-13). The link shares the API trace_id;
+	// nil/malformed traceparent fails closed to a fresh trace (threat T-08-03).
+	linkedSC := extractLinkedSpanContext(spec)
+	ctx = logging.WithJobID(ctx, jobID) // job_id rides on logs/spans (never metrics)
+	ctx, root := tracer().Start(ctx, "claim",
+		trace.WithLinks(trace.Link{SpanContext: linkedSC}))
+	defer root.End()
+
+	// Time-in-queue (OBS-06): how long the job waited before this claim, in
+	// seconds. enqueuedAtMs is set by the API at enqueue time.
+	if spec.EnqueuedAtMs > 0 {
+		waitedMs := time.Now().UnixMilli() - int64(spec.EnqueuedAtMs)
+		if waitedMs < 0 {
+			waitedMs = 0
+		}
+		queueTimeHist().Record(ctx, float64(waitedMs)/1000.0)
+	}
+
 	// 1. Subscribe stdin:<id> and ctrl:<id> FIRST, before publishing "queued".
 	//    This guarantees that the subscriptions are active before any external
 	//    client can see the "queued" event and immediately send "start". If we
@@ -292,12 +496,20 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	//    ContainerStart inside Create) but the process reads from stdin so it will
 	//    block waiting for input. The start-handshake below gates when we begin
 	//    the session clocks.
-	sb, err := w.runner.Create(ctx, spec)
+	//
+	//    sandbox.create is a REAL child span: we start it here and pass its ctx
+	//    into Create, so docker.go's ContainerCreate/ContainerStart execute WITHIN
+	//    this span. (The create-latency histogram is wired separately in 08-04
+	//    inside the same Create function — span here, histogram there, no overlap.)
+	createCtx, createSpan := tracer().Start(ctx, "sandbox.create")
+	sb, err := w.runner.Create(createCtx, spec)
+	createSpan.End()
 	if err != nil {
 		log.Error("worker: Create sandbox failed", "err", err)
 		stdinSub.Close() //nolint:errcheck
 		ctrlSub.Close()  //nolint:errcheck
 		w.publishError(ctx, jobID, spec)
+		recordTerminal(ctx, terminalError)
 		releaseSlot() // early return — sandbox never occupied a slot
 		return
 	}
@@ -315,6 +527,10 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	var teardownOnce sync.Once
 	teardown := func(result runner.Result, state wire.JobState) {
 		teardownOnce.Do(func() {
+			// Terminal-state counter (D-07): exactly once per job, on every
+			// terminal path after Create. Low-cardinality terminal_state attr only.
+			recordTerminal(ctx, terminalStateFor(result, state))
+
 			// Close subscriptions first to stop delivery goroutines.
 			stdinSub.Close() //nolint:errcheck
 			ctrlSub.Close()  //nolint:errcheck
@@ -329,11 +545,13 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 			// Release the capacity slot — exactly once on every terminal path.
 			releaseSlot()
 
-			// Publish result event.
+			// Publish result event (publish.result phase span).
+			_, pubSpan := tracer().Start(ctx, "publish.result")
 			ev := toResultEvent(result)
 			if pubErr := w.pub.Result(jobID, ev); pubErr != nil {
 				log.Warn("worker: publish Result failed", "err", pubErr)
 			}
+			pubSpan.End()
 
 			// Write terminal status.
 			if w.store != nil {
@@ -357,6 +575,8 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 
 	// 4. PARK at the start-handshake gate: wait for "start" or fail fast on
 	//    "kill" or warm-up timeout (SESS-01, SESS-03).
+	//    handshake.wait span covers the time parked at the gate.
+	_, handshakeSpan := tracer().Start(ctx, "handshake.wait")
 	warmupTimer := time.NewTimer(time.Duration(w.cfg.WarmupMs) * time.Millisecond)
 	defer warmupTimer.Stop()
 
@@ -364,12 +584,14 @@ parkLoop:
 	for {
 		select {
 		case <-ctx.Done():
+			handshakeSpan.End()
 			teardown(runner.Result{}, wire.JobStateError)
 			return
 
 		case <-warmupTimer.C:
 			// Warm-up expired — reclaim slot, tear down (SESS-03).
 			log.Info("worker: warmup timeout — no start received, tearing down")
+			handshakeSpan.End()
 			teardown(runner.Result{}, wire.JobStateError)
 			return
 
@@ -378,6 +600,7 @@ parkLoop:
 			case wire.ControlTypeStart:
 				break parkLoop
 			case wire.ControlTypeKill:
+				handshakeSpan.End()
 				teardown(runner.Result{}, wire.JobStateKilled)
 				return
 			default:
@@ -386,6 +609,7 @@ parkLoop:
 			}
 		}
 	}
+	handshakeSpan.End()
 
 	// 5a. Generic compile pre-step (manifest-argv-driven, no language branching).
 	//     Runs only when spec.Compile is non-nil. Must execute BEFORE the
@@ -395,11 +619,12 @@ parkLoop:
 	//     which is cancelled by Kill/Cleanup on clock expiry — a compile-bomb is
 	//     tree-killed exactly like a run-bomb.
 	if spec.Compile != nil {
+		compileCtx, compileSpan := tracer().Start(ctx, "compile")
 		if err := w.pub.Stage(jobID, wire.StagePhaseCompiling); err != nil {
 			log.Warn("worker: publish compiling stage failed", "err", err)
 		}
 
-		compileResult, compileErr := sb.Compile(ctx, []string(*spec.Compile), func(b []byte) {
+		compileResult, compileErr := sb.Compile(compileCtx, []string(*spec.Compile), func(b []byte) {
 			if pubErr := w.pub.Stderr(jobID, string(b)); pubErr != nil {
 				log.Warn("worker: publish compile stderr failed", "err", pubErr)
 			}
@@ -420,10 +645,12 @@ parkLoop:
 			// Build a Result with the compile exit code so the client receives
 			// the correct non-zero exit in the terminal event.
 			failResult := runner.Result{ExitCode: &compileExitCode, DurationMs: compileResult.DurationMs}
+			compileSpan.End()
 			teardown(failResult, wire.JobStateError)
 			return
 		}
 		// Compile succeeded (exit 0) — fall through to StagePhaseRunning.
+		compileSpan.End()
 	}
 
 	// 5b. On start (or after successful compile): publish "running" stage + write running status.
@@ -514,7 +741,9 @@ parkLoop:
 		},
 	}
 
-	result, _ := session.RunInteractive(ctx, sb, spec.Limits, cpuFn, sinks)
+	runCtx, runSpan := tracer().Start(ctx, "run")
+	result, _ := session.RunInteractive(runCtx, sb, spec.Limits, cpuFn, sinks)
+	runSpan.End()
 
 	// Signal the stdin goroutine to stop.
 	close(sessionDone)

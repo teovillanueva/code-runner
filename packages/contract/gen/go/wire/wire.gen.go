@@ -92,6 +92,12 @@ type JobSpec struct {
 	// Run corresponds to the JSON schema field "run".
 	Run []string `json:"run"`
 
+	// W3C trace-context header for cross-seam trace correlation (optional).
+	Traceparent *string `json:"traceparent,omitempty,omitzero"`
+
+	// W3C tracestate header (optional).
+	Tracestate *string `json:"tracestate,omitempty,omitzero"`
+
 	// Version corresponds to the JSON schema field "version".
 	Version string `json:"version"`
 }

@@ -154,6 +154,14 @@ export interface JobSpec {
    * Unix epoch ms when the API enqueued the job.
    */
   enqueuedAtMs: number;
+  /**
+   * W3C trace-context header for cross-seam trace correlation (optional).
+   */
+  traceparent?: string;
+  /**
+   * W3C tracestate header (optional).
+   */
+  tracestate?: string;
 }
 /**
  * Response of GET /v1/jobs/:id.
