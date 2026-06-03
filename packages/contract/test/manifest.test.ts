@@ -1,5 +1,5 @@
 // Tests for the shared manifest loader (packages/contract/src/manifest.ts).
-// Run via: pnpm --filter @code-runner/contract test
+// Run via: pnpm --filter @teovilla/code-runner-contract test
 // Uses Node.js built-in test runner (node:test) — no external test framework.
 
 import { describe, it } from "node:test";

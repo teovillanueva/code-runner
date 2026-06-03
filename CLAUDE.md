@@ -201,8 +201,9 @@ This is a **polyglot monorepo**: `apps/api` (Hono/TS), `apps/worker` (Go), `pack
 **Contract is the fragile seam — never hand-edit `packages/contract/gen/**`.**
 - Regenerate: `pnpm contract` (TS types, zod validators, Go structs). Drift gate: `make contract-check` (regenerates + `git diff --exit-code`).
 - The single source of truth is `packages/contract/schema/wire.schema.json`. To change the wire format, edit the schema and regenerate.
-- TS consumers import from `@code-runner/contract`; the Go worker imports `github.com/teovillanueva/code-runner/packages/contract/gen/go/wire`.
-- Shared Redis keys / channels / soketi event names are exported from `@code-runner/contract` (`keys`, `channelForJob`, `stdinChannel`, `controlChannel`, `events`) — the Go worker must mirror these in `internal/keys`.
+- TS consumers import from `@teovilla/code-runner-contract` (published to npm; package dir `packages/contract`); the Go worker imports `github.com/teovillanueva/code-runner/packages/contract/gen/go/wire`. In-repo it's consumed as raw TS via `main: ./src/index.ts`; `publishConfig` overrides `main`/`types`/`exports` to `dist/` only on publish (built by `tsup`), so dev stays zero-build.
+- Shared Redis keys / channels / soketi event names are exported from `@teovilla/code-runner-contract` (`keys`, `channelForJob`, `stdinChannel`, `controlChannel`, `events`) — the Go worker must mirror these in `internal/keys`.
+- The published client SDKs `@teovilla/code-runner-sdk-node` (gateway client + soketi channel-auth signing) and `@teovilla/code-runner-react` (pusher-js real-time wrapper) depend on the contract. Releases are driven by Changesets (`pnpm changeset`); see `RELEASING.md`.
 
 **Phase 1 foundation is already committed** (scaffold + contract codegen + Makefile + LICENSE + .env.example). Remaining Phase 1 work: manifest loader (Go + TS, reads `languages/*/manifest.json` at boot), `Runner`/`Sandbox` + `StdinTransport` interface skeletons, manifest validation, unit tests. Build on the existing files; do not recreate them.
 

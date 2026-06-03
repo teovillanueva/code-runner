@@ -1,6 +1,6 @@
 // Control endpoints: /start, /stdin, /stdin/close, /kill
 //
-// Each endpoint PUBLISHes to the correct Redis channel from @code-runner/contract.
+// Each endpoint PUBLISHes to the correct Redis channel from @teovilla/code-runner-contract.
 // The API NEVER calls the worker directly (API-11) — only PUBLISH/LPUSH/SET/GET.
 //
 // /start  → PUBLISH controlChannel(id) {type:"start"}   (API-02)
@@ -10,7 +10,7 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { controlChannel, stdinChannel, StdinMessageSchema } from "@code-runner/contract";
+import { controlChannel, stdinChannel, StdinMessageSchema } from "@teovilla/code-runner-contract";
 import { getRedis } from "../redis.ts";
 import { stdinRateLimit, stdinByteCapCheck } from "../ratelimit.ts";
 

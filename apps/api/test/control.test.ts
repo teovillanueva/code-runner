@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { Hono } from "hono";
-import { controlChannel, stdinChannel } from "@code-runner/contract";
+import { controlChannel, stdinChannel } from "@teovilla/code-runner-contract";
 
 // env is pre-configured by vitest.config.ts
 

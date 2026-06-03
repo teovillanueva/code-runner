@@ -15,7 +15,7 @@
 //   If a capacityFree counter (e.g. from 05-01) is present in Redis, it MAY
 //   supplement this check, but queue depth is the authoritative MVP gate here.
 
-import { keys } from "@code-runner/contract";
+import { keys } from "@teovilla/code-runner-contract";
 import { getRedis } from "./redis.ts";
 import { config } from "./config.ts";
 

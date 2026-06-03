@@ -2,7 +2,7 @@
 // Zero hardcoded language identifiers (API-07).
 
 import { Hono } from "hono";
-import { toLanguageInfo } from "@code-runner/contract";
+import { toLanguageInfo } from "@teovilla/code-runner-contract";
 import { getManifests } from "../manifests.ts";
 
 export function registerLanguagesRoutes(app: Hono): void {

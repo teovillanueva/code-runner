@@ -17,12 +17,12 @@ import {
   keys,
   type JobSpec,
   type JobStatus,
-} from "@code-runner/contract";
+} from "@teovilla/code-runner-contract";
 import { getRedis } from "../redis.ts";
 import { getManifests, resolveManifest } from "../manifests.ts";
 import { atCapacity, admissionError } from "../admission.ts";
 import { config } from "../config.ts";
-import type { LimitsOverride, Limits } from "@code-runner/contract";
+import type { LimitsOverride, Limits } from "@teovilla/code-runner-contract";
 
 /**
  * Merge manifest defaultLimits with optional per-request overrides (LANG-04).

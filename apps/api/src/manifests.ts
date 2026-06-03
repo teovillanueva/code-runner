@@ -1,7 +1,7 @@
 // Manifest singleton — loaded once at startup from LANGUAGES_DIR.
 //
 // Uses the shared loadManifests / resolveManifest / toLanguageInfo helpers
-// from @code-runner/contract. Zero language names are hardcoded here (API-07).
+// from @teovilla/code-runner-contract. Zero language names are hardcoded here (API-07).
 
 import {
   type Manifest,
@@ -9,7 +9,7 @@ import {
   resolveManifest,
   toLanguageInfo,
   type LanguageInfo,
-} from "@code-runner/contract";
+} from "@teovilla/code-runner-contract";
 import { config } from "./config.ts";
 
 let _manifests: Manifest[] | null = null;

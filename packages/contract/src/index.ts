@@ -1,6 +1,6 @@
 // Public entrypoint for the shared wire contract.
 // Re-exports the generated TS types and zod validators so consumers import from
-// a single stable path: `@code-runner/contract`.
+// a single stable path: `@teovilla/code-runner-contract`.
 export * from "../gen/ts/types.js";
 export * from "../gen/ts/schemas.js";
 

@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@code-runner/contract": "workspace:*",
+    "@teovilla/code-runner-contract": "workspace:*",
     "pusher-js": "8.4.0"
   },
   "devDependencies": {
