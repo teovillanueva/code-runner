@@ -440,7 +440,7 @@ See [docs/scaling.md](docs/scaling.md) for the full topology, fly-autoscaler LLE
 
 **Kubernetes with RuntimeClass=gvisor:** Deploy workers as a `Deployment` with `SANDBOX_RUNTIME=runsc` and a `RuntimeClass=gvisor` node selector. Use KEDA's Redis scaler or an HPA custom metric for autoscaling.
 
-**FlyMachinesRunner (v2, deferred):** A `Runner` backend that calls the Fly Machines REST API to create an ephemeral Firecracker microVM per execution. This gives per-execution isolation but costs seconds of create latency and has unproven interactive-stdin streaming semantics. It will be implemented as a parallel `Runner` backend once those trade-offs are resolved. See [PROJECT.md Key Decisions](.planning/PROJECT.md).
+**FlyMachinesRunner (v2, deferred):** A `Runner` backend that calls the Fly Machines REST API to create an ephemeral Firecracker microVM per execution. This gives per-execution isolation but costs seconds of create latency and has unproven interactive-stdin streaming semantics. It will be implemented as a parallel `Runner` backend once those trade-offs are resolved.
 
 ## Adding a Language
 
