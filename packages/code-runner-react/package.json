@@ -1,6 +1,6 @@
 {
   "name": "@teovilla/code-runner-react",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Browser real-time SDK for the code-runner service: a CodeRunnerProvider + useCodeRunnerJob hook that subscribes to private-run-<jobId> over soketi (pusher-js) and reassembles ordered stdout/stderr.",
   "license": "MIT",
   "homepage": "https://github.com/teovillanueva/code-runner/tree/main/packages/code-runner-react",
