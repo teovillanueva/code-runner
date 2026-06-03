@@ -19,7 +19,7 @@
 // All parameters come from env vars so docker compose and scripts can drive it.
 
 import Pusher from "pusher-js";
-import { channelForJob, events } from "@code-runner/contract";
+import { channelForJob, events } from "@teovilla/code-runner-contract";
 
 // ── Config from env ──────────────────────────────────────────────────────────
 

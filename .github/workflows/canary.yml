@@ -1,0 +1,56 @@
+# canary.yml — publish a snapshot/canary release of the public @teovilla/* packages.
+#
+# Canary releases are throwaway pre-releases published under the `canary` dist-tag
+# (e.g. 0.1.0-canary-20260603120000) so people can test bleeding-edge changes
+# without touching the stable `latest` tag:
+#
+#     npm i @teovilla/code-runner-sdk-node@canary
+#
+# This is manual (workflow_dispatch). It requires at least one pending changeset
+# in .changeset/ — that's what `changeset version --snapshot` reads to compute
+# the snapshot bumps. Same npm OIDC auth as release.yml.
+
+name: canary
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    name: canary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm OIDC trusted publishing + provenance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack (pnpm)
+        run: corepack enable
+
+      - name: Update npm (OIDC trusted publishing)
+        run: npm install -g npm@latest
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Version as canary snapshot
+        run: pnpm changeset version --snapshot canary
+
+      - name: Build packages
+        run: pnpm --filter "@teovilla/*" build
+
+      - name: Publish canary to npm
+        run: pnpm changeset publish --tag canary --no-git-tag
+        env:
+          NPM_CONFIG_PROVENANCE: "true"

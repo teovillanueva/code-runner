@@ -9,11 +9,17 @@
     "node": ">=22"
   },
   "scripts": {
-    "contract": "pnpm --filter @code-runner/contract generate",
-    "contract:check": "pnpm --filter @code-runner/contract check",
+    "contract": "pnpm --filter @teovilla/code-runner-contract generate",
+    "contract:check": "pnpm --filter @teovilla/code-runner-contract check",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "dev:api": "pnpm --filter @code-runner/api dev"
+    "dev:api": "pnpm --filter @code-runner/api dev",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "changeset:release": "pnpm --filter \"@teovilla/*\" build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.10"
   }
 }

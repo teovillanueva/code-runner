@@ -12,7 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@code-runner/contract": "workspace:*",
+    "@teovilla/code-runner-contract": "workspace:*",
     "@hono/node-server": "2.0.4",
     "@hono/zod-validator": "0.8.0",
     "hono": "4.12.23",

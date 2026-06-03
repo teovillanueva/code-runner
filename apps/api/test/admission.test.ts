@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { Hono } from "hono";
-import { keys } from "@code-runner/contract";
+import { keys } from "@teovilla/code-runner-contract";
 
 const VALID_TOKEN = process.env["EXECUTOR_API_TOKEN"]!;
 const REDIS_URL = process.env["REDIS_URL"]!;

@@ -1,0 +1,60 @@
+# release.yml — Changesets-driven npm release for the public @teovilla/* packages.
+#
+# Flow:
+#   - On push to main, changesets/action either:
+#       (a) opens/updates a "Version Packages" PR (when changesets are pending), or
+#       (b) publishes the bumped packages to npm (after that PR is merged).
+#
+# Auth: npm OIDC Trusted Publishing — no NPM_TOKEN secret. Each package must have
+# a trusted publisher configured on npmjs.com pointing at this repo + this
+# workflow file (.github/workflows/release.yml). See RELEASING.md for setup and
+# the one-time bootstrap (the very first publish of a brand-new package name).
+
+name: release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the version commit / git tags
+      pull-requests: write # open and update the Version Packages PR
+      id-token: write # npm OIDC trusted publishing + provenance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack (pnpm)
+        run: corepack enable
+
+      # OIDC Trusted Publishing requires a recent npm CLI (>= 11.5.1).
+      - name: Update npm (OIDC trusted publishing)
+        run: npm install -g npm@latest
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create Release PR or publish to npm
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset:version
+          publish: pnpm changeset:release
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Attach npm provenance (uses the id-token above).
+          NPM_CONFIG_PROVENANCE: "true"
