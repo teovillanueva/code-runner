@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 Phase: 9 of 9 (Artifacts & Pullable Run Output) — COMPLETE
 Plan: 7 of 7 — COMPLETE
 Status: Milestone v1.0 complete — all 9 phases shipped, tested, and released (npm packages + GHCR images)
-Last activity: 2026-06-03 -- Milestone v1.0 complete; Phase 8 & 9 planning recovered from orphaned git history
+Last activity: 2026-06-03 -- Completed quick task 260603-u2w: scientific stack + plot auto-capture for python-3.12 & r-4.4 images
 
 Progress: [██████████] 100% (9/9 phases)
 
@@ -108,6 +108,12 @@ None yet.
 
 - FlyMachinesRunner interactive-streaming fit + per-execution latency/cost is unvalidated (v2; benchmark before relying on it).
 - Phase 9 `09-HUMAN-UAT.md` was left `partial` (4 live-stack manual checks marked `pending`) when the planning was committed. The feature nonetheless shipped and is covered by committed automated tests (`internal/worker/worker_artifacts_test.go`, `internal/artifactstore/s3_test.go`, `packages/contract/test/artifact.test.ts`, `packages/code-runner-sdk-node/test/get-output.test.ts`, `apps/api/test/execute-collect-output.test.ts`, `apps/api/test/output-route.test.ts`) plus the S3 round-trip proven live during execution. Re-run the 4 manual UAT checks against a full compose stack if you want the formal sign-off.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260603-u2w | Scientific stack (scipy/statsmodels/sklearn/seaborn/cvxopt/picos/swiglpk + lpSolve/ggplot2) + plot auto-capture to /workspace for python-3.12 & r-4.4 images | 2026-06-03 | 4c9e472 | [260603-u2w-customizar-imagenes-python-3-12-y-r-4-4-](./quick/260603-u2w-customizar-imagenes-python-3-12-y-r-4-4-/) |
 
 ## Deferred Items
 
