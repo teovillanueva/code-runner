@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Interactive Python End-to-End** - Hono API (all `/v1/*`), Redis queue + stdin/control routing, worker session, soketi publisher, Python package, docker compose dev stack — full interactive demo works (completed 2026-06-02)
 - [x] **Phase 4: Abuse Suite & Safety Validation** - Fork bomb, OOM, infinite loop, idle, EOF, giant output on Linux CI — gates the language fan-out (completed 2026-06-02)
 - [x] **Phase 5: Statelessness & Scale** - Slot capacity, backpressure 429, reliable claim, dead-worker reaper, N replicas, autoscaling-by-queue-depth + scale-to-zero design, native-Redis worker constraint (completed 2026-06-02)
-- [ ] **Phase 6: Language Fan-out** - Rust (compile stage), R 4.4, SQLite 3 (interactive SQL shell) added as manifest + Dockerfile, zero core changes
+- [x] **Phase 6: Language Fan-out** - Rust (compile stage), R 4.4, SQLite 3 (interactive SQL shell) added as manifest + Dockerfile, zero core changes (completed 2026-06-03)
 - [ ] **Phase 7: OSS Release & Deployment** - README quickstart, API contract, add-a-language guide, deployment-per-target, channel-auth documentation
 
 ## Phase Details
@@ -126,8 +126,8 @@ Plans:
 **Plans**: 4 plans
 Plans:
 - [x] 06-01-PLAN.md — Task 0: generic manifest-driven compile stage (extend Sandbox seam + worker run path + stub + generic gate test + Wave-2 Makefile targets) — the ONLY core change
-- [ ] 06-02-PLAN.md — Rust 1.83 package (rustc -O compile + produced-binary run) + e2e compile/run + compile-error test
-- [ ] 06-03-PLAN.md — R 4.4 package (Rscript main.R, common libs, unbuffered streaming, null compile) + e2e Rscript + interactive stdin test
+- [x] 06-02-PLAN.md — Rust 1.83 package (rustc -O compile + produced-binary run) + e2e compile/run + compile-error test
+- [x] 06-03-PLAN.md — R 4.4 package (Rscript main.R, common libs, unbuffered streaming, null compile) + e2e Rscript + interactive stdin test
 - [x] 06-04-PLAN.md — SQLite 3 package (alpine+sqlite, :memory: SQL, .sql file + interactive shell, clean EOF) + e2e file + interactive SELECT test
 
 ### Phase 7: OSS Release & Deployment
@@ -155,5 +155,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
 | 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
 | 5. Statelessness & Scale | 3/3 | Complete   | 2026-06-02 |
-| 6. Language Fan-out | 2/4 | In Progress|  |
+| 6. Language Fan-out | 4/4 | Complete   | 2026-06-03 |
 | 7. OSS Release & Deployment | 0/TBD | Not started | - |
