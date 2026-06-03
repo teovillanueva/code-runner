@@ -1,23 +1,25 @@
+# release-images.yml — build & publish the code-runner container images to GHCR.
+#
+# Two artifacts, two cadences:
+#
+#   service images (code-runner-api, code-runner-worker)
+#     - every push to main  → :latest + :sha-<short>   (continuous, immutable sha)
+#     - on a vX.Y.Z git tag → :1, :1.2, :1.2.3          (stable, pinnable releases)
+#
+#   language sandbox images (executor-python, -rust, -r, -sqlite)
+#     - only when languages/** changes (or on a tag / manual run)
+#     - tagged by language version + an immutable <version>-<sha>
+#
+# Cut a stable release with:  git tag v1.2.3 && git push origin v1.2.3
+# (independent from the npm SDK versions, which are driven by Changesets.)
+
 name: release-images
 
-# Builds and publishes the sandbox language images (and the api/worker images)
-# to the GitHub Container Registry (ghcr.io/teovillanueva/...).
-#
-# The language images are built for linux/amd64 — that is the Fly.io / production
-# target. Local development builds them natively via `make build-images`.
-#
-# Trigger manually (`gh workflow run release-images.yml`) or by pushing a `v*` tag.
-
 on:
-  workflow_dispatch:
-    inputs:
-      tag_suffix:
-        description: "Extra tag to also push (e.g. a release version). Optional."
-        required: false
-        default: ""
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,37 +31,34 @@ env:
   PLATFORMS: linux/amd64
 
 jobs:
-  build:
+  # Detect whether any language image needs rebuilding (path-gated on main).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      languages: ${{ steps.filter.outputs.languages }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            languages:
+              - 'languages/**'
+
+  # Service images — built on every main push (latest + sha) and on v* tags (semver).
+  service:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: executor-python
-            tag: "3.12"
-            context: languages/python-3.12
-            dockerfile: languages/python-3.12/Dockerfile
-          - name: executor-rust
-            tag: "1.83"
-            context: languages/rust-1.83
-            dockerfile: languages/rust-1.83/Dockerfile
-          - name: executor-r
-            tag: "4.4"
-            context: languages/r-4.4
-            dockerfile: languages/r-4.4/Dockerfile
-          - name: executor-sqlite
-            tag: "3"
-            context: languages/sqlite-3
-            dockerfile: languages/sqlite-3/Dockerfile
           - name: code-runner-api
-            tag: latest
-            context: .
             dockerfile: apps/api/Dockerfile
           - name: code-runner-worker
-            tag: latest
-            context: .
             dockerfile: apps/worker/Dockerfile
-    name: ${{ matrix.name }}:${{ matrix.tag }}
+    name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -73,29 +72,92 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compute tags
-        id: tags
-        run: |
-          base="${REGISTRY}/${OWNER}/${{ matrix.name }}"
-          tags="${base}:${{ matrix.tag }}"
-          if [ -n "${{ github.event.inputs.tag_suffix }}" ]; then
-            tags="${tags},${base}:${{ github.event.inputs.tag_suffix }}"
-          fi
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            tags="${tags},${base}:${GITHUB_REF_NAME}"
-          fi
-          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.name }}
+          # `latest` tracks main HEAD (continuous); releases get semver tags.
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ env.OWNER }}/code-runner
+            org.opencontainers.image.description=code-runner ${{ matrix.name }}
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # Language images — only when languages/** changed, or on a tag / manual run.
+  languages:
+    needs: changes
+    if: ${{ github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || needs.changes.outputs.languages == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: executor-python
+            version: "3.12"
+            context: languages/python-3.12
+          - name: executor-rust
+            version: "1.83"
+            context: languages/rust-1.83
+          - name: executor-r
+            version: "4.4"
+            context: languages/r-4.4
+          - name: executor-sqlite
+            version: "3"
+            context: languages/sqlite-3
+    name: ${{ matrix.name }}:${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.name }}
+          flavor: latest=false
+          # Stable language-version tag + an immutable <version>-<sha> for pinning.
+          tags: |
+            type=raw,value=${{ matrix.version }}
+            type=sha,prefix=${{ matrix.version }}-,format=short
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ env.OWNER }}/code-runner
+            org.opencontainers.image.description=code-runner ${{ matrix.name }}
+            org.opencontainers.image.licenses=MIT
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
+          file: ${{ matrix.context }}/Dockerfile
           platforms: ${{ env.PLATFORMS }}
           push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ env.OWNER }}/code-runner
-            org.opencontainers.image.description=code-runner ${{ matrix.name }}
-            org.opencontainers.image.licenses=MIT
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
