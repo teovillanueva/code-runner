@@ -1,4 +1,5 @@
-# Keep the build context minimal — only Dockerfile and this file are needed.
+# Keep the build context minimal — only the Dockerfile and the files it COPYs.
 # Exclude everything that is not part of the image definition.
 *
 !Dockerfile
+!sitecustomize.py
