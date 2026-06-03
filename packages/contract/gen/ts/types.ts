@@ -35,6 +35,14 @@ export interface Limits {
    * Max combined stdout+stderr in KiB before truncation.
    */
   outputKb: number;
+  /**
+   * Max number of captured artifact files before excess is dropped (artifactsTruncated=true).
+   */
+  maxArtifacts: number;
+  /**
+   * Max total bytes across all captured artifacts before excess is dropped (artifactsTruncated=true).
+   */
+  maxArtifactBytes: number;
 }
 /**
  * Optional per-request override of a subset of Limits.
@@ -46,6 +54,8 @@ export interface LimitsOverride {
   memoryMb?: number;
   pids?: number;
   outputKb?: number;
+  maxArtifacts?: number;
+  maxArtifactBytes?: number;
 }
 /**
  * A single source file submitted by the caller.
@@ -117,6 +127,10 @@ export interface ExecuteRequest {
    */
   files: [FileInput, ...FileInput[]];
   limits?: LimitsOverride;
+  /**
+   * Opt-in: when true, the worker accumulates stdout/stderr and captures workspace artifacts into a pullable RunResult (GET /v1/jobs/:id/output). Defaults to false.
+   */
+  collectOutput?: boolean;
 }
 /**
  * 202 response of POST /v1/execute.
@@ -154,6 +168,10 @@ export interface JobSpec {
    * Unix epoch ms when the API enqueued the job.
    */
   enqueuedAtMs: number;
+  /**
+   * Resolved opt-in flag from ExecuteRequest; when true the worker persists a RunResult and captures artifacts. The API always writes an explicit boolean (default false).
+   */
+  collectOutput?: boolean;
   /**
    * W3C trace-context header for cross-seam trace correlation (optional).
    */
@@ -224,4 +242,61 @@ export interface ResultEvent {
    */
   truncated: boolean;
   durationMs: number;
+}
+/**
+ * A single file captured from the sandbox working directory, referenced by an object-storage presigned URL. URL-only (no inline bytes): object storage is the single backend.
+ */
+export interface Artifact {
+  /**
+   * Relative file name as written by the program into its working directory (e.g. plot.png).
+   */
+  name: string;
+  /**
+   * Best-effort detected MIME type of the captured file.
+   */
+  mimeType: string;
+  /**
+   * Size of the captured file in bytes.
+   */
+  bytes: number;
+  /**
+   * Presigned GET URL the consumer/browser fetches directly (no bearer).
+   */
+  url: string;
+}
+/**
+ * The persisted, pullable result of a collected run (GET /v1/jobs/:id/output). ResultEvent's terminal fields plus accumulated stdout/stderr and captured artifacts.
+ */
+export interface RunResult {
+  exitCode: number | null;
+  signal: string | null;
+  /**
+   * Killed by the wall-clock or cpu clock.
+   */
+  timedOut: boolean;
+  /**
+   * Killed by the idle clock.
+   */
+  idleTimedOut: boolean;
+  /**
+   * Output exceeded outputKb and was truncated.
+   */
+  truncated: boolean;
+  durationMs: number;
+  /**
+   * Accumulated stdout (within the outputKb budget; same bytes streamed to soketi).
+   */
+  stdout: string;
+  /**
+   * Accumulated stderr (within the outputKb budget; same bytes streamed to soketi).
+   */
+  stderr: string;
+  /**
+   * Captured workspace artifacts, each referenced by presigned URL.
+   */
+  artifacts: Artifact[];
+  /**
+   * True when captured files exceeded maxArtifacts/maxArtifactBytes and excess was dropped.
+   */
+  artifactsTruncated: boolean;
 }

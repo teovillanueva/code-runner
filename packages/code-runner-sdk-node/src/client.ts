@@ -9,6 +9,7 @@ import type {
   ExecuteResponse,
   JobStatus,
   LanguageInfo,
+  RunResult,
 } from "@teovilla/code-runner-contract";
 import {
   CapacityError,
@@ -69,6 +70,14 @@ export class CodeRunnerClient {
   /** GET /v1/jobs/:id — fetch job status. 404 -> NotFoundError. */
   getJob(id: string): Promise<JobStatus> {
     return this.request<JobStatus>("GET", `/v1/jobs/${encodeURIComponent(id)}`);
+  }
+
+  /** GET /v1/jobs/:id/output — fetch the persisted run output. 404 -> NotFoundError. */
+  getOutput(id: string): Promise<RunResult> {
+    return this.request<RunResult>(
+      "GET",
+      `/v1/jobs/${encodeURIComponent(id)}/output`,
+    );
   }
 
   /** POST /v1/jobs/:id/start — start a queued job. */

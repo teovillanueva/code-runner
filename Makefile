@@ -96,3 +96,7 @@ langfanout: ## Run language fan-out integration tests (requires Docker + all lan
 .PHONY: e2e
 e2e: ## Run the end-to-end interactive demo against the local stack
 	./scripts/e2e.sh
+
+.PHONY: artifacts-e2e
+artifacts-e2e: ## Run the Phase-9 artifacts pull-loop E2E (savefig → capture → S3 → pull) against the local stack + MinIO
+	./scripts/artifacts-e2e.sh

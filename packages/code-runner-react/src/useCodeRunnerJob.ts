@@ -6,6 +6,7 @@
 // (which uses sdk-node).
 
 import type {
+  Artifact,
   OutputChunkEvent,
   ResultEvent,
   StageEvent,
@@ -21,6 +22,7 @@ const EVENTS = {
   stdout: "stdout",
   stderr: "stderr",
   result: "result",
+  artifact: "artifact",
 } as const;
 
 export type JobStatusState = "idle" | "running" | "done";
@@ -40,6 +42,12 @@ export interface UseCodeRunnerJobResult {
   stdout: string;
   stderr: string;
   result: ResultEvent | null;
+  /**
+   * Captured workspace artifacts, accumulated from soketi `artifact` events.
+   * Each carries name/mimeType/bytes plus a presigned `url` the browser fetches
+   * directly — NO bearer token (R13 trust boundary). Populated by job end.
+   */
+  artifacts: Artifact[];
   status: JobStatusState;
   sendStdin: (chunk: string) => void | Promise<void>;
   kill: () => void | Promise<void>;
@@ -65,6 +73,7 @@ export function useCodeRunnerJob(
   const [stdout, setStdout] = useState("");
   const [stderr, setStderr] = useState("");
   const [result, setResult] = useState<ResultEvent | null>(null);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [status, setStatus] = useState<JobStatusState>("idle");
 
   // Per-stream seq->chunk buffers for ordered reassembly (worker emits monotonic
@@ -80,6 +89,7 @@ export function useCodeRunnerJob(
     setStdout("");
     setStderr("");
     setResult(null);
+    setArtifacts([]);
     setStatus("idle");
 
     const ch = pusher.subscribe(channelName);
@@ -102,17 +112,24 @@ export function useCodeRunnerJob(
       setResult(data);
       setStatus("done");
     };
+    // Best-effort convenience stream (the authoritative source is the pulled
+    // RunResult). Each Artifact carries a presigned `url` the browser fetches
+    // directly — no bearer token.
+    const onArtifact = (data: Artifact) =>
+      setArtifacts((prev) => [...prev, data]);
 
     ch.bind(EVENTS.stage, onStage);
     ch.bind(EVENTS.stdout, onStdout);
     ch.bind(EVENTS.stderr, onStderr);
     ch.bind(EVENTS.result, onResult);
+    ch.bind(EVENTS.artifact, onArtifact);
 
     return () => {
       ch.unbind(EVENTS.stage, onStage);
       ch.unbind(EVENTS.stdout, onStdout);
       ch.unbind(EVENTS.stderr, onStderr);
       ch.unbind(EVENTS.result, onResult);
+      ch.unbind(EVENTS.artifact, onArtifact);
       pusher.unsubscribe(channelName);
     };
   }, [pusher, channelName]);
@@ -123,5 +140,5 @@ export function useCodeRunnerJob(
   );
   const kill = useMemo(() => () => onKill?.(), [onKill]);
 
-  return { stage, stdout, stderr, result, status, sendStdin, kill };
+  return { stage, stdout, stderr, result, artifacts, status, sendStdin, kill };
 }

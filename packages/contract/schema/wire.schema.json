@@ -16,9 +16,11 @@
         "cpuMs": { "type": "integer", "minimum": 1, "description": "Max accumulated CPU time in ms (cgroup), independent of wall-clock." },
         "memoryMb": { "type": "integer", "minimum": 1, "description": "Memory cap in MiB. memory == memory-swap (no swap)." },
         "pids": { "type": "integer", "minimum": 1, "description": "Max number of processes/threads (pids-limit)." },
-        "outputKb": { "type": "integer", "minimum": 1, "description": "Max combined stdout+stderr in KiB before truncation." }
+        "outputKb": { "type": "integer", "minimum": 1, "description": "Max combined stdout+stderr in KiB before truncation." },
+        "maxArtifacts": { "type": "integer", "minimum": 1, "default": 20, "description": "Max number of captured artifact files before excess is dropped (artifactsTruncated=true)." },
+        "maxArtifactBytes": { "type": "integer", "minimum": 1, "default": 4194304, "description": "Max total bytes across all captured artifacts before excess is dropped (artifactsTruncated=true)." }
       },
-      "required": ["wallTimeMs", "idleMs", "cpuMs", "memoryMb", "pids", "outputKb"]
+      "required": ["wallTimeMs", "idleMs", "cpuMs", "memoryMb", "pids", "outputKb", "maxArtifacts", "maxArtifactBytes"]
     },
     "LimitsOverride": {
       "title": "LimitsOverride",
@@ -31,7 +33,9 @@
         "cpuMs": { "type": "integer", "minimum": 1 },
         "memoryMb": { "type": "integer", "minimum": 1 },
         "pids": { "type": "integer", "minimum": 1 },
-        "outputKb": { "type": "integer", "minimum": 1 }
+        "outputKb": { "type": "integer", "minimum": 1 },
+        "maxArtifacts": { "type": "integer", "minimum": 1 },
+        "maxArtifactBytes": { "type": "integer", "minimum": 1 }
       }
     },
     "FileInput": {
@@ -89,7 +93,8 @@
         "language": { "type": "string", "minLength": 1, "description": "Language name or alias." },
         "version": { "type": "string", "description": "Optional explicit version; if omitted the only/most-recent match is used." },
         "files": { "type": "array", "items": { "$ref": "#/$defs/FileInput" }, "minItems": 1 },
-        "limits": { "$ref": "#/$defs/LimitsOverride" }
+        "limits": { "$ref": "#/$defs/LimitsOverride" },
+        "collectOutput": { "type": "boolean", "description": "Opt-in: when true, the worker accumulates stdout/stderr and captures workspace artifacts into a pullable RunResult (GET /v1/jobs/:id/output). Defaults to false." }
       },
       "required": ["language", "files"]
     },
@@ -123,6 +128,7 @@
         "files": { "type": "array", "items": { "$ref": "#/$defs/FileInput" }, "minItems": 1 },
         "limits": { "$ref": "#/$defs/Limits" },
         "enqueuedAtMs": { "type": "integer", "description": "Unix epoch ms when the API enqueued the job." },
+        "collectOutput": { "type": "boolean", "description": "Resolved opt-in flag from ExecuteRequest; when true the worker persists a RunResult and captures artifacts. The API always writes an explicit boolean (default false)." },
         "traceparent": { "type": "string", "description": "W3C trace-context header for cross-seam trace correlation (optional)." },
         "tracestate": { "type": "string", "description": "W3C tracestate header (optional)." }
       },
@@ -214,6 +220,38 @@
         "durationMs": { "type": "integer" }
       },
       "required": ["exitCode", "signal", "timedOut", "idleTimedOut", "truncated", "durationMs"]
+    },
+    "Artifact": {
+      "title": "Artifact",
+      "description": "A single file captured from the sandbox working directory, referenced by an object-storage presigned URL. URL-only (no inline bytes): object storage is the single backend.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "Relative file name as written by the program into its working directory (e.g. plot.png)." },
+        "mimeType": { "type": "string", "description": "Best-effort detected MIME type of the captured file." },
+        "bytes": { "type": "integer", "minimum": 0, "description": "Size of the captured file in bytes." },
+        "url": { "type": "string", "description": "Presigned GET URL the consumer/browser fetches directly (no bearer)." }
+      },
+      "required": ["name", "mimeType", "bytes", "url"]
+    },
+    "RunResult": {
+      "title": "RunResult",
+      "description": "The persisted, pullable result of a collected run (GET /v1/jobs/:id/output). ResultEvent's terminal fields plus accumulated stdout/stderr and captured artifacts.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exitCode": { "type": ["integer", "null"] },
+        "signal": { "type": ["string", "null"] },
+        "timedOut": { "type": "boolean", "description": "Killed by the wall-clock or cpu clock." },
+        "idleTimedOut": { "type": "boolean", "description": "Killed by the idle clock." },
+        "truncated": { "type": "boolean", "description": "Output exceeded outputKb and was truncated." },
+        "durationMs": { "type": "integer" },
+        "stdout": { "type": "string", "description": "Accumulated stdout (within the outputKb budget; same bytes streamed to soketi)." },
+        "stderr": { "type": "string", "description": "Accumulated stderr (within the outputKb budget; same bytes streamed to soketi)." },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/Artifact" }, "description": "Captured workspace artifacts, each referenced by presigned URL." },
+        "artifactsTruncated": { "type": "boolean", "description": "True when captured files exceeded maxArtifacts/maxArtifactBytes and excess was dropped." }
+      },
+      "required": ["exitCode", "signal", "timedOut", "idleTimedOut", "truncated", "durationMs", "stdout", "stderr", "artifacts", "artifactsTruncated"]
     }
   }
 }

@@ -48,6 +48,8 @@ function mergeLimits(
     memoryMb: overrides.memoryMb ?? defaults.memoryMb,
     pids: overrides.pids ?? defaults.pids,
     outputKb: overrides.outputKb ?? defaults.outputKb,
+    maxArtifacts: overrides.maxArtifacts ?? defaults.maxArtifacts,
+    maxArtifactBytes: overrides.maxArtifactBytes ?? defaults.maxArtifactBytes,
   };
 }
 
@@ -131,6 +133,10 @@ export function registerExecuteRoutes(app: Hono): void {
               files: req.files as JobSpec["files"],
               limits: mergeLimits(manifest.defaultLimits, req.limits),
               enqueuedAtMs,
+              // Opt-in output/artifact collection. Always persist an explicit
+              // boolean so the Go worker's spec.CollectOutput read is unambiguous
+              // across the JSON seam (an absent field would be ambiguous).
+              collectOutput: req.collectOutput ?? false,
             };
 
             // Inject the W3C traceparent into the JobSpec BEFORE the LPUSH so

@@ -15,10 +15,12 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/teovillanueva/code-runner/internal/artifactstore"
 	"github.com/teovillanueva/code-runner/internal/jobstore"
 	"github.com/teovillanueva/code-runner/internal/logging"
 	"github.com/teovillanueva/code-runner/internal/publisher"
@@ -145,6 +148,10 @@ type DockerSandbox interface {
 	runner.Sandbox
 	CPUReader() runner.CPUUsageFunc
 	Limits() wire.Limits
+	// ReadArtifacts reads new regular files from the sandbox /workspace before
+	// Cleanup() destroys the volume (D-06/D-07). exclude keys are basenames not
+	// to return (input files + ".compile_ready" + the compile-output binary).
+	ReadArtifacts(ctx context.Context, exclude map[string]bool) ([]runner.CapturedArtifact, error)
 }
 
 // Transport is the interface the worker requires for stdin/ctrl pub-sub.
@@ -174,6 +181,17 @@ type Config struct {
 	// HeartbeatTTLMs is the TTL (in milliseconds) applied to the heartbeat key
 	// each time it is written.  Defaults to 20000 if zero.
 	HeartbeatTTLMs int
+
+	// Artifacts is the (possibly nil) artifact store. A nil value means artifact
+	// capture is DISABLED (D-04): output pull still works, collected jobs just
+	// return zero artifacts. The teardown path in plan 09-04 reads this via
+	// w.cfg.Artifacts. It rides on Config (NOT a New/NewWithTransport param) so
+	// the constructor signatures stay byte-stable.
+	Artifacts artifactstore.ArtifactStore
+
+	// RunResultTTL is the Redis TTL applied to the persisted RunResult key.
+	// Defaults to 600s if zero. Plan 09-04 reads w.cfg.RunResultTTL in teardown.
+	RunResultTTL time.Duration
 }
 
 // Worker is the job execution run loop. It claims jobs from the jobstore, runs
@@ -232,6 +250,9 @@ func NewWithTransport(
 	}
 	if cfg.HeartbeatTTLMs <= 0 {
 		cfg.HeartbeatTTLMs = 20000
+	}
+	if cfg.RunResultTTL <= 0 {
+		cfg.RunResultTTL = 600 * time.Second
 	}
 	slots := make(chan struct{}, cfg.MaxSandboxes)
 	for i := 0; i < cfg.MaxSandboxes; i++ {
@@ -414,6 +435,36 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	jobID := spec.JobId
 	log := slog.With("jobID", jobID)
 
+	// collectOutput gates ALL output-accumulation + artifact-capture work (D-08):
+	// the Sinks closures append output, and teardown reads/uploads artifacts and
+	// persists the RunResult only when this is true. spec.CollectOutput is a
+	// nil-tolerant *bool (the API always writes an explicit boolean, but the
+	// worker must not panic on a nil from an older enqueue).
+	collectOutput := spec.CollectOutput != nil && *spec.CollectOutput
+
+	// Output accumulation buffers (D-08): when collectOutput is set, the Sinks
+	// closures append the same within-budget bytes that are streamed to soketi —
+	// the session pump only forwards bytes inside the outputKb budget, so this
+	// reuses ONE truncation semantics (no second cap). The persisted RunResult's
+	// stdout/stderr therefore equal the soketi stream. A mutex guards concurrent
+	// appends from the stdout + stderr pump goroutines.
+	var (
+		outputMu  sync.Mutex
+		stdoutBuf bytes.Buffer
+		stderrBuf bytes.Buffer
+	)
+
+	// Artifact capture stash (R4/R5/D-07): the session supervisor's terminate()
+	// removes the container (Kill+Cleanup) on EVERY terminal path, so the read
+	// MUST happen inside the session's BeforeCleanup hook — while the container
+	// still exists — NOT in the worker teardown below (which runs after
+	// RunInteractive returns, when the container is already gone). The hook
+	// stashes the captured files here; the teardown block uploads + persists them.
+	var (
+		capturedMu        sync.Mutex
+		capturedArtifacts []runner.CapturedArtifact
+	)
+
 	// ── Trace: extract the API-injected traceparent and start the root span. ──
 	// The worker LINKS (not parents) the API's execute span because /v1/execute
 	// returns 202 before the run starts (D-13). The link shares the API trace_id;
@@ -563,6 +614,69 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 					State:    state,
 				}); stErr != nil {
 					log.Warn("worker: WriteStatus terminal failed", "err", stErr)
+				}
+			}
+
+			// ── Artifact capture + RunResult persist (R4/R5/R6/R8) ────────────
+			// MUST run BEFORE sb.Cleanup() (D-07): Cleanup force-removes the
+			// /workspace anonymous volume (RemoveVolumes=true), so reading after
+			// would race a gone volume. All sub-steps are best-effort — a nil
+			// store, a capture failure, or an upload error never fails the job
+			// (the job keeps its real exitCode). Gated entirely by collectOutput.
+			if collectOutput {
+				outputMu.Lock()
+				runResult := assembleRunResult(result, stdoutBuf.String(), stderrBuf.String())
+				outputMu.Unlock()
+
+				if _, ok := sb.(DockerSandbox); ok && w.cfg.Artifacts != nil {
+					// Artifacts were read in the session BeforeCleanup hook above —
+					// the container is already gone by now (terminate() killed it),
+					// so we must NOT call ReadArtifacts here. Consume the stash.
+					capturedMu.Lock()
+					captured := capturedArtifacts
+					capturedMu.Unlock()
+
+					maxArtifacts := spec.Limits.MaxArtifacts
+					maxArtifactBytes := spec.Limits.MaxArtifactBytes
+					byteBudget := 0
+					for _, a := range captured {
+						// Caps (R5): keep the first N within both the file-count and
+						// total-byte budgets; drop the rest and mark truncated.
+						if maxArtifacts > 0 && len(runResult.Artifacts) >= maxArtifacts {
+							runResult.ArtifactsTruncated = true
+							break
+						}
+						if maxArtifactBytes > 0 && byteBudget+len(a.Data) > maxArtifactBytes {
+							runResult.ArtifactsTruncated = true
+							continue
+						}
+
+						url, putErr := w.cfg.Artifacts.Put(ctx, jobID, a.Name, a.MimeType, a.Data)
+						if putErr != nil {
+							log.Warn("worker: artifact upload failed", "name", a.Name, "err", putErr)
+							continue
+						}
+						byteBudget += len(a.Data)
+						art := wire.Artifact{
+							Name:     a.Name,
+							MimeType: a.MimeType,
+							Bytes:    len(a.Data),
+							Url:      url,
+						}
+						runResult.Artifacts = append(runResult.Artifacts, art)
+						if pubErr := w.pub.Artifact(jobID, art); pubErr != nil {
+							log.Warn("worker: publish Artifact failed", "name", a.Name, "err", pubErr)
+						}
+					}
+				}
+
+				// Persist the RunResult with the env-configured TTL (R6/D-09).
+				// A nil store or nil Artifacts still persists stdout/stderr +
+				// zero artifacts (D-04).
+				if w.store != nil {
+					if wrErr := w.store.WriteRunResult(ctx, jobID, runResult, w.cfg.RunResultTTL); wrErr != nil {
+						log.Warn("worker: WriteRunResult failed", "err", wrErr)
+					}
 				}
 			}
 
@@ -730,14 +844,49 @@ parkLoop:
 	//     The session owns the output pipes; the worker NEVER reads Stdout()/Stderr().
 	sinks := session.Sinks{
 		Stdout: func(b []byte) {
+			if collectOutput {
+				outputMu.Lock()
+				stdoutBuf.Write(b)
+				outputMu.Unlock()
+			}
 			if pubErr := w.pub.Stdout(jobID, string(b)); pubErr != nil {
 				log.Warn("worker: publish Stdout failed", "err", pubErr)
 			}
 		},
 		Stderr: func(b []byte) {
+			if collectOutput {
+				outputMu.Lock()
+				stderrBuf.Write(b)
+				outputMu.Unlock()
+			}
 			if pubErr := w.pub.Stderr(jobID, string(b)); pubErr != nil {
 				log.Warn("worker: publish Stderr failed", "err", pubErr)
 			}
+		},
+		// BeforeCleanup runs inside the session's terminate() AFTER the process
+		// terminates but BEFORE the container is killed/removed — the only window
+		// in which CopyFromContainer can read /workspace (D-07). Read here, upload
+		// + persist in the worker teardown below. Best-effort: a read failure is
+		// logged and yields zero artifacts; it never fails the job.
+		BeforeCleanup: func(hookCtx context.Context) {
+			if !collectOutput {
+				return
+			}
+			ds, ok := sb.(DockerSandbox)
+			if !ok || w.cfg.Artifacts == nil {
+				return
+			}
+			// Exclude set (D-05/R4): input file basenames + ".compile_ready" + the
+			// compile-output binary basename, so a compiled-language job never
+			// returns its binary as an artifact.
+			captured, rdErr := ds.ReadArtifacts(hookCtx, buildArtifactExcludeSet(spec))
+			if rdErr != nil {
+				log.Warn("worker: ReadArtifacts failed", "err", rdErr)
+				return
+			}
+			capturedMu.Lock()
+			capturedArtifacts = captured
+			capturedMu.Unlock()
 		},
 	}
 
@@ -775,6 +924,71 @@ func (w *Worker) publishError(ctx context.Context, jobID string, spec wire.JobSp
 			State:    wire.JobStateError,
 		})
 	}
+}
+
+// assembleRunResult builds the pullable RunResult from the terminal runner.Result
+// plus the accumulated stdout/stderr (D-08: same within-budget bytes streamed to
+// soketi, so runResult.Truncated mirrors the soketi stream's truncation). The
+// Artifacts slice is initialised non-nil so the persisted JSON serialises an
+// empty array (not null) when zero artifacts are captured (R4/D-04).
+func assembleRunResult(r runner.Result, stdout, stderr string) wire.RunResult {
+	return wire.RunResult{
+		ExitCode:           wire.RunResultExitCode(r.ExitCode),
+		Signal:             wire.RunResultSignal(r.Signal),
+		TimedOut:           r.TimedOut,
+		IdleTimedOut:       r.IdleTimedOut,
+		Truncated:          r.Truncated,
+		DurationMs:         r.DurationMs,
+		Stdout:             stdout,
+		Stderr:             stderr,
+		Artifacts:          []wire.Artifact{},
+		ArtifactsTruncated: false,
+	}
+}
+
+// buildArtifactExcludeSet computes the set of basenames that workspace-diff
+// capture must NOT return as artifacts (D-05/R4): the input file names, the
+// ".compile_ready" bridge marker, and (for a compiled language) the
+// compile-output binary basename. ReadArtifacts also defensively excludes the
+// marker, but we include it here so the contract is explicit.
+func buildArtifactExcludeSet(spec wire.JobSpec) map[string]bool {
+	exclude := make(map[string]bool, len(spec.Files)+2)
+	for _, f := range spec.Files {
+		exclude[filepath.Base(f.Name)] = true
+	}
+	exclude[".compile_ready"] = true
+	if out := compileOutputBasename(spec); out != "" {
+		exclude[out] = true
+	}
+	return exclude
+}
+
+// compileOutputBasename derives the basename of the binary produced by a
+// compiled-language compile step, so it is never returned as an artifact (R4).
+// It returns "" for interpreted languages (no compile step).
+//
+// Two derivation sources, in order:
+//  1. The "-o <target>" token in the compile argv (the conventional output flag
+//     for gcc/clang/rustc/go build/etc.). The basename of <target> is the binary.
+//  2. The first token of the run argv when no "-o" is present — for languages
+//     whose run argv directly invokes the produced executable (e.g.
+//     ["/workspace/prog"] or ["./app"]). A token that looks like an interpreter
+//     path is not special-cased here because a non-nil spec.Compile already
+//     signals a compiled language; the run target IS the binary.
+func compileOutputBasename(spec wire.JobSpec) string {
+	if spec.Compile == nil {
+		return ""
+	}
+	compileArgv := []string(*spec.Compile)
+	for i := 0; i < len(compileArgv)-1; i++ {
+		if compileArgv[i] == "-o" {
+			return filepath.Base(compileArgv[i+1])
+		}
+	}
+	if len(spec.Run) > 0 {
+		return filepath.Base(spec.Run[0])
+	}
+	return ""
 }
 
 // toResultEvent maps a runner.Result to the wire.ResultEvent published to

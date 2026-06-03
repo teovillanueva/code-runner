@@ -25,14 +25,31 @@ ENV PYTHONUNBUFFERED=1
 # at runtime (--read-only), so writing bytecache would fail; skip it.
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# ── Bake in data-science / HTTP libraries at build time ───────────────────────
+# ── Headless matplotlib backend (plot FILES, no display, no shim) ─────────────
+# MPLBACKEND=Agg selects the non-interactive Anti-Grain Geometry raster backend
+# at import time, so matplotlib never tries to open a GUI/display inside the
+# sandbox (there is none — --network=none, no X server, read-only rootfs).
+# With Agg, savefig('plot.png') renders straight to a file; the interactive
+# display call is intentionally a NO-OP (the figure never leaves Python memory,
+# so there is no syscall to hook). Per D-10 we deliberately ship NO
+# display-interception shim (no auto-import startup hook, no module:// capture
+# backend) — the convention is: save plots EXPLICITLY with a RELATIVE name into
+# the cwd (/workspace), e.g. savefig('plot.png'). The worker's workspace-diff
+# capture (Phase-9 plan 04) then picks the new file up as an artifact. No
+# --network needed.
+ENV MPLBACKEND=Agg
+
+# ── Bake in data-science / HTTP / plotting libraries at build time ────────────
 # Versions pinned to known-good releases.  These are top-tier PyPI packages
 # (T-03-SC); --no-cache-dir keeps the layer lean.
 # Runtime containers are --network=none, so all deps MUST be here (T-03-04).
+# matplotlib 3.10.3 ships manylinux wheels and is compatible with numpy 2.2.6;
+# under MPLBACKEND=Agg (above) it renders plot files headlessly with no GUI deps.
 RUN pip install --no-cache-dir \
     numpy==2.2.6 \
     pandas==2.2.3 \
-    requests==2.32.3
+    requests==2.32.3 \
+    matplotlib==3.10.3
 
 # ── Workspace directory ────────────────────────────────────────────────────────
 # The runner (internal/runner/docker.go) sets WorkingDir=/workspace and

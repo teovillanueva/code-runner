@@ -26,6 +26,7 @@ import (
 
 	"github.com/docker/docker/client"
 
+	"github.com/teovillanueva/code-runner/internal/artifactstore"
 	"github.com/teovillanueva/code-runner/internal/config"
 	"github.com/teovillanueva/code-runner/internal/jobstore"
 	"github.com/teovillanueva/code-runner/internal/logging"
@@ -83,6 +84,14 @@ func run(ctx context.Context) error {
 	slog.SetDefault(slog.New(logging.NewFanout(stdoutHandler, otelinit.OTLPLogHandler())))
 
 	cfg := configFromEnv()
+
+	// ── Config fail-fast (R15 ordering invariant, threat T-09-07) ──────────────
+	// Validate cross-field invariants BEFORE constructing the runner/worker so a
+	// broken TTL ordering (a presigned URL that would outlive its object) stops
+	// the boot rather than producing silently-dangling URLs at runtime.
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
 
 	// ── Load language manifests ──────────────────────────────────────────────
 	langDir := os.Getenv("LANGUAGES_DIR")
@@ -155,6 +164,39 @@ func run(ctx context.Context) error {
 		"soketi_use_tls", cfg.SoketiUseTLS,
 	)
 
+	// ── Artifact store (Phase 9, D-04) ─────────────────────────────────────────
+	// When S3 is configured (bucket + endpoint present) construct the S3Store and
+	// ensure its bucket + lifecycle rule exist. A construction error is a BOOT
+	// error (a present-but-misconfigured S3 must fail fast). EnsureLifecycle is
+	// best-effort: a failure is logged (slog.Warn) but does NOT block boot — it
+	// is a cleanup optimization, not an upload prerequisite. When S3 is NOT
+	// configured the store stays a nil artifactstore.ArtifactStore: capture is
+	// disabled but output pull (stdout/stderr from Redis) stays active (D-04).
+	// Credentials are never logged (threat T-09-05).
+	var artifactStore artifactstore.ArtifactStore
+	if cfg.S3Bucket != "" && cfg.S3Endpoint != "" {
+		s3Store, s3Err := artifactstore.NewS3Store(cfg)
+		if s3Err != nil {
+			return fmt.Errorf("artifactstore: create S3 store: %w", s3Err)
+		}
+		if lcErr := s3Store.EnsureLifecycle(ctx); lcErr != nil {
+			slog.Warn("artifactstore: EnsureLifecycle failed; capture continues, lifecycle/bucket may be incomplete",
+				"err", lcErr,
+				"bucket", cfg.S3Bucket,
+				"endpoint", cfg.S3Endpoint,
+			)
+		}
+		artifactStore = s3Store
+		slog.Info("artifact capture enabled",
+			"bucket", cfg.S3Bucket,
+			"endpoint", cfg.S3Endpoint,
+			"presigned_url_ttl", cfg.PresignedURLTTL,
+			"object_ttl", cfg.S3ObjectTTL,
+		)
+	} else {
+		slog.Info("artifact capture disabled (S3 unconfigured); output pull active (D-04)")
+	}
+
 	// ── Worker ────────────────────────────────────────────────────────────────
 	workerCfg := worker.Config{
 		MaxSandboxes:        cfg.MaxSandboxes,
@@ -162,6 +204,8 @@ func run(ctx context.Context) error {
 		ClaimTimeout:        5 * time.Second,
 		HeartbeatIntervalMs: cfg.HeartbeatIntervalMs,
 		HeartbeatTTLMs:      cfg.HeartbeatTTLMs,
+		Artifacts:           artifactStore,
+		RunResultTTL:        cfg.RunResultTTL,
 	}
 
 	w := worker.New(store, transport, dockerRunner, pub, workerCfg)
@@ -259,6 +303,65 @@ func configFromEnv() config.Config {
 	if v := os.Getenv("WORKER_HEARTBEAT_TTL_MS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.HeartbeatTTLMs = n
+		}
+	}
+
+	// ── Artifacts / object storage (Phase 9, D-03) ───────────────────────────
+	// Standard AWS_* env first, each then overridable by ARTIFACT_S3_* (override
+	// applies only when non-empty). Credentials are NEVER logged (threat T-09-05).
+	if v := os.Getenv("AWS_ENDPOINT_URL_S3"); v != "" {
+		cfg.S3Endpoint = v
+	}
+	if v := os.Getenv("ARTIFACT_S3_ENDPOINT"); v != "" {
+		cfg.S3Endpoint = v
+	}
+	if v := os.Getenv("BUCKET_NAME"); v != "" {
+		cfg.S3Bucket = v
+	}
+	if v := os.Getenv("ARTIFACT_S3_BUCKET"); v != "" {
+		cfg.S3Bucket = v
+	}
+	if v := os.Getenv("AWS_ACCESS_KEY_ID"); v != "" {
+		cfg.S3AccessKeyID = v
+	}
+	if v := os.Getenv("ARTIFACT_S3_ACCESS_KEY_ID"); v != "" {
+		cfg.S3AccessKeyID = v
+	}
+	if v := os.Getenv("AWS_SECRET_ACCESS_KEY"); v != "" {
+		cfg.S3SecretAccessKey = v
+	}
+	if v := os.Getenv("ARTIFACT_S3_SECRET_ACCESS_KEY"); v != "" {
+		cfg.S3SecretAccessKey = v
+	}
+	if v := os.Getenv("AWS_REGION"); v != "" {
+		cfg.S3Region = v
+	}
+	if v := os.Getenv("ARTIFACT_S3_REGION"); v != "" {
+		cfg.S3Region = v
+	}
+
+	// ── Retention TTLs (D-11) ────────────────────────────────────────────────
+	// RUN_RESULT_TTL and PRESIGNED_URL_TTL (or ARTIFACT_S3_PRESIGN_TTL) are
+	// expressed in SECONDS; ARTIFACT_S3_OBJECT_TTL is expressed in DAYS (S3
+	// lifecycle granularity is whole days — R15 caveat). All use the n > 0 guard.
+	if v := os.Getenv("RUN_RESULT_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.RunResultTTL = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("PRESIGNED_URL_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.PresignedURLTTL = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("ARTIFACT_S3_PRESIGN_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.PresignedURLTTL = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("ARTIFACT_S3_OBJECT_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.S3ObjectTTL = time.Duration(n) * 24 * time.Hour
 		}
 	}
 

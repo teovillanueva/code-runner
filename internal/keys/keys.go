@@ -12,10 +12,11 @@ const JobQueue = "jobs:queue"
 // Event name constants emitted on the private-run-<jobId> soketi channel.
 // Match the `events` object in index.ts.
 const (
-	EventStage  = "stage"
-	EventStdout = "stdout"
-	EventStderr = "stderr"
-	EventResult = "result"
+	EventStage    = "stage"
+	EventStdout   = "stdout"
+	EventStderr   = "stderr"
+	EventResult   = "result"
+	EventArtifact = "artifact"
 )
 
 // JobStatusKey returns the Redis key holding the JSON-encoded JobStatus for
@@ -28,6 +29,13 @@ func JobStatusKey(jobID string) string {
 // Matches keys.jobSpec(id) in index.ts.
 func JobSpecKey(jobID string) string {
 	return fmt.Sprintf("job:%s:spec", jobID)
+}
+
+// JobOutputKey returns the Redis key holding the JSON-encoded RunResult
+// (collected output) for a job.  Written with a TTL by the worker at teardown.
+// Matches keys.jobOutput(id) in index.ts.
+func JobOutputKey(jobID string) string {
+	return fmt.Sprintf("job:%s:output", jobID)
 }
 
 // ChannelForJob returns the soketi channel name for a job.
