@@ -1,6 +1,7 @@
 {
   "title": "Self-Hosting",
   "icon": "ServerCog",
+  "defaultOpen": true,
   "pages": [
     "local-stack",
     "configuration",

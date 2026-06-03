@@ -2,6 +2,201 @@
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
+/* ───────────────────────────────────────────────────────────
+   code-runner design system — single semantic token layer.
+   Source of truth: DESIGN.md. Achromatic neutrals + one iris
+   accent. Light primary, dark first-class. Both hold WCAG AA.
+   ─────────────────────────────────────────────────────────── */
+
+:root {
+  /* accent — electric iris (light: deeper, for text/links on white) */
+  --iris: #4f46e5;
+  --iris-hover: #4338ca;
+  --iris-wash: #eeedfd;
+  --iris-ring: rgba(79, 70, 229, 0.45);
+
+  /* neutrals (light) */
+  --canvas: #ffffff;
+  --section: #f6f7f9;
+  --card: #fbfbfc;
+  --emphasis: #0b0b0f; /* inverted dark-on-white spotlight panel */
+  --emphasis-ink: #f4f5f7; /* text on emphasis panels in light mode */
+  --ink: #0a0a0b;
+  --ink-2: #46484e;
+  --ink-3: #63666e;
+  --line: #e6e7ea;
+  --line-2: #d3d5da;
+
+  /* semantic status */
+  --status-running: #4f46e5;
+  --status-ok: #0e8f4f;
+  --status-warn: #b26a00;
+  --status-err: #c2362b;
+
+  /* iris tuned for legibility on always-dark emphasis panels (both themes) */
+  --iris-bright: #8b82ff;
+}
+
+.dark {
+  --iris: #6d63ff;
+  --iris-hover: #8b82ff;
+  --iris-wash: rgba(109, 99, 255, 0.14);
+  --iris-ring: rgba(109, 99, 255, 0.55);
+
+  --canvas: #0a0b0d;
+  --section: #0f1114;
+  --card: #15171c;
+  /* inverted machine band (footer, architecture, quickstart, hero terminal).
+     In light mode the emphasis panel is a near-black slab on white; in dark
+     mode it must descend the SAME direction — a well deeper than the canvas,
+     not a lighter gray inset. Going lighter than canvas read as a muddy slab
+     and inverted the intended drama. Inner insets lift off it via white/alpha;
+     a dark-only hairline (--line) separates the band from the canvas. */
+  --emphasis: #06070a;
+  --emphasis-ink: #f4f5f7;
+  --ink: #f4f5f7;
+  --ink-2: #a6aab3;
+  --ink-3: #787c85;
+  --line: #22252b;
+  --line-2: #2e323a;
+
+  --status-running: #6d63ff;
+  --status-ok: #3fcb7a;
+  --status-warn: #e0a338;
+  --status-err: #f0685c;
+}
+
+/* expose semantic tokens to Tailwind utilities (dark-aware via `inline`) */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-section: var(--section);
+  --color-card: var(--card);
+  --color-emphasis: var(--emphasis);
+  --color-emphasis-ink: var(--emphasis-ink);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+
+  --color-iris: var(--iris);
+  --color-iris-hover: var(--iris-hover);
+  --color-iris-wash: var(--iris-wash);
+  --color-iris-bright: var(--iris-bright);
+
+  --color-status-running: var(--status-running);
+  --color-status-ok: var(--status-ok);
+  --color-status-warn: var(--status-warn);
+  --color-status-err: var(--status-err);
+}
+
+/* type + shape + motion scale */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
+    'Inter', sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'JetBrains Mono',
+    SFMono-Regular, Menlo, Monaco, monospace;
+
+  --radius-chip: 6px;
+  --radius-input: 8px;
+  --radius-card: 10px;
+  --radius-modal: 14px;
+
+  --ease-snap: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* ───────────────────────────────────────────────────────────
+   Drive Fumadocs (--color-fd-*) from the same system so docs,
+   sidebar, search, and TOC inherit the brand. v16 expects full
+   CSS colors (not channel triplets). These plain :root/.dark
+   blocks come after the imports, so they win on source order.
+   ─────────────────────────────────────────────────────────── */
+
+:root {
+  --color-fd-background: var(--canvas);
+  --color-fd-foreground: var(--ink);
+  --color-fd-muted: var(--section);
+  --color-fd-muted-foreground: var(--ink-3);
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: var(--ink);
+  --color-fd-card: var(--card);
+  --color-fd-card-foreground: var(--ink);
+  --color-fd-border: var(--line);
+  --color-fd-primary: var(--iris);
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #f1f2f4;
+  --color-fd-secondary-foreground: var(--ink);
+  --color-fd-accent: #f1f2f4;
+  --color-fd-accent-foreground: var(--ink);
+  --color-fd-ring: var(--iris);
+
+  /* callout accents → semantic status palette (info = the iris accent) */
+  --color-fd-info: var(--iris);
+  --color-fd-warning: var(--status-warn);
+  --color-fd-error: var(--status-err);
+  --color-fd-success: var(--status-ok);
+}
+
+.dark {
+  --color-fd-background: var(--canvas);
+  --color-fd-foreground: var(--ink);
+  --color-fd-muted: var(--section);
+  --color-fd-muted-foreground: #9ca0a9;
+  --color-fd-popover: var(--card);
+  --color-fd-popover-foreground: var(--ink);
+  --color-fd-card: var(--card);
+  --color-fd-card-foreground: var(--ink);
+  --color-fd-border: var(--line);
+  --color-fd-primary: var(--iris);
+  --color-fd-primary-foreground: #0a0b0d;
+  --color-fd-secondary: var(--card);
+  --color-fd-secondary-foreground: var(--ink);
+  /* docs hover/active tint (menus, dropdowns, search results). Decoupled from
+     the landing's now-deep emphasis band. Must lift above BOTH canvas (#0a0b0d)
+     and card (#15171c, the sidebar + popover surface), so it can't be either —
+     a card-on-card hover would be invisible. This is one step above card. */
+  --color-fd-accent: #1f232b;
+  --color-fd-accent-foreground: var(--ink);
+  --color-fd-ring: var(--iris);
+
+  --color-fd-info: var(--iris);
+  --color-fd-warning: var(--status-warn);
+  --color-fd-error: var(--status-err);
+  --color-fd-success: var(--status-ok);
+}
+
+/* ─────────────────────────── base craft ─────────────────────────── */
+
+body {
+  font-family: var(--font-sans);
+  background: var(--canvas);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+}
+
+/* tighten display headings; the engineered, not-shouting voice */
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+p {
+  text-wrap: pretty;
+}
+
+::selection {
+  background: var(--iris-wash);
+  color: var(--ink);
+}
+
 html {
   scrollbar-gutter: stable;
 }
@@ -9,4 +204,460 @@ html {
 html > body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* reduced-motion safety net (components also ship their own paths) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─────────────────────── landing motion primitives ───────────────────────
+   Defaults are fully visible. Reveal/translation only engages when motion is
+   allowed, so headless renderers and reduced-motion users never see a blank. */
+
+.cr-reveal {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cr-reveal {
+    opacity: 0;
+    animation: cr-reveal 0.62s var(--ease-snap) both;
+    animation-delay: var(--cr-delay, 0ms);
+  }
+}
+
+@keyframes cr-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* live "running" status dot — pulses iris */
+.cr-dot {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--status-running);
+}
+.cr-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--status-running);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cr-dot::after {
+    animation: cr-ping 1.6s var(--ease-snap) infinite;
+  }
+}
+@keyframes cr-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(3.4);
+    opacity: 0;
+  }
+}
+
+/* terminal caret */
+.cr-caret {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1.05em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--status-running);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cr-caret {
+    animation: cr-blink 1.05s steps(1) infinite;
+  }
+}
+@keyframes cr-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* each stdout line nudges in, in sequence — but visible by default */
+@media (prefers-reduced-motion: no-preference) {
+  .cr-stream > [data-line] {
+    opacity: 0;
+    animation: cr-line 0.4s var(--ease-snap) both;
+    animation-delay: calc(var(--i, 0) * 380ms + 350ms);
+  }
+}
+@keyframes cr-line {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ───────────────────────────────────────────────────────────
+   Emphasis panels are always dark — in light mode they are the
+   inverted dark-on-white Privy signature. The light-theme iris
+   (#4f46e5) and status greens are too dim on near-black, so any
+   subtree marked `.cr-on-dark` remaps the accent + status vars
+   to their bright/dark values regardless of the page theme. All
+   `text-iris` / `text-status-*` / `bg-iris-wash` utilities inside
+   then resolve to dark-appropriate colors and hold AA.
+   ─────────────────────────────────────────────────────────── */
+.cr-on-dark {
+  --iris: var(--iris-bright);
+  --iris-hover: #a59dff;
+  --iris-wash: rgba(139, 130, 255, 0.16);
+  --status-running: var(--iris-bright);
+  --status-ok: #3fcb7a;
+  --status-warn: #e0a338;
+  --status-err: #f0685c;
+}
+
+/* ─────────────────────── home top bar: cap of the framed console ───────────
+   The landing is a 1180px framed console (border-x hairlines, px-5/px-8 gutter).
+   Fumadocs' home nav ships its own 1400px / px-4 / full-bleed-border container,
+   so the logo and the github/theme controls float wider than the frame they sit
+   above. Re-seat the nav onto the same 1180px frame and carry its vertical lines
+   down into the console so the whole surface reads as one continuous drawing. */
+
+/* match the nav's inner container to the console frame width */
+#nd-home-layout {
+  --fd-layout-width: 1180px;
+}
+
+/* drop the full-bleed bottom hairline; the frame owns the lines now (the blur
+   still spans the viewport so scrolled content fades under the whole bar) */
+#nd-nav > div {
+  border-bottom-color: transparent;
+}
+
+/* the inner <nav> becomes the top cell of the 1180px console: vertical hairlines
+   collinear with the page's border-x, a bottom hairline that meets the status
+   strip, and gutters that line the logo up with the H1 and the github/theme
+   controls up with the hero's right edge. */
+#nd-nav nav {
+  border-inline: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding-inline: 20px; /* = hero px-5 */
+}
+@media (min-width: 640px) {
+  #nd-nav nav {
+    padding-inline: 32px; /* = hero sm:px-8 */
+  }
+}
+
+/* ─────────────────────── instrument-panel atmosphere ───────────────────────
+   The unifying device: a hardened console drafted onto the canvas. A faint
+   hairline grid behind the hero, a continuous output stream in the footer
+   machine band. Both fade to nothing so they texture, never shout. */
+
+/* hairline console grid — hero backdrop, masked so it dissolves into canvas */
+.cr-grid {
+  background-image:
+    linear-gradient(to right, var(--line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: right -1px top -1px;
+  -webkit-mask-image: radial-gradient(115% 90% at 78% -10%, #000 0%, transparent 68%);
+  mask-image: radial-gradient(115% 90% at 78% -10%, #000 0%, transparent 68%);
+}
+
+/* continuous output stream for the footer machine band.
+   Track is rendered twice in markup; we translate one full copy. */
+.cr-marquee {
+  position: relative;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 18%,
+    #000 82%,
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 18%,
+    #000 82%,
+    transparent
+  );
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cr-marquee-track {
+    animation: cr-marquee 26s linear infinite;
+  }
+}
+@keyframes cr-marquee {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+/* ─────────────────── request-lifecycle schematic ───────────────────
+   The control-plane connectors are a signal bus: a dim iris rail with a
+   bright pulse that sweeps each segment in sequence, so a request reads
+   as propagating node → node along the one locked path. Reduced motion
+   holds the rail at a steady dim iris (no sweep). */
+
+.cr-rail {
+  position: relative;
+  height: 1px;
+  background: color-mix(in oklab, var(--iris) 30%, transparent);
+  overflow: hidden;
+}
+.cr-rail::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--iris) 50%,
+    transparent 100%
+  );
+  background-size: 38% 100%;
+  background-repeat: no-repeat;
+  background-position-x: -45%;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cr-rail::after {
+    animation: cr-signal 3.4s var(--ease-snap) infinite;
+    animation-delay: var(--cr-seg-delay, 0ms);
+  }
+}
+@keyframes cr-signal {
+  0% {
+    background-position-x: -45%;
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  30% {
+    background-position-x: 145%;
+    opacity: 1;
+  }
+  34%,
+  100% {
+    background-position-x: 145%;
+    opacity: 0;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DOCS READING SURFACE  (product register — design serves the content)
+   Scoped to the docs content column (#nd-page) and sidebar (#nd-sidebar) so the
+   marketing landing is untouched. The id-level specificity also lets these
+   win over Fumadocs' utility classes without !important. Source: DESIGN.md.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── sidebar: achromatic, no accent ─────────────────────────────────────
+   The sidebar carries zero iris (per direction): the active item is a neutral
+   ink wash + strong ink label + a neutral ink rail. Hover stays neutral.
+   Icons are disabled at the source (lib/source.ts) so labels do the work.
+   The always-on "Documentation" pill is gone (it was a duplicate top-link). */
+#nd-sidebar a[data-active='true'] {
+  position: relative;
+  background: color-mix(in oklab, var(--ink) 9%, transparent);
+  color: var(--ink);
+  font-weight: 600;
+}
+/* the neutral ink rail. Fumadocs gates its own rail on --tw-content (resolves
+   to `none` in this build, so no box renders); make ours self-contained. */
+#nd-sidebar a[data-active='true']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  inset-block: 0.4rem;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ink);
+}
+#nd-sidebar a:not([data-active='true']):hover {
+  color: var(--ink);
+}
+
+/* ── code blocks: the centerpiece ───────────────────────────────────────
+   Flat --section surface, hairline border, 10px radius, no shadow. The
+   cr-light / cr-dark shiki themes (source.config.ts) carry the monochrome +
+   iris token colors. "Code is a first-class citizen." (PRODUCT.md) */
+#nd-page figure.shiki {
+  margin-block: 1.3rem;
+  background: var(--section);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: none;
+}
+#nd-page figure.shiki pre {
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem; /* 13px */
+  line-height: 1.65;
+}
+/* file-path / language caption row */
+#nd-page figure.shiki figcaption {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  background: color-mix(in oklab, var(--ink) 3%, var(--section));
+  border-bottom: 1px solid var(--line);
+  padding: 0.5rem 0.9rem;
+}
+/* highlighted lines/words: iris wash + the allowed in-block gutter marker */
+#nd-page figure.shiki .line.highlighted {
+  background: var(--iris-wash);
+  box-shadow: inset 2px 0 0 0 var(--iris);
+}
+#nd-page figure.shiki .highlighted-word {
+  background: var(--iris-wash);
+  border-radius: 4px;
+  padding: 0.1em 0.1em;
+}
+/* code inside a Tabs panel: the panel is already a surface inside the bordered
+   Tabs card, so the code block drops its own chrome and sits flush — one card,
+   not a card-in-a-card. The panel carries the --section surface + padding. */
+#nd-page [role='tabpanel'] {
+  background: var(--section);
+}
+#nd-page [role='tabpanel'] figure.shiki {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+/* ── callouts: status by tint + icon, not a side-stripe ─────────────────
+   Fumadocs ships a 2px colored left bar — exactly the side-stripe pattern
+   the design system bans. Hide it; carry the status on a full hairline + a
+   faint wash of the same hue, with Fumadocs' own colored icon as the cue. */
+#nd-page .prose [style*='--callout-color'] {
+  border-radius: var(--radius-card);
+  box-shadow: none;
+  background: color-mix(in oklab, var(--callout-color) 6%, var(--card));
+  border-color: color-mix(in oklab, var(--callout-color) 28%, var(--line));
+  padding: 0.85rem 1rem;
+  gap: 0.7rem;
+}
+#nd-page .prose [style*='--callout-color'] > [role='none'] {
+  display: none; /* the banned 2px stripe */
+}
+
+/* ── tables: hairline grid, sectioned header ────────────────────────────*/
+#nd-page .prose table {
+  font-size: 0.875rem;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+}
+#nd-page .prose th,
+#nd-page .prose td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.55rem 0.9rem;
+  text-align: start;
+  vertical-align: top;
+}
+#nd-page .prose thead th {
+  background: var(--section);
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+}
+#nd-page .prose tbody td {
+  color: var(--ink-2);
+}
+#nd-page .prose tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* ── inline code + kbd ──────────────────────────────────────────────────*/
+#nd-page .prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--section);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.1em 0.36em;
+  color: var(--ink);
+}
+#nd-page .prose :not(pre) > code::before,
+#nd-page .prose :not(pre) > code::after {
+  content: none; /* kill any quote pseudo-content */
+}
+#nd-page .prose kbd {
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 0.12em 0.45em;
+  color: var(--ink-2);
+}
+
+/* ── prose links: iris, only on real text links (not cards / headings) ──*/
+#nd-page .prose p a,
+#nd-page .prose li a,
+#nd-page .prose td a {
+  color: var(--iris);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--iris) 32%, transparent);
+  text-underline-offset: 2px;
+  transition:
+    color 150ms var(--ease-snap),
+    text-decoration-color 150ms var(--ease-snap);
+}
+#nd-page .prose p a:hover,
+#nd-page .prose li a:hover,
+#nd-page .prose td a:hover {
+  color: var(--iris-hover);
+  text-decoration-color: var(--iris);
+}
+
+/* ── heading rhythm: a hairline opens each major section ────────────────*/
+#nd-page .prose h2 {
+  letter-spacing: -0.018em;
+  margin-top: 2.75rem;
+  padding-top: 1.3rem;
+  border-top: 1px solid var(--line);
+}
+#nd-page .prose h2:first-of-type {
+  margin-top: 2rem;
+  padding-top: 0;
+  border-top: 0;
+}
+#nd-page .prose h3 {
+  letter-spacing: -0.014em;
+  margin-top: 2rem;
 }

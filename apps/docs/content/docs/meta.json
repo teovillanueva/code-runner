@@ -1,16 +1,5 @@
 {
   "title": "Documentation",
   "root": true,
-  "pages": [
-    "index",
-    "quickstart",
-    "---Concepts---",
-    "concepts",
-    "---Guides---",
-    "guides",
-    "---API Reference---",
-    "api",
-    "---Self-Hosting---",
-    "self-hosting"
-  ]
+  "pages": ["index", "quickstart", "concepts", "guides", "api", "self-hosting"]
 }

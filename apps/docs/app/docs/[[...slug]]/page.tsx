@@ -23,15 +23,23 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <div className="flex flex-row gap-2 items-center border-b pb-6">
-        <MarkdownCopyButton markdownUrl={markdownUrl} />
-        <ViewOptionsPopover
-          markdownUrl={markdownUrl}
-          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}`}
-        />
-      </div>
+      <header className="not-prose mb-7 border-b border-fd-border pb-5">
+        <DocsTitle className="text-[2rem] font-semibold leading-[1.15] tracking-[-0.02em] text-balance">
+          {page.data.title}
+        </DocsTitle>
+        {page.data.description ? (
+          <DocsDescription className="mt-2.5 mb-0 max-w-[68ch] text-[15px] leading-relaxed text-pretty text-fd-muted-foreground">
+            {page.data.description}
+          </DocsDescription>
+        ) : null}
+        <div className="mt-4 flex flex-row items-center gap-2">
+          <MarkdownCopyButton markdownUrl={markdownUrl} />
+          <ViewOptionsPopover
+            markdownUrl={markdownUrl}
+            githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}`}
+          />
+        </div>
+      </header>
       <DocsBody>
         <MDX
           components={getMDXComponents({

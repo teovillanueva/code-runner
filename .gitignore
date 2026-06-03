@@ -23,3 +23,4 @@ coverage.out
 /tmp/
 *.log
 .claude/scheduled_tasks.lock
+.gstack/

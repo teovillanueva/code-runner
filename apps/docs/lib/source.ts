@@ -1,13 +1,15 @@
 import { docs } from 'collections/server';
 import { loader } from 'fumadocs-core/source';
-import { lucideIconsPlugin } from 'fumadocs-core/source/lucide-icons';
 import { docsContentRoute, docsImageRoute, docsRoute } from './shared';
 
 // See https://fumadocs.dev/docs/headless/source-api for more info
 export const source = loader({
   baseUrl: docsRoute,
   source: docs.toFumadocsSource(),
-  plugins: [lucideIconsPlugin()],
+  // No icons in the sidebar tree — labels carry the navigation. A no-op
+  // resolver satisfies Fumadocs' icon handler while rendering nothing, so the
+  // `icon:` fields still in frontmatter / meta.json are simply ignored.
+  icon: () => undefined,
 });
 
 export function getPageImage(page: (typeof source)['$inferPage']) {

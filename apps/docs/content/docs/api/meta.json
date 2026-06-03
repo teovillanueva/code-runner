@@ -1,6 +1,7 @@
 {
   "title": "API Reference",
   "icon": "Braces",
+  "defaultOpen": true,
   "pages": [
     "rest",
     "events",

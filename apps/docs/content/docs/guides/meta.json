@@ -1,6 +1,7 @@
 {
   "title": "Guides",
   "icon": "Compass",
+  "defaultOpen": true,
   "pages": [
     "backend-sdk",
     "react-sdk",
