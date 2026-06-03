@@ -1,0 +1,29 @@
+# Hono API gateway. PRIVATE by design (the executor is never internet-facing —
+# your upstream backend calls it). It listens on 8080 and is reachable at
+# code-runner-api.internal:8080 over 6PN, or locally via `fly proxy 8080 -a code-runner-api`.
+# Auth is the EXECUTOR_API_TOKEN bearer. To expose it publicly (gated by the
+# token), add an [http_service] block with internal_port 8080 + force_https.
+app = "code-runner-api"
+primary_region = "gru"
+
+# Build context is the repo root (the monorepo). Run from there:
+#   fly deploy -c deploy/fly/api/fly.toml --dockerfile apps/api/Dockerfile .
+[build]
+  dockerfile = "apps/api/Dockerfile"
+
+[env]
+  API_PORT = "8080"
+  REDIS_URL = "redis://code-runner-redis.internal:6379"
+  SOKETI_HOST = "code-runner-soketi.internal"
+  SOKETI_PORT = "6001"
+  SOKETI_USE_TLS = "false"
+  SOKETI_APP_ID = "code-runner"
+  SOKETI_APP_KEY = "code-runner-key"
+  MAX_QUEUE_DEPTH = "256"
+  ENABLE_CHANNEL_AUTH = "true"
+  # Secrets (fly secrets set -a code-runner-api):
+  #   EXECUTOR_API_TOKEN, SOKETI_APP_SECRET
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

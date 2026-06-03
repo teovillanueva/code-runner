@@ -1,0 +1,26 @@
+# soketi — Pusher-compatible WebSocket server. THE ONLY public app: browsers
+# subscribe to private-run-<jobId> over wss to receive output. Trigger (from the
+# worker) happens privately over 6PN. Change primary_region to one near you.
+app = "code-runner-soketi"
+primary_region = "gru"
+
+[build]
+  image = "quay.io/soketi/soketi:latest-16-alpine"
+
+[env]
+  SOKETI_DEFAULT_APP_ID = "code-runner"
+  SOKETI_DEFAULT_APP_KEY = "code-runner-key"
+  SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES = "false"
+  SOKETI_DEBUG = "0"
+  # SOKETI_DEFAULT_APP_SECRET is set via: fly secrets set -a code-runner-soketi SOKETI_DEFAULT_APP_SECRET=...
+
+[http_service]
+  internal_port = 6001
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

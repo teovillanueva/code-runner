@@ -1,0 +1,23 @@
+# Redis — job queue + stdin/control pub/sub. NATIVE protocol (the worker needs
+# blocking SUBSCRIBE/BRPOP — a REST-only serverless Redis like Upstash will NOT
+# work for the worker; see docs/redis-constraint.md). Private only: reachable at
+# code-runner-redis.internal:6379 over Fly's 6PN. No public service.
+app = "code-runner-redis"
+primary_region = "gru"
+
+[build]
+  image = "redis:7-alpine"
+
+# protected-mode off is acceptable because the app is ONLY reachable on the
+# private 6PN, never the internet. For extra hardening set a password via
+# `fly secrets` + `--requirepass` and put it in REDIS_URL.
+[processes]
+  app = "redis-server --appendonly yes --dir /data --protected-mode no"
+
+[mounts]
+  source = "redis_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

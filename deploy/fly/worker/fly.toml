@@ -1,0 +1,35 @@
+# Worker — runs its OWN dockerd inside the Fly Machine (Camino C) and launches
+# hardened sandboxes against it. PRIVATE only (no public service). Needs a volume
+# for /var/lib/docker (image cache + sandbox storage) and a beefier VM.
+#
+# Build context is the repo root. Run from there:
+#   fly deploy -c deploy/fly/worker/fly.toml --dockerfile deploy/fly/worker/Dockerfile .
+app = "code-runner-worker"
+primary_region = "gru"
+
+[build]
+  dockerfile = "deploy/fly/worker/Dockerfile"
+
+[env]
+  REDIS_URL = "redis://code-runner-redis.internal:6379"
+  SOKETI_HOST = "code-runner-soketi.internal"
+  SOKETI_PORT = "6001"
+  SOKETI_USE_TLS = "false"
+  SOKETI_APP_ID = "code-runner"
+  SOKETI_APP_KEY = "code-runner-key"
+  WORKER_MAX_SANDBOXES = "4"
+  SANDBOX_IMAGE_REGISTRY = "ghcr.io/teovillanueva"
+  # Secrets (fly secrets set -a code-runner-worker):
+  #   SOKETI_APP_SECRET
+  #   GHCR_TOKEN  — only needed if the ghcr.io/teovillanueva/executor-* packages are PRIVATE
+  #                 (make them public once and you can drop this)
+
+[mounts]
+  source = "docker_data"
+  destination = "/var/lib/docker"
+
+# dockerd + the worker + up to WORKER_MAX_SANDBOXES live sandboxes share this VM.
+# Bump size/memory if you raise WORKER_MAX_SANDBOXES or run heavy images (R).
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2048"
