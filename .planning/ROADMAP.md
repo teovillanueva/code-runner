@@ -12,7 +12,7 @@ code-runner is an open-source, self-hostable, Piston-style remote code execution
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation & Wire Contract** - Monorepo layout, JSON-Schema wire contract codegen + drift check, manifest schema/loader, `Runner` interface, OSS scaffolding — ends at a human approval gate before coding
+- [x] **Phase 1: Foundation & Wire Contract** - Monorepo layout, JSON-Schema wire contract codegen + drift check, manifest schema/loader, `Runner` interface, OSS scaffolding — ends at a human approval gate before coding
 - [x] **Phase 2: Sandbox Hardening & Runner** - Go `DockerSocketRunner`: full hardening flags, three clocks, tree-kill, output caps, idempotent `sync.Once` cleanup (completed 2026-06-02)
 - [x] **Phase 3: Interactive Python End-to-End** - Hono API (all `/v1/*`), Redis queue + stdin/control routing, worker session, soketi publisher, Python package, docker compose dev stack — full interactive demo works (completed 2026-06-02)
 - [x] **Phase 4: Abuse Suite & Safety Validation** - Fork bomb, OOM, infinite loop, idle, EOF, giant output on Linux CI — gates the language fan-out (completed 2026-06-02)
@@ -153,7 +153,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Wire Contract | 0/3 | Not started | - |
+| 1. Foundation & Wire Contract | 3/3 | Complete   | 2026-06-02 |
 | 2. Sandbox Hardening & Runner | 4/4 | Complete   | 2026-06-02 |
 | 3. Interactive Python End-to-End | 5/5 | Complete   | 2026-06-02 |
 | 4. Abuse Suite & Safety Validation | 2/2 | Complete   | 2026-06-02 |
