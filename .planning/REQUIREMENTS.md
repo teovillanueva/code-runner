@@ -138,6 +138,17 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [x] **DOCS-03**: The README documents deployment per target: dev (docker compose); prod (long-lived **worker nodes** on Fly or any Linux host that launch sandboxes internally, scaled to/from zero by queue depth, with **gVisor** `--runtime=runsc` for extra isolation; native-protocol Redis + soketi; API anywhere); and the **v2** `FlyMachinesRunner` microVM-per-execution option with its latency/streaming trade-offs noted
 - [x] **DOCS-04**: The README documents how to add a new language (the package model guide)
 
+### Observability (OpenTelemetry — Phase 8)
+
+- [ ] **OBS-01**: Both the API and the worker initialize an OpenTelemetry SDK configured purely by standard `OTEL_*` env vars; when no OTLP endpoint is set, the SDK is a no-op (zero forced infrastructure, MIT/self-hostable)
+- [ ] **OBS-02**: W3C trace context (`traceparent`/`tracestate`) is propagated from the API to the worker across the Redis seam by carrying it in the shared wire contract (not via HTTP headers), so one execution yields one connected distributed trace
+- [ ] **OBS-03**: The worker emits phase-level spans (`claim`, `sandbox.create`, `handshake.wait`, `compile`, `run`, `publish.result`) linked to the API's `execute` span; long-lived/interactive output is represented as metrics, never per-chunk spans
+- [ ] **OBS-04**: Telemetry is exported via OTLP push (traces + metrics + logs) as the default integration model, targeting an OTel Collector
+- [ ] **OBS-05**: An opt-in Prometheus `/metrics` scrape endpoint is exposed on a separate admin port/surface (not behind the public bearer-auth gateway), for self-hosters who prefer pull-based metrics
+- [ ] **OBS-06**: Domain metrics are emitted: queue depth, sandbox slots used/max, time-in-queue, terminal-state counts (incl. `timedOut`/`idleTimedOut`/`cpuExceeded`), sandbox create/kill latency, warmup reclaims, reaper orphans, admission/ratelimit rejections, soketi publish latency/errors
+- [ ] **OBS-07**: Both services emit structured JSON logs with `trace_id`/`span_id`/`job_id` correlation fields; the API is migrated off `console.log` to a structured logger matching the worker's `slog`
+- [ ] **OBS-08**: Sampling is configurable (`parentbased_traceidratio`); a commented example OTel Collector service is provided in `docker-compose.yml` and every new `OTEL_*` var is documented in `.env.example`
+
 ## v2 Requirements
 
 Deferred to a future release. Tracked but not in the current roadmap.
@@ -257,6 +268,14 @@ Each v1 requirement maps to exactly one phase.
 | DOCS-02 | Phase 7 | Complete |
 | DOCS-03 | Phase 7 | Complete |
 | DOCS-04 | Phase 7 | Complete |
+| OBS-01 | Phase 8 | Planned |
+| OBS-02 | Phase 8 | Planned |
+| OBS-03 | Phase 8 | Planned |
+| OBS-04 | Phase 8 | Planned |
+| OBS-05 | Phase 8 | Planned |
+| OBS-06 | Phase 8 | Planned |
+| OBS-07 | Phase 8 | Planned |
+| OBS-08 | Phase 8 | Planned |
 
 **Coverage:**
 - v1 requirements: 83 total (the prior "68" header figure was stale from the pre-revision spec; the revised set has 83 REQ-IDs)

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-06-03T00:21:40.082Z"
-last_activity: 2026-06-03
+status: executing
+stopped_at: Phase 9 context gathered
+last_updated: "2026-06-03T14:26:00.255Z"
+last_activity: 2026-06-03 -- Phase 09 execution started
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 23
-  completed_plans: 23
-  percent: 100
+  total_phases: 9
+  completed_phases: 8
+  total_plans: 36
+  completed_plans: 29
+  percent: 81
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-02)
 
 **Core value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible.
-**Current focus:** Phase 1 — Foundation & Wire Contract
+**Current focus:** Phase 09 — artifacts-pullable-run-output
 
 ## Current Position
 
-Phase: 1 of 7 (Foundation & Wire Contract)
-Plan: 03 of 03 in current phase (Phase 1) — COMPLETE
-Status: Phase complete — ready for verification
-Last activity: 2026-06-03
+Phase: 09 (artifacts-pullable-run-output) — EXECUTING
+Plan: 1 of 7
+Status: Executing Phase 09
+Last activity: 2026-06-03 -- Phase 09 execution started
 
 Progress: [██████████] 100%
 
@@ -36,7 +36,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed: 6
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -44,7 +44,7 @@ Progress: [██████████] 100%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 08 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -91,6 +91,10 @@ Recent decisions affecting current work:
 - [Phase ?]: Subscribe stdin/ctrl BEFORE publishing queued stage to eliminate start-handshake race window
 - [Phase ?]: Admission gate placed after manifest resolution: invalid requests get 400 not 429; LLEN-based queue depth is the authoritative MVP gate for 429
 
+### Roadmap Evolution
+
+- Phase 9 added (2026-06-03): Artifacts & Pullable Run Output — capture sandbox artifacts (images/files) into a persisted `RunResult` + `GET /v1/jobs/:id/output` pull endpoint, Python/R plot image parity, SDK helpers. Motivated by the edalef migration (server-side grading needs full output + plots without subscribing to soketi). Blocking `POST /v1/run` and env-gated webhooks explicitly deferred. Independent of Phase 8.
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -117,6 +121,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-03T00:21:40.072Z
-Stopped at: Completed 05-03-PLAN.md
-Resume file: None
+Last session: 2026-06-03T12:09:34.939Z
+Stopped at: Phase 9 context gathered
+Resume file: .planning/phases/09-artifacts-pullable-run-output/09-CONTEXT.md
