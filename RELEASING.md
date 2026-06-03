@@ -81,3 +81,26 @@ set in the workflows).
   "Version Packages" PR).
 
 No other secrets are required for the OIDC path.
+
+---
+
+## Docker images (separate from the npm packages)
+
+The npm SDKs and the **service container images** are different artifacts with independent
+lifecycles — don't couple their versions. Images are published to GHCR by
+`.github/workflows/release-images.yml`:
+
+| Image(s) | Built when | Tags |
+|---|---|---|
+| `code-runner-api`, `code-runner-worker` | every push to `main` | `latest` + `sha-<short>` (immutable) |
+| `code-runner-api`, `code-runner-worker` | a `vX.Y.Z` git tag | `1`, `1.2`, `1.2.3` |
+| `executor-python` / `-rust` / `-r` / `-sqlite` | `languages/**` changed, a tag, or manual run | `<version>` + `<version>-<sha>` |
+
+- `latest` tracks `main` HEAD (continuous). For reproducible deploys, pin a `sha-<short>` tag.
+- **Cut a stable release** with a git tag — no extra tooling:
+  ```bash
+  git tag v1.2.3 && git push origin v1.2.3
+  ```
+- Auth uses the workflow's automatic `GITHUB_TOKEN` (`packages: write`) — no secrets.
+- One-time: set the GHCR packages to **public** (each package → Settings → Change visibility)
+  so self-hosters can pull without authenticating.
