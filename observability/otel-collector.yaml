@@ -1,0 +1,66 @@
+# code-runner — example OpenTelemetry Collector config (BYO observability stack).
+#
+# This config is ONLY loaded when you run the `observability` compose profile:
+#   docker compose --profile observability up
+#
+# Pipeline shape (D-08/D-10):
+#   API + worker --OTLP/HTTP:4318--> collector --OTLP/gRPC:4317--> Jaeger (traces)
+#                                            \--> debug exporter (metrics + logs)
+#
+# Jaeger ingests TRACES only (native OTLP). The worker's domain metrics
+# (code_runner.jobs.terminal, code_runner.queue.depth, code_runner.sandbox.* …)
+# and the trace-correlated log records land in the collector `debug` exporter so
+# the end-to-end script can prove they flow without standing up a metrics/log
+# backend. Point a real Prometheus/Loki/etc. at this collector in production.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch: {}
+  # Tail-sampling note (D-10): the SDKs default to head sampling
+  # (OTEL_TRACES_SAMPLER=parentbased_traceidratio, ARG=1.0 → keep everything in
+  # the example). In production, lower OTEL_TRACES_SAMPLER_ARG to sample a
+  # fraction, OR enable collector-side tail sampling here to always keep the
+  # interesting (error / anomalous-terminal) traces regardless of the head ratio:
+  #
+  # tail_sampling:
+  #   policies:
+  #     - name: errors
+  #       type: status_code
+  #       status_code: { status_codes: [ERROR] }
+  #     - name: baseline
+  #       type: probabilistic
+  #       probabilistic: { sampling_percentage: 10 }
+  #
+  # (then add `tail_sampling` to the traces pipeline processors below.)
+
+exporters:
+  # Traces → Jaeger all-in-one over OTLP/gRPC (Jaeger has COLLECTOR_OTLP_ENABLED).
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  # Metrics + logs (and traces, for the E2E proof) → stdout for visibility.
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

@@ -35,7 +35,17 @@
   "dependencies": {
     "@teovilla/code-runner-contract": "workspace:*"
   },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentelemetry/api": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/core": "2.7.1",
     "@types/node": "^22.10.0",
     "tsup": "^8",
     "typescript": "^5.7.2"

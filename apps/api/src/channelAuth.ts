@@ -16,6 +16,7 @@
 import { Hono } from "hono";
 import Pusher from "pusher";
 import { config } from "./config.ts";
+import { getLogger } from "./logger.ts";
 
 let _pusher: Pusher | null = null;
 
@@ -72,7 +73,12 @@ export function registerChannelAuthRoutes(app: Hono): void {
       const authResponse = pusher.authorizeChannel(socket_id, channel_name);
       return c.json(authResponse, 200);
     } catch (err) {
-      console.error("[channel-auth] pusher error:", err);
+      // Log only the error message (never the SOKETI_APP_SECRET-bearing Pusher
+      // client or socket payload) — T-08-12 secret allow-list.
+      getLogger().error(
+        { err: err instanceof Error ? err.message : String(err) },
+        "channel-auth pusher error",
+      );
       return c.json({ error: "Channel authorization failed" }, 500);
     }
   });

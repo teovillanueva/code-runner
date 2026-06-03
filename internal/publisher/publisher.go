@@ -1,15 +1,70 @@
 package publisher
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	pusher "github.com/pusher/pusher-http-go/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/teovillanueva/code-runner/internal/config"
 	"github.com/teovillanueva/code-runner/internal/keys"
 	"github.com/teovillanueva/code-runner/packages/contract/gen/go/wire"
 )
+
+// instrumentationName is the meter scope for publisher-emitted soketi metrics.
+const instrumentationName = "code-runner-worker"
+
+// publishDuration / publishErrors resolve the soketi-publish instruments from the
+// CURRENT global MeterProvider on each call (lazy resolution — see worker.go).
+// A MeterProvider installed after package init (otelinit.Init at boot, or a
+// ManualReader in tests) is honoured. The no-op provider returns no-op
+// instruments at zero cost.
+//
+// publishDuration (histogram, unit "s") times every soketi Trigger; publishErrors
+// (counter) increments once per non-nil Trigger error. Both carry NO attributes
+// — there is nothing low-cardinality to add at the trigger chokepoint, and
+// job_id/channel must NEVER become metric dimensions (RESEARCH anti-pattern:
+// high cardinality).
+func publishDuration() metric.Float64Histogram {
+	h, _ := otel.Meter(instrumentationName).Float64Histogram(
+		"code_runner.publish.duration",
+		metric.WithUnit("s"),
+		metric.WithDescription("Wall time of a single soketi Trigger call, in seconds."),
+	)
+	return h
+}
+
+func publishErrors() metric.Int64Counter {
+	c, _ := otel.Meter(instrumentationName).Int64Counter(
+		"code_runner.publish.errors",
+		metric.WithUnit("{error}"),
+		metric.WithDescription("Count of soketi Trigger calls that returned a non-nil error."),
+	)
+	return c
+}
+
+// instrumentedTriggerer wraps any triggerer and records the publish-latency
+// histogram + publish-error counter around every Trigger call. It is the single
+// chokepoint for soketi publish metrics: both the production pusherTriggerer and
+// any test fake are measured when wrapped here.
+type instrumentedTriggerer struct {
+	inner triggerer
+}
+
+func (it *instrumentedTriggerer) Trigger(channel, event string, data interface{}) error {
+	start := time.Now()
+	err := it.inner.Trigger(channel, event, data)
+	publishDuration().Record(context.Background(), time.Since(start).Seconds())
+	if err != nil {
+		publishErrors().Add(context.Background(), 1)
+	}
+	return err
+}
 
 // maxEventBytes is the maximum serialised size (in bytes) of an
 // OutputChunkEvent payload that the publisher will emit.
@@ -81,9 +136,12 @@ func New(cfg config.Config) (*Publisher, error) {
 }
 
 // newWithTriggerer is an internal constructor used by tests to inject a fake.
+// The supplied triggerer is wrapped in instrumentedTriggerer so every soketi
+// Trigger (production OR test fake) is timed and its errors counted at the single
+// publish chokepoint (code_runner.publish.duration / .errors).
 func newWithTriggerer(_ config.Config, t triggerer) (*Publisher, error) {
 	return &Publisher{
-		t:   t,
+		t:   &instrumentedTriggerer{inner: t},
 		seq: make(map[string]int),
 	}, nil
 }

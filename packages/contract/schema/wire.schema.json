@@ -122,7 +122,9 @@
         "interactive": { "type": "boolean" },
         "files": { "type": "array", "items": { "$ref": "#/$defs/FileInput" }, "minItems": 1 },
         "limits": { "$ref": "#/$defs/Limits" },
-        "enqueuedAtMs": { "type": "integer", "description": "Unix epoch ms when the API enqueued the job." }
+        "enqueuedAtMs": { "type": "integer", "description": "Unix epoch ms when the API enqueued the job." },
+        "traceparent": { "type": "string", "description": "W3C trace-context header for cross-seam trace correlation (optional)." },
+        "tracestate": { "type": "string", "description": "W3C tracestate header (optional)." }
       },
       "required": ["jobId", "channel", "language", "version", "image", "entrypoint", "compile", "run", "interactive", "files", "limits", "enqueuedAtMs"]
     },

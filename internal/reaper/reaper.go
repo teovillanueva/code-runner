@@ -47,10 +47,34 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/teovillanueva/code-runner/internal/jobstore"
 	"github.com/teovillanueva/code-runner/internal/keys"
 	"github.com/teovillanueva/code-runner/packages/contract/gen/go/wire"
 )
+
+// instrumentationName is the meter scope for reaper-emitted metrics.
+const instrumentationName = "code-runner-worker"
+
+// reaperOrphans resolves the orphan-removal counter from the CURRENT global
+// MeterProvider on each call (lazy resolution — see worker.go). A MeterProvider
+// installed after package init (otelinit.Init at boot, or a ManualReader in
+// tests) is honoured; the no-op provider returns a no-op counter at zero cost.
+//
+// The counter increments once per orphan container successfully removed by the
+// sweep. It carries NO attributes — there is nothing low-cardinality to add, and
+// job_id/container_id must NEVER become metric dimensions (RESEARCH anti-pattern:
+// high cardinality).
+func reaperOrphans() metric.Int64Counter {
+	c, _ := otel.Meter(instrumentationName).Int64Counter(
+		"code_runner.reaper.orphans",
+		metric.WithUnit("{container}"),
+		metric.WithDescription("Count of orphaned sandbox containers reaped (dead-worker recovery)."),
+	)
+	return c
+}
 
 // workerJobsKeyPrefix is the pattern used to scan for all worker owned-jobs
 // keys in Redis.  keys.WorkerJobsKey returns "worker:<id>:jobs"; the prefix
@@ -194,6 +218,9 @@ func (r *Reaper) reapContainer(ctx context.Context, containerID, jobID string) e
 	if err != nil && !client.IsErrNotFound(err) {
 		return fmt.Errorf("reaper: ContainerRemove %s (job %s): %w", containerID[:12], jobID, err)
 	}
+	// OBS-06: count each successfully reaped orphan (no-error OR not-found, which
+	// both mean the container is gone). No attributes — low-cardinality by design.
+	reaperOrphans().Add(ctx, 1)
 	slog.Info("reaper: container removed", "containerID", containerID[:12], "jobID", jobID)
 
 	// Reclaim owned-jobs membership: scan all worker:*:jobs sets and remove jobID

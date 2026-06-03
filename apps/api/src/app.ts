@@ -4,6 +4,7 @@
 // Applies bearerAuth middleware to all /v1/* routes.
 
 import { Hono } from "hono";
+import { httpInstrumentationMiddleware } from "@hono/otel";
 import { bearerAuth } from "./auth.ts";
 import { registerExecuteRoutes } from "./routes/execute.ts";
 import { registerJobsRoutes } from "./routes/jobs.ts";
@@ -11,9 +12,14 @@ import { registerLanguagesRoutes } from "./routes/languages.ts";
 import { registerControlRoutes } from "./routes/control.ts";
 import { registerChannelAuthRoutes } from "./channelAuth.ts";
 import { config } from "./config.ts";
+import { getLogger } from "./logger.ts";
 
 export function makeApp(): Hono {
   const app = new Hono();
+
+  // OTel request span for the inbound HTTP lifecycle (D-01). No-op when no SDK
+  // is active; load-order-immune (it is middleware, not module-load patching).
+  app.use("*", httpInstrumentationMiddleware());
 
   // Health check (no auth required)
   app.get("/health", (c) => c.json({ status: "ok" }));
@@ -34,7 +40,7 @@ export function makeApp(): Hono {
 
   // Global error handler
   app.onError((err, c) => {
-    console.error("[api] unhandled error:", err);
+    getLogger().error({ err: err.message }, "unhandled error");
     return c.json({ error: "Internal server error" }, 500);
   });
 

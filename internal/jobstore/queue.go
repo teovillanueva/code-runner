@@ -50,3 +50,18 @@ func (s *Store) Enqueue(ctx context.Context, jobID string) error {
 	}
 	return nil
 }
+
+// QueueDepth returns the current length of the job queue (LLEN jobs:queue).
+//
+// It is the data source for the code_runner.queue.depth observable gauge
+// (OBS-06). The gauge callback calls QueueDepth with a SHORT-timeout context and,
+// on error, SKIPS the observation rather than reporting a stale/forced-zero value
+// (RESEARCH Pitfall 5 — never block the export cycle on a slow/unreachable
+// Redis). This method itself does no timing/skip logic; the callback owns that.
+func (s *Store) QueueDepth(ctx context.Context) (int64, error) {
+	n, err := s.client.LLen(ctx, keys.JobQueue).Result()
+	if err != nil {
+		return 0, fmt.Errorf("jobstore.QueueDepth: LLEN %s: %w", keys.JobQueue, err)
+	}
+	return n, nil
+}

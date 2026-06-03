@@ -14,6 +14,7 @@
 
 import type { MiddlewareHandler, Context } from "hono";
 import { getRedis } from "./redis.ts";
+import { ratelimitRejections } from "./metrics.ts";
 
 // Configurable constants — tune empirically per STACK §1.6 guidance.
 export const STDIN_RATE_LIMIT_FRAMES = 30; // max stdin frames per window
@@ -58,6 +59,8 @@ export const stdinRateLimit: MiddlewareHandler = async (c: Context, next) => {
 
   const count = results?.[0]?.[1] as number;
   if (count > STDIN_RATE_LIMIT_FRAMES) {
+    // Low-cardinality `reason` — never job_id (cardinality contract).
+    ratelimitRejections.add(1, { reason: "frame_rate" });
     return c.json(
       {
         error: "Too many stdin frames",
@@ -108,6 +111,8 @@ export const stdinByteCapCheck: MiddlewareHandler = async (
   if (total > STDIN_PENDING_BYTE_CAP) {
     // Undo the increment so the cap is not permanently inflated on rejected frames
     await redis.decrby(key, chunkBytes);
+    // Low-cardinality `reason` — never job_id (cardinality contract).
+    ratelimitRejections.add(1, { reason: "byte_cap" });
     return c.json(
       {
         error: "Stdin pending-byte cap exceeded. Wait for the worker to drain.",

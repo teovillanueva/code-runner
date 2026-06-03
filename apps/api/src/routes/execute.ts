@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { randomUUID } from "node:crypto";
+import { context, propagation, trace } from "@opentelemetry/api";
 import {
   ExecuteRequestSchema,
   channelForJob,
@@ -22,7 +23,14 @@ import { getRedis } from "../redis.ts";
 import { getManifests, resolveManifest } from "../manifests.ts";
 import { atCapacity, admissionError } from "../admission.ts";
 import { config } from "../config.ts";
+import { jobContext } from "../logger.ts";
 import type { LimitsOverride, Limits } from "@teovilla/code-runner-contract";
+
+// Tracer for the API's manual `execute` span (OBS-04). When no SDK is active
+// (OTEL unset) this is a no-op tracer: startActiveSpan still runs the body and
+// propagation.inject writes nothing meaningful — spec.traceparent stays absent
+// and enqueue behaves exactly as today (telemetry is strictly additive).
+const tracer = trace.getTracer("code-runner-api");
 
 /**
  * Merge manifest defaultLimits with optional per-request overrides (LANG-04).
@@ -99,51 +107,71 @@ export function registerExecuteRoutes(app: Hono): void {
       }
 
       const jobId = randomUUID();
-      const channel = channelForJob(jobId);
-      const enqueuedAtMs = Date.now();
 
-      // Build the full JobSpec (the worker must be able to decode this as-is)
-      const spec: JobSpec = {
-        jobId,
-        channel,
-        language: manifest.language,
-        version: manifest.version,
-        image: manifest.image,
-        entrypoint: manifest.entrypoint,
-        compile: manifest.compile,
-        run: manifest.run,
-        interactive: manifest.interactive,
-        files: req.files as JobSpec["files"],
-        limits: mergeLimits(manifest.defaultLimits, req.limits),
-        enqueuedAtMs,
-      };
+      // Run the spec-build + enqueue inside a job context (so any pino log
+      // carries job_id) and an `execute` span (so the worker's spans share its
+      // trace_id via the injected traceparent — OBS-04/OBS-07).
+      return jobContext.run({ jobId }, () =>
+        tracer.startActiveSpan("execute", async (span) => {
+          try {
+            const channel = channelForJob(jobId);
+            const enqueuedAtMs = Date.now();
 
-      // Initial job status
-      const status: JobStatus = {
-        jobId,
-        channel,
-        language: manifest.language,
-        version: manifest.version,
-        state: "queued",
-        updatedAtMs: enqueuedAtMs,
-      };
+            // Build the full JobSpec (the worker must decode this as-is).
+            const spec: JobSpec = {
+              jobId,
+              channel,
+              language: manifest.language,
+              version: manifest.version,
+              image: manifest.image,
+              entrypoint: manifest.entrypoint,
+              compile: manifest.compile,
+              run: manifest.run,
+              interactive: manifest.interactive,
+              files: req.files as JobSpec["files"],
+              limits: mergeLimits(manifest.defaultLimits, req.limits),
+              enqueuedAtMs,
+            };
 
-      // Atomically write spec, status, and enqueue the job via pipeline
-      const redis = getRedis();
-      const pipeline = redis.pipeline();
-      pipeline.set(keys.jobSpec(jobId), JSON.stringify(spec));
-      pipeline.set(keys.jobStatus(jobId), JSON.stringify(status));
-      pipeline.lpush(keys.jobQueue, jobId);
-      await pipeline.exec();
+            // Inject the W3C traceparent into the JobSpec BEFORE the LPUSH so
+            // the worker (08-02) extracts it and links its spans to this trace.
+            // No-op when no SDK is active (carrier stays empty).
+            const carrier: Record<string, string> = {};
+            propagation.inject(context.active(), carrier);
+            if (carrier["traceparent"]) spec.traceparent = carrier["traceparent"];
+            if (carrier["tracestate"]) spec.tracestate = carrier["tracestate"];
 
-      // Return 202 BEFORE any process starts (start-handshake, API-01)
-      return c.json(
-        {
-          jobId,
-          channel,
-          status: "queued" as const,
-        },
-        202,
+            // Initial job status
+            const status: JobStatus = {
+              jobId,
+              channel,
+              language: manifest.language,
+              version: manifest.version,
+              state: "queued",
+              updatedAtMs: enqueuedAtMs,
+            };
+
+            // Atomically write spec, status, and enqueue the job via pipeline
+            const redis = getRedis();
+            const pipeline = redis.pipeline();
+            pipeline.set(keys.jobSpec(jobId), JSON.stringify(spec));
+            pipeline.set(keys.jobStatus(jobId), JSON.stringify(status));
+            pipeline.lpush(keys.jobQueue, jobId);
+            await pipeline.exec();
+
+            // Return 202 BEFORE any process starts (start-handshake, API-01)
+            return c.json(
+              {
+                jobId,
+                channel,
+                status: "queued" as const,
+              },
+              202,
+            );
+          } finally {
+            span.end();
+          }
+        }),
       );
     },
   );

@@ -5,9 +5,35 @@
 package session
 
 import (
+	"context"
 	"io"
 	"sync/atomic"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
+
+// instrumentationName is the meter scope for session-emitted metrics.
+const instrumentationName = "code-runner-worker"
+
+// outputBytesCounter resolves the forwarded-output-bytes counter from the CURRENT
+// global MeterProvider on each call (lazy resolution — see worker.go). A
+// MeterProvider installed after package init (otelinit.Init at boot, or a
+// ManualReader in tests) is honoured; the no-op provider returns a no-op counter
+// at zero cost.
+//
+// The counter increments by the number of bytes forwarded to the sink in the
+// pump budget path — NEVER once per chunk as a span (RESEARCH anti-pattern:
+// per-chunk spans are explicitly forbidden). It carries NO attributes: byte
+// volume is a pure scalar and job_id must never become a metric dimension.
+func outputBytesCounter() metric.Int64Counter {
+	c, _ := otel.Meter(instrumentationName).Int64Counter(
+		"code_runner.output.bytes",
+		metric.WithUnit("By"),
+		metric.WithDescription("Total bytes of sandbox output forwarded to the client (stdout+stderr)."),
+	)
+	return c
+}
 
 // Pump copies bytes from an io.Reader to a sink callback, enforcing a SHARED
 // combined-byte budget (passed as *atomic.Int64 so multiple pumps can share one
@@ -75,6 +101,12 @@ func (p *Pump) Run() error {
 					p.truncated.CompareAndSwap(false, true)
 				}
 				p.sink(chunk[:forward])
+				// OBS-06: count forwarded output bytes (NOT per-chunk spans). We
+				// count only bytes actually forwarded to the sink (within budget),
+				// so truncated/discarded bytes are correctly excluded.
+				if forward > 0 {
+					outputBytesCounter().Add(context.Background(), int64(forward))
+				}
 				p.signalActivity()
 
 				// If budget ran out mid-chunk, mark truncated.

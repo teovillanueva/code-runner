@@ -28,7 +28,9 @@ import (
 
 	"github.com/teovillanueva/code-runner/internal/config"
 	"github.com/teovillanueva/code-runner/internal/jobstore"
+	"github.com/teovillanueva/code-runner/internal/logging"
 	"github.com/teovillanueva/code-runner/internal/manifest"
+	"github.com/teovillanueva/code-runner/internal/otelinit"
 	"github.com/teovillanueva/code-runner/internal/publisher"
 	"github.com/teovillanueva/code-runner/internal/reaper"
 	"github.com/teovillanueva/code-runner/internal/redisx"
@@ -53,6 +55,33 @@ func main() {
 // run is the factored-out boot sequence. It loads config, constructs the real
 // infrastructure stack, and runs the worker loop until ctx is cancelled.
 func run(ctx context.Context) error {
+	// ── OpenTelemetry bootstrap (env-gated no-op when OTEL_* unset, OBS-01) ────
+	// otelinit.Init installs trace/metric/log providers + the W3C propagator ONLY
+	// when OTEL is configured; otherwise it is a true no-op (no exporter, no port,
+	// no startup regression). The returned shutdown is always non-nil.
+	otelShutdown, err := otelinit.Init(ctx)
+	if err != nil {
+		// Telemetry must never block the worker from running — log and proceed
+		// with whatever (possibly no-op) shutdown was returned.
+		slog.Warn("otel: init returned error; continuing", "err", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if sErr := otelShutdown(shutdownCtx); sErr != nil {
+			slog.Warn("otel: shutdown error", "err", sErr)
+		}
+	}()
+
+	// ── Structured stdout logging with trace correlation (D-03 stdout-always) ──
+	// The custom stdout handler injects trace_id/span_id/job_id from ctx into
+	// every JSON line and is installed unconditionally (valid JSON in all states).
+	// We fan out to the otelslog bridge as well, so logs ALSO go to OTLP when
+	// configured — the bridge is a no-op against the SDK's no-op LoggerProvider
+	// when OTEL is off (RESEARCH Pitfall 4: the bridge feeds OTLP only, never stdout).
+	stdoutHandler := logging.NewCtxHandler(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(slog.New(logging.NewFanout(stdoutHandler, otelinit.OTLPLogHandler())))
+
 	cfg := configFromEnv()
 
 	// ── Load language manifests ──────────────────────────────────────────────
@@ -136,6 +165,17 @@ func run(ctx context.Context) error {
 	}
 
 	w := worker.New(store, transport, dockerRunner, pub, workerCfg)
+
+	// ── Observable gauges (OBS-06) ─────────────────────────────────────────────
+	// Register the queue-depth + slots-used/max observable gauges against the
+	// MeterProvider installed by otelinit.Init above. When OTEL is unconfigured
+	// this resolves to the no-op provider (the callback is never invoked). The
+	// deregister func is deferred so the callback detaches on shutdown.
+	if deregister, mErr := w.RegisterMetrics(); mErr != nil {
+		slog.Warn("worker: could not register observable gauges", "err", mErr)
+	} else {
+		defer func() { _ = deregister() }()
+	}
 
 	// ── Reaper ────────────────────────────────────────────────────────────────
 	// The reaper runs alongside the worker and periodically sweeps the host for

@@ -82,6 +82,17 @@ services:
       ENABLE_CHANNEL_AUTH: "true"
       # The languages dir inside the container (bound via the build context)
       LANGUAGES_DIR: /app/languages
+      # ── OpenTelemetry (no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) ──
+      # Blank by default → the API SDK bootstrap is a TRUE no-op (no exporter,
+      # no connection). Uncomment the OTEL_* block in .env to enable, then run
+      # the `observability` profile below to receive + view the data in Jaeger.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME_API:-code-runner-api}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-service.namespace=code-runner}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -124,6 +135,17 @@ services:
       WORKER_WARMUP_MS: ${WORKER_WARMUP_MS:-30000}
       LANGUAGES_DIR: /app/languages
       SECCOMP_PROFILE_PATH: /app/profiles/seccomp/runner.json
+      # ── OpenTelemetry (no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) ──
+      # Blank by default → the worker OTel init is a TRUE no-op (no exporter,
+      # no provider, no port). Uncomment the OTEL_* block in .env + run the
+      # `observability` profile to emit the worker's linked spans + metrics.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME_WORKER:-code-runner-worker}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-service.namespace=code-runner}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
     volumes:
       # Mount the HOST docker socket (no Docker-in-Docker).
       # The worker is a client of the host container runtime.
@@ -165,6 +187,38 @@ services:
       - code-runner
     profiles:
       - stub
+
+  # ── OpenTelemetry Collector ──────────────────────────────────────────────────
+  # Example BYO observability backend. INERT on a plain `docker compose up` — it
+  # only starts under the `observability` profile (mirrors the `stub` mechanism):
+  #   docker compose --profile observability up
+  # Receives OTLP from the api + worker (set OTEL_EXPORTER_OTLP_ENDPOINT=
+  # http://otel-collector:4318 in .env), forwards traces to Jaeger and prints
+  # metrics+logs via the debug exporter. Config: ./observability/otel-collector.yaml.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    networks:
+      - code-runner
+    profiles:
+      - observability
+
+  # ── Jaeger (all-in-one) ──────────────────────────────────────────────────────
+  # The example trace backend (D-08). Native OTLP ingest + built-in UI on 16686.
+  # INERT by default; starts only with `--profile observability`.
+  #   UI: http://localhost:16686
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI
+    networks:
+      - code-runner
+    profiles:
+      - observability
 
 networks:
   code-runner:
