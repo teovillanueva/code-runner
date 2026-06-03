@@ -69,7 +69,7 @@ RUN Rscript -e "\
         clean = TRUE) \
 "
 
-# R_DEFAULT_PACKAGES: restrict default package loading to "base" only.
+# R_DEFAULT_PACKAGES: restrict default package loading to a reconciled list.
 # Must be set AFTER the install.packages step above (which requires the utils
 # package to be available during the build).
 #
@@ -79,11 +79,24 @@ RUN Rscript -e "\
 # EPERM, producing confusing "package utils/stats not found" warnings to stderr on
 # every Rscript invocation even though R itself works correctly.
 #
-# Setting R_DEFAULT_PACKAGES=base skips auto-loading of datasets, grDevices,
-# graphics, methods, stats, and utils at startup.  Users who need these packages
-# can load them explicitly with library().  The baked-in packages (jsonlite,
-# data.table) are unaffected — they are loaded by user code, not at startup.
-ENV R_DEFAULT_PACKAGES=base
+# R11 (Phase 9): a file graphics device must be usable for plot artifacts.  The
+# base r-base:4.4.2 image already reports capabilities()[c('png','cairo')] == TRUE
+# (cairo is present — NO extra apt graphics libs are required).  The only missing
+# piece is that grDevices (the device, e.g. png()) and graphics (high-level plot()
+# / lines() / etc.) are not auto-loaded under a bare 'base' default.  grDevices
+# and graphics do NOT trigger the popen("which uname") path — ONLY 'utils' does
+# (see the EPERM rationale above) — so adding them back keeps the hardened-sandbox
+# stderr SILENT while making png('chart.png'); plot(...); dev.off() work end to end.
+# 'utils'/'stats'/'methods'/'datasets' stay OUT to preserve that silence.
+#
+# No auto-device / show()-interception shim (D-10): the convention is that users
+# open a file device with a RELATIVE name into the cwd (/workspace), e.g.
+#   png('chart.png'); plot(1:3); dev.off()
+# and the worker's workspace-diff capture (Phase-9 plan 04) picks chart.png up as
+# an artifact.  R_DEFAULT_DEVICE stays pdf (above) — moot here since the user opens
+# png() explicitly.  The baked-in packages (jsonlite, data.table) are unaffected;
+# all baked at build, runtime stays --network=none.
+ENV R_DEFAULT_PACKAGES=base,grDevices,graphics
 
 # ── Workspace directory ────────────────────────────────────────────────────────
 # The runner (internal/runner/docker.go) sets WorkingDir=/workspace and

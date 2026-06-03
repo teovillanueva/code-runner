@@ -22,6 +22,8 @@ export const keys = {
   jobStatus: (jobId: string): string => `job:${jobId}:status`,
   /** Hash holding the JSON-encoded JobSpec for a job. */
   jobSpec: (jobId: string): string => `job:${jobId}:spec`,
+  /** Key holding the JSON-encoded RunResult (collected output) for a job; written with a TTL. */
+  jobOutput: (jobId: string): string => `job:${jobId}:output`,
 } as const;
 
 /** soketi event names emitted on the private-run-<jobId> channel. */
@@ -30,4 +32,5 @@ export const events = {
   stdout: "stdout",
   stderr: "stderr",
   result: "result",
+  artifact: "artifact",
 } as const;

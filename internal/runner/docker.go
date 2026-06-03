@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"path/filepath"
 	"strings"
@@ -632,6 +633,93 @@ func (s *dockerSandbox) CPUReader() CPUUsageFunc {
 // when calling session.Run.
 func (s *dockerSandbox) Limits() wire.Limits {
 	return s.spec.Limits
+}
+
+// CapturedArtifact is one regular file read out of the sandbox /workspace
+// directory by ReadArtifacts, before the container (and its anonymous volume)
+// is force-removed. It carries the raw bytes; the worker is responsible for
+// uploading them to the ArtifactStore and discarding them afterwards.
+type CapturedArtifact struct {
+	// Name is the basename of the captured file (e.g. "plot.png").
+	Name string
+	// MimeType is the best-effort detected MIME type, derived from the file
+	// extension; "application/octet-stream" when unknown.
+	MimeType string
+	// Data is the raw file content.
+	Data []byte
+}
+
+// ReadArtifacts reads new regular files from the sandbox /workspace directory
+// via CopyFromContainer (the mirror of copyFilesToContainer's CopyToContainer +
+// tar write). It MUST be called BEFORE Cleanup()/Kill(), which force-remove the
+// /workspace anonymous volume (RemoveVolumes=true) — reading after races a gone
+// volume (D-07).
+//
+// The exclude map keys are basenames that must NOT be returned as artifacts:
+// the worker passes the input file-name set + ".compile_ready" + the
+// compile-output binary basename (D-05/R4). ReadArtifacts ALSO defensively
+// excludes the compile marker basename (filepath.Base(compileRunMarker) ==
+// ".compile_ready") even when the caller omits it, so the bridge marker is
+// never surfaced as an artifact.
+//
+// Only top-level regular files are returned (tar entries with a basename equal
+// to the entry name and Typeflag == tar.TypeReg). Directories and nested paths
+// are skipped — workspace-diff capture is a flat cwd convention (users save
+// with relative names).
+func (s *dockerSandbox) ReadArtifacts(ctx context.Context, exclude map[string]bool) ([]CapturedArtifact, error) {
+	rc, _, err := s.cli.CopyFromContainer(ctx, s.containerID, sandboxWorkDir)
+	if err != nil {
+		return nil, fmt.Errorf("docker: CopyFromContainer %s: %w", sandboxWorkDir, err)
+	}
+	defer rc.Close() //nolint:errcheck
+
+	// Defensive exclusion of the compile marker basename, regardless of caller.
+	markerBase := filepath.Base(compileRunMarker) // ".compile_ready"
+
+	var artifacts []CapturedArtifact
+	tr := tar.NewReader(rc)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return artifacts, fmt.Errorf("docker: ReadArtifacts tar.Next: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		name := filepath.Base(hdr.Name)
+		// Skip nested paths: CopyFromContainer prefixes entries with the dir name
+		// (e.g. "workspace/plot.png"); a top-level file's basename matches its
+		// position. We accept any regular file whose basename is not excluded.
+		if name == "" || name == "." {
+			continue
+		}
+		if name == markerBase {
+			continue
+		}
+		if exclude != nil && exclude[name] {
+			continue
+		}
+
+		data, readErr := io.ReadAll(tr)
+		if readErr != nil {
+			return artifacts, fmt.Errorf("docker: ReadArtifacts read %q: %w", name, readErr)
+		}
+
+		mimeType := mime.TypeByExtension(filepath.Ext(name))
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+
+		artifacts = append(artifacts, CapturedArtifact{
+			Name:     name,
+			MimeType: mimeType,
+			Data:     data,
+		})
+	}
+	return artifacts, nil
 }
 
 // Compile executes argv as an exec inside the already-running hardened

@@ -101,6 +101,43 @@ func (s *Store) ReadStatus(ctx context.Context, jobID string) (wire.JobStatus, e
 	return st, nil
 }
 
+// WriteRunResult serialises rr to JSON and stores it at keys.JobOutputKey(jobID)
+// with the provided TTL. This is the first keyed write that carries a real
+// expiry (spec/status writes use 0 = no expiry): the collected RunResult is
+// ephemeral pull state that auto-expires after w.cfg.RunResultTTL (R6/D-09,
+// threat T-09-14). The worker calls this inside teardown only when
+// spec.CollectOutput is set.
+func (s *Store) WriteRunResult(ctx context.Context, jobID string, rr wire.RunResult, ttl time.Duration) error {
+	b, err := json.Marshal(rr)
+	if err != nil {
+		return fmt.Errorf("jobstore.WriteRunResult: marshal: %w", err)
+	}
+	if err := s.client.Set(ctx, keys.JobOutputKey(jobID), b, ttl).Err(); err != nil {
+		return fmt.Errorf("jobstore.WriteRunResult: SET %s: %w", keys.JobOutputKey(jobID), err)
+	}
+	return nil
+}
+
+// ReadRunResult retrieves and deserialises the RunResult stored at
+// keys.JobOutputKey(jobID). Returns ErrNotFound when the key is absent, expired,
+// or the job was not collected (no RunResult was ever written). The API maps
+// this to an HTTP 404 on GET /v1/jobs/:id/output.
+func (s *Store) ReadRunResult(ctx context.Context, jobID string) (wire.RunResult, error) {
+	b, err := s.client.Get(ctx, keys.JobOutputKey(jobID)).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return wire.RunResult{}, fmt.Errorf("jobstore.ReadRunResult %s: %w", jobID, ErrNotFound)
+		}
+		return wire.RunResult{}, fmt.Errorf("jobstore.ReadRunResult: GET %s: %w", keys.JobOutputKey(jobID), err)
+	}
+
+	var rr wire.RunResult
+	if err := json.Unmarshal(b, &rr); err != nil {
+		return wire.RunResult{}, fmt.Errorf("jobstore.ReadRunResult: unmarshal: %w", err)
+	}
+	return rr, nil
+}
+
 // IsNotFound reports whether err (or any wrapped error in its chain) is
 // ErrNotFound. Callers can use this instead of errors.Is to handle the sentinel.
 func IsNotFound(err error) bool {

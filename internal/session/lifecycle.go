@@ -40,6 +40,12 @@ type session struct {
 	once     sync.Once
 	done     chan struct{}      // closed by terminate() so all clock goroutines can exit
 	resultCh chan runner.Result // buffered(1); written once by terminate()
+
+	// beforeCleanup, if non-nil, runs once in terminate() after the process has
+	// terminated but BEFORE sb.Kill()/sb.Cleanup() destroy the container — the
+	// only window for reading the sandbox filesystem (artifact capture). Set via
+	// Sinks.BeforeCleanup on the RunInteractive path; nil on the plain Run path.
+	beforeCleanup func(ctx context.Context)
 }
 
 // Run is the main entry point. It supervises sb with the given limits,
@@ -116,6 +122,13 @@ func (s *session) supervise(ctx context.Context) {
 func (s *session) terminate(ctx context.Context, waitResult runner.Result, reason terminateReason) {
 	s.once.Do(func() {
 		durationMs := int(time.Since(s.startTime).Milliseconds())
+
+		// Pre-cleanup hook (artifact capture): runs while the container still
+		// exists — MUST be before Kill/Cleanup remove it and its /workspace
+		// volume (D-07). Best-effort by contract; the hook itself swallows errors.
+		if s.beforeCleanup != nil {
+			s.beforeCleanup(ctx)
+		}
 
 		// Kill the entire container (not just the PID) then clean up.
 		// Errors are intentionally ignored — we are already on the terminal path.

@@ -4,11 +4,11 @@
 # Requires: node (>=18) and curl. No repo checkout needed.
 set -euo pipefail
 
-API="${API:-https://code-runner-api.fly.dev}"
+API="${API:-https://<your-api-app>.fly.dev}"
 # Your EXECUTOR_API_TOKEN — pass it via env, never hard-code a secret:
 #   TOKEN=xxxx bash try-fly.sh
 TOKEN="${TOKEN:?Set TOKEN env var to your EXECUTOR_API_TOKEN}"
-SOKETI_HOST="${SOKETI_HOST:-code-runner-soketi.fly.dev}"
+SOKETI_HOST="${SOKETI_HOST:-<your-soketi-app>.fly.dev}"
 SOKETI_KEY="${SOKETI_KEY:-code-runner-key}"
 
 echo "→ API: $API"

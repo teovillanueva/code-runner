@@ -22,6 +22,13 @@ type Sinks struct {
 	Stdout func([]byte)
 	// Stderr is called for each forwarded stderr chunk. Must not be nil.
 	Stderr func([]byte)
+	// BeforeCleanup, if non-nil, is called inside the single sync.Once teardown
+	// AFTER the process has terminated but BEFORE the sandbox is killed and
+	// removed. It is the only window in which a caller can read the sandbox's
+	// filesystem (e.g. artifact capture via CopyFromContainer) — once Kill +
+	// Cleanup run, the container and its /workspace volume are gone. It is called
+	// at most once and must not block indefinitely; the supervised ctx is passed.
+	BeforeCleanup func(ctx context.Context)
 }
 
 // RunInteractive supervises sb like Run, but publishes each stdout/stderr chunk
@@ -45,13 +52,14 @@ func RunInteractive(ctx context.Context, sb runner.Sandbox, limits wire.Limits, 
 // caller-owned truncated flag for test injection.
 func runInteractiveWithTruncated(ctx context.Context, sb runner.Sandbox, limits wire.Limits, cpuUsage CPUUsageFunc, sinks Sinks, truncated *atomic.Bool) (runner.Result, error) {
 	s := &session{
-		sb:        sb,
-		limits:    limits,
-		cpuUsage:  cpuUsage,
-		truncated: truncated,
-		startTime: time.Now(),
-		done:      make(chan struct{}),
-		resultCh:  make(chan runner.Result, 1),
+		sb:            sb,
+		limits:        limits,
+		cpuUsage:      cpuUsage,
+		truncated:     truncated,
+		startTime:     time.Now(),
+		done:          make(chan struct{}),
+		resultCh:      make(chan runner.Result, 1),
+		beforeCleanup: sinks.BeforeCleanup,
 	}
 	s.superviseInteractive(ctx, sinks)
 	result := <-s.resultCh

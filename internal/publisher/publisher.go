@@ -180,6 +180,15 @@ func (p *Publisher) Result(jobID string, ev wire.ResultEvent) error {
 	return p.t.Trigger(keys.ChannelForJob(jobID), keys.EventResult, ev)
 }
 
+// Artifact triggers a metadata-only "artifact" event on the job's channel,
+// one per captured artifact (R8). The wire.Artifact payload carries only
+// {name, mimeType, bytes, url} — never the file bytes — so it is inherently
+// small (a presigned URL plus three fields) and stays well under soketi's
+// ~10 KB event ceiling (maxEventBytes). No chunking is required.
+func (p *Publisher) Artifact(jobID string, a wire.Artifact) error {
+	return p.t.Trigger(keys.ChannelForJob(jobID), keys.EventArtifact, a)
+}
+
 // triggerOutput handles the chunking logic for Stdout/Stderr.
 // It splits the chunk into pieces whose JSON-serialised form stays within
 // maxEventBytes, assigns a monotonic seq to each piece, and triggers them

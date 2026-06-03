@@ -61,9 +61,41 @@ services:
       timeout: 3s
       retries: 15
 
+  # ── MinIO (S3-compatible object storage) ──────────────────────────────────────
+  # Dev backend for the worker's artifact store (Phase 9, R14). The worker points
+  # AWS_ENDPOINT_URL_S3 at http://minio:9000 and uploads run artifacts here.
+  #
+  # NO separate bucket-create init container: the worker's S3Store.EnsureLifecycle
+  # (plan 02) calls BucketExists + MakeBucket-if-absent on boot, so the bucket
+  # ${BUCKET_NAME} is auto-created against a FRESH MinIO. The same code runs
+  # unmodified against Tigris in prod (see docs/deploy-fly.md).
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    # Expose to host only for local dev (S3 API on 9000, web console on 9001).
+    # Commented like soketi's optional ports to avoid clashing with a host MinIO.
+    # To expose: uncomment the ports block below.
+    # ports:
+    #   - "9000:9000" # S3 API
+    #   - "9001:9001" # web console (http://localhost:9001)
+    volumes:
+      - minio_data:/data
+    networks:
+      - code-runner
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
   # ── API ───────────────────────────────────────────────────────────────────────
   # Hono gateway. Validates requests, enqueues jobs, relays stdin/control.
   # Never talks to the worker directly — coupling is Redis-only.
+  # NOTE: the API needs NO S3 creds — only the worker uploads/signs/lifecycles.
   api:
     build:
       context: .
@@ -135,6 +167,21 @@ services:
       WORKER_WARMUP_MS: ${WORKER_WARMUP_MS:-30000}
       LANGUAGES_DIR: /app/languages
       SECCOMP_PROFILE_PATH: /app/profiles/seccomp/runner.json
+      # ── Artifacts / S3 object storage (Phase 9, D-03) ──
+      # Point the worker's S3Store at the dev MinIO service. The bucket is
+      # AUTO-CREATED by the worker on boot (S3Store.EnsureLifecycle) — there is
+      # deliberately NO separate bucket-create init container. Standard AWS_* env;
+      # ARTIFACT_S3_* overrides exist (see .env.example) but are unused in dev.
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      BUCKET_NAME: ${BUCKET_NAME:-code-runner-artifacts}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      # Retention TTLs (D-11). Object TTL (days) MUST be >= presigned-URL TTL
+      # (seconds) or the worker fails fast at boot (R15 ordering invariant).
+      RUN_RESULT_TTL: ${RUN_RESULT_TTL:-600}
+      PRESIGNED_URL_TTL: ${PRESIGNED_URL_TTL:-86400}
+      ARTIFACT_S3_OBJECT_TTL: ${ARTIFACT_S3_OBJECT_TTL:-3}
       # ── OpenTelemetry (no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) ──
       # Blank by default → the worker OTel init is a TRUE no-op (no exporter,
       # no provider, no port). Uncomment the OTEL_* block in .env + run the
@@ -155,6 +202,8 @@ services:
       redis:
         condition: service_healthy
       soketi:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     networks:
       - code-runner
@@ -223,3 +272,8 @@ services:
 networks:
   code-runner:
     driver: bridge
+
+volumes:
+  # Persists dev artifacts across `docker compose` restarts. The bucket inside
+  # is auto-created by the worker on boot (S3Store.EnsureLifecycle) — no init step.
+  minio_data:

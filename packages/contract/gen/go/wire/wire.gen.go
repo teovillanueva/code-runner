@@ -2,6 +2,24 @@
 
 package wire
 
+// A single file captured from the sandbox working directory, referenced by an
+// object-storage presigned URL. URL-only (no inline bytes): object storage is the
+// single backend.
+type Artifact struct {
+	// Size of the captured file in bytes.
+	Bytes int `json:"bytes"`
+
+	// Best-effort detected MIME type of the captured file.
+	MimeType string `json:"mimeType"`
+
+	// Relative file name as written by the program into its working directory (e.g.
+	// plot.png).
+	Name string `json:"name"`
+
+	// Presigned GET URL the consumer/browser fetches directly (no bearer).
+	Url string `json:"url"`
+}
+
 // Single source of truth for every message exchanged between the API and the
 // worker, plus the manifest and public API payloads. TS types + zod validators +
 // Go structs are generated from this file. Do not edit generated artifacts by
@@ -22,6 +40,11 @@ const ControlTypeStdinClose ControlType = "stdin_close"
 
 // Body of POST /v1/execute.
 type ExecuteRequest struct {
+	// Opt-in: when true, the worker accumulates stdout/stderr and captures workspace
+	// artifacts into a pullable RunResult (GET /v1/jobs/:id/output). Defaults to
+	// false.
+	CollectOutput *bool `json:"collectOutput,omitempty,omitzero"`
+
 	// Files corresponds to the JSON schema field "files".
 	Files []FileInput `json:"files"`
 
@@ -61,6 +84,11 @@ type FileInput struct {
 type JobSpec struct {
 	// Channel corresponds to the JSON schema field "channel".
 	Channel string `json:"channel"`
+
+	// Resolved opt-in flag from ExecuteRequest; when true the worker persists a
+	// RunResult and captures artifacts. The API always writes an explicit boolean
+	// (default false).
+	CollectOutput *bool `json:"collectOutput,omitempty,omitzero"`
 
 	// Compile corresponds to the JSON schema field "compile".
 	Compile *JobSpecCompile `json:"compile"`
@@ -158,6 +186,14 @@ type Limits struct {
 	// Max ms with no stdout and no stdin before the sandbox is killed.
 	IdleMs int `json:"idleMs"`
 
+	// Max total bytes across all captured artifacts before excess is dropped
+	// (artifactsTruncated=true).
+	MaxArtifactBytes int `json:"maxArtifactBytes"`
+
+	// Max number of captured artifact files before excess is dropped
+	// (artifactsTruncated=true).
+	MaxArtifacts int `json:"maxArtifacts"`
+
 	// Memory cap in MiB. memory == memory-swap (no swap).
 	MemoryMb int `json:"memoryMb"`
 
@@ -178,6 +214,12 @@ type LimitsOverride struct {
 
 	// IdleMs corresponds to the JSON schema field "idleMs".
 	IdleMs *int `json:"idleMs,omitempty,omitzero"`
+
+	// MaxArtifactBytes corresponds to the JSON schema field "maxArtifactBytes".
+	MaxArtifactBytes *int `json:"maxArtifactBytes,omitempty,omitzero"`
+
+	// MaxArtifacts corresponds to the JSON schema field "maxArtifacts".
+	MaxArtifacts *int `json:"maxArtifacts,omitempty,omitzero"`
 
 	// MemoryMb corresponds to the JSON schema field "memoryMb".
 	MemoryMb *int `json:"memoryMb,omitempty,omitzero"`
@@ -258,6 +300,46 @@ type ResultEvent struct {
 type ResultEventExitCode *int
 
 type ResultEventSignal *string
+
+// The persisted, pullable result of a collected run (GET /v1/jobs/:id/output).
+// ResultEvent's terminal fields plus accumulated stdout/stderr and captured
+// artifacts.
+type RunResult struct {
+	// Captured workspace artifacts, each referenced by presigned URL.
+	Artifacts []Artifact `json:"artifacts"`
+
+	// True when captured files exceeded maxArtifacts/maxArtifactBytes and excess was
+	// dropped.
+	ArtifactsTruncated bool `json:"artifactsTruncated"`
+
+	// DurationMs corresponds to the JSON schema field "durationMs".
+	DurationMs int `json:"durationMs"`
+
+	// ExitCode corresponds to the JSON schema field "exitCode".
+	ExitCode RunResultExitCode `json:"exitCode"`
+
+	// Killed by the idle clock.
+	IdleTimedOut bool `json:"idleTimedOut"`
+
+	// Signal corresponds to the JSON schema field "signal".
+	Signal RunResultSignal `json:"signal"`
+
+	// Accumulated stderr (within the outputKb budget; same bytes streamed to soketi).
+	Stderr string `json:"stderr"`
+
+	// Accumulated stdout (within the outputKb budget; same bytes streamed to soketi).
+	Stdout string `json:"stdout"`
+
+	// Killed by the wall-clock or cpu clock.
+	TimedOut bool `json:"timedOut"`
+
+	// Output exceeded outputKb and was truncated.
+	Truncated bool `json:"truncated"`
+}
+
+type RunResultExitCode *int
+
+type RunResultSignal *string
 
 // soketi event 'stage' on private-run-<jobId>.
 type StageEvent struct {
