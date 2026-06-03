@@ -435,10 +435,20 @@
           "index": 0,
           "value": 1,
           "op": "SCMP_CMP_EQ",
-          "comment": "AF_UNIX (1) — allow Unix domain sockets for IPC (e.g. Python multiprocessing)"
+          "comment": "AF_UNIX (1) \u2014 allow Unix domain sockets for IPC (e.g. Python multiprocessing)"
         }
       ],
       "comment": "Restrict socket() to AF_UNIX only. NetworkMode=none already blocks network at the kernel level, but restricting socket domains provides defense in depth."
+    },
+    {
+      "names": [
+        "clone3",
+        "close_range",
+        "faccessat2"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 38,
+      "comment": "Return ENOSYS (not EPERM) so glibc/musl fall back to the older allowed syscall. Without this, modern glibc (Debian 12, amd64) fails clone3 with EPERM -> 'Cannot allocate TLS block'."
     }
   ]
 }
