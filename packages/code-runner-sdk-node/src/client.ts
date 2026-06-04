@@ -72,6 +72,19 @@ export class CodeRunnerClient {
     return this.request<JobStatus>("GET", `/v1/jobs/${encodeURIComponent(id)}`);
   }
 
+  /**
+   * GET /v1/jobs/:id/status — fetch the live JobStatus (alias of getJob).
+   * Intended for reconciling client state after a late soketi subscription:
+   * pull the authoritative state instead of waiting for an event that may have
+   * already fired. 404 -> NotFoundError.
+   */
+  getStatus(id: string): Promise<JobStatus> {
+    return this.request<JobStatus>(
+      "GET",
+      `/v1/jobs/${encodeURIComponent(id)}/status`,
+    );
+  }
+
   /** GET /v1/jobs/:id/output — fetch the persisted run output. 404 -> NotFoundError. */
   getOutput(id: string): Promise<RunResult> {
     return this.request<RunResult>(

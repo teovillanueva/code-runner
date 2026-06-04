@@ -1,13 +1,20 @@
-// GET /v1/jobs/:id        — returns the JobStatus for a job or 404 if not found.
-// GET /v1/jobs/:id/output — returns the persisted RunResult (collected run output) or 404.
+// GET /v1/jobs/:id         — returns the JobStatus for a job or 404 if not found.
+// GET /v1/jobs/:id/status  — alias of the above; mirrors the /output sub-path so
+//                            clients can pull the live status to reconcile state
+//                            after a late soketi subscription.
+// GET /v1/jobs/:id/output  — returns the persisted RunResult (collected run output) or 404.
 // Keys come from @teovilla/code-runner-contract (API-11: only Redis GET, never calls worker).
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { keys } from "@teovilla/code-runner-contract";
 import { getRedis } from "../redis.ts";
 
 export function registerJobsRoutes(app: Hono): void {
-  app.get("/v1/jobs/:id", async (c) => {
+  // Shared handler: read + parse the persisted JobStatus (job:<id>:status). A
+  // job that already advanced past "queued" before the client subscribed to its
+  // soketi channel would miss those events; pulling this on subscribe lets the
+  // client reconcile to the real state (late-join).
+  const respondStatus = async (c: Context) => {
     const jobId = c.req.param("id");
     const redis = getRedis();
 
@@ -24,7 +31,10 @@ export function registerJobsRoutes(app: Hono): void {
     }
 
     return c.json(status, 200);
-  });
+  };
+
+  app.get("/v1/jobs/:id", respondStatus);
+  app.get("/v1/jobs/:id/status", respondStatus);
 
   // R9: server-side pull surface for collected run output. Redis-only (API-11):
   // reads job:<id>:output and never reaches the worker. A single absence check
