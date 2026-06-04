@@ -42,14 +42,20 @@ primary_region = "gru"
   # max() avoids summing duplicates. Swap to the metric name you actually expose.
   FAS_PROMETHEUS_QUERY = "max(code_runner_queue_depth)"
 
-  # Scaling expression (Expr). ~2 jobs per machine; floor 1 so the first job of a
-  # burst never waits on a cold start; ceiling 20 as a cost guard — raise for big
-  # exams. STARTED = start/stop a PRE-CREATED pool (`fly scale count N` once; the
-  # ceiling is then N). For create/destroy instead (viable now that the worker is
-  # stateless — self-contained image, no per-machine volume), comment this out and
-  # use FAS_CREATED_MACHINE_COUNT with the same expression.
-  FAS_STARTED_MACHINE_COUNT = "min(20, max(1, ceil(qdepth / 2)))"
-  # FAS_CREATED_MACHINE_COUNT = "min(20, max(1, ceil(qdepth / 2)))"
+  # Scaling expression (Expr). WORKER_MAX_SANDBOXES=20, so each node clears ~20
+  # queued jobs → ceil(qdepth / 20). Floor 1 so the first job of a burst doesn't
+  # wait on a cold start; ceiling 6 (=120 concurrent) as a cost guard — raise it
+  # AND the pre-created pool together for bigger exams.
+  #
+  # STARTED = start/stop a PRE-CREATED pool (run `fly scale count 6 -a
+  # code-runner-worker` once; the ceiling can't exceed the pool size). Volumes are
+  # fine with start/stop. CAVEAT: the signal is QUEUE depth only — when the queue
+  # drains the autoscaler stops extra machines, which kills any sessions still
+  # running on them. Safe for short exam runs (they finish ~when the queue drains);
+  # for long interactive sessions, expose an in-flight (running+queued) metric and
+  # scale on that instead. Keep a floor that covers steady load during exam hours.
+  FAS_STARTED_MACHINE_COUNT = "min(6, max(1, ceil(qdepth / 20)))"
+  # FAS_CREATED_MACHINE_COUNT = "min(6, max(1, ceil(qdepth / 20)))"
 
   # Reconcile interval (default 15s).
   # FAS_INTERVAL = "15s"

@@ -27,10 +27,11 @@ primary_region = "gru"
   SOKETI_USE_TLS = "true"
   SOKETI_APP_ID = "code-runner"
   SOKETI_APP_KEY = "code-runner-key"
-  # High-concurrency deployment (e.g. exam bursts): 50 live sandboxes per node.
-  # Size the VM below to match — ~each sandbox needs its memoryMb (default 128) +
-  # CPU share on top of dockerd. Tune both down together for smaller setups.
-  WORKER_MAX_SANDBOXES = "50"
+  # Bursty deployment (e.g. exams): 20 live sandboxes per node on a small VM, and
+  # let the autoscaler add nodes. Smaller nodes give a cheap floor + fine-grained
+  # scaling; each sandbox needs ~its memoryMb (default 128) + a CPU share on top
+  # of dockerd. Raise both together (e.g. 45 on perf-4x/8GB) for fewer, bigger nodes.
+  WORKER_MAX_SANDBOXES = "20"
   SANDBOX_IMAGE_REGISTRY = "ghcr.io/teovillanueva"
   # ── Artifacts retention TTLs (Phase 9, D-11) — NON-secret config ──
   # Object TTL is in DAYS; the two URL/result TTLs are in SECONDS. The object TTL
@@ -65,11 +66,12 @@ primary_region = "gru"
   source = "docker_data"
   destination = "/var/lib/docker"
 
-# Sized for 50 concurrent sandboxes: dedicated CPUs (accurate CPU-clock accounting,
-# no noisy-neighbour) + memory for 50 × ~128 MB sandboxes plus dockerd/OS. The
-# loaded language images sit on the volume (disk), not RAM. Tune down with
-# WORKER_MAX_SANDBOXES for smaller deployments.
+# Sized for 20 concurrent sandboxes: dedicated CPUs (accurate CPU-clock accounting,
+# no noisy-neighbour) + memory for 20 × ~128 MB sandboxes plus dockerd/OS (~1.2 GB).
+# The loaded language images sit on the volume (disk), not RAM. The autoscaler adds
+# more nodes under load; scale this VM up + WORKER_MAX_SANDBOXES together for
+# fewer/bigger nodes (e.g. performance/4cpu/8192 for ~45 sandboxes).
 [[vm]]
   cpu_kind = "performance"
-  cpus = 8
-  memory_mb = 16384
+  cpus = 2
+  memory_mb = 4096
