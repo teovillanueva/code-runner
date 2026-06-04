@@ -46,11 +46,22 @@ export class FakePusher {
   readonly channels = new Map<string, FakeChannel>();
   readonly unsubscribed: string[] = [];
   disconnected = false;
+  // Mirrors pusher-js's `connection.state`. Real `new Pusher()` auto-connects,
+  // so a fresh client reports "connected"; the provider effect only calls
+  // connect() when a prior cleanup left it "disconnected".
+  readonly connection = { state: "connected" };
+  connectCount = 0;
 
   constructor(key: string, opts: Record<string, unknown>) {
     this.key = key;
     this.opts = opts;
     FakePusher.instances.push(this);
+  }
+
+  connect(): void {
+    this.connectCount += 1;
+    this.disconnected = false;
+    this.connection.state = "connected";
   }
 
   subscribe(name: string): FakeChannel {
@@ -67,6 +78,7 @@ export class FakePusher {
 
   disconnect(): void {
     this.disconnected = true;
+    this.connection.state = "disconnected";
   }
 
   /** Test helper: the channel by name (after the hook subscribed). */

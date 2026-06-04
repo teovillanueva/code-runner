@@ -2,7 +2,10 @@ import type { ReactNode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CodeRunnerProvider } from "../src/provider.tsx";
+import {
+  CodeRunnerProvider,
+  __resetPusherRegistry,
+} from "../src/provider.tsx";
 import { useCodeRunnerJob } from "../src/useCodeRunnerJob.ts";
 import { FakePusher } from "./fake-pusher.ts";
 
@@ -34,15 +37,18 @@ function activePusher(): FakePusher {
 
 beforeEach(() => {
   FakePusher.reset();
+  __resetPusherRegistry();
 });
 
 describe("useCodeRunnerJob", () => {
-  it("subscribes to private-run-<jobId> and starts idle", () => {
+  it("subscribes to private-run-<jobId> and starts queued", () => {
     const { result } = renderHook(() => useCodeRunnerJob({ jobId: "j1" }), {
       wrapper,
     });
     expect(activePusher().channel("private-run-j1")).toBeDefined();
-    expect(result.current.status).toBe("idle");
+    // A job that already has a channel is enqueued, not idle (status seeds to
+    // "queued" the moment there is a channel to subscribe to).
+    expect(result.current.status).toBe("queued");
     expect(result.current.stdout).toBe("");
     expect(result.current.result).toBeNull();
   });
@@ -191,7 +197,7 @@ describe("useCodeRunnerJob", () => {
       await result.current.sendStdin("ignored");
     });
     // Reaching here without throwing is the assertion.
-    expect(result.current.status).toBe("idle");
+    expect(result.current.status).toBe("queued");
   });
 
   it("unbinds every handler and unsubscribes on unmount", () => {
@@ -225,7 +231,8 @@ describe("useCodeRunnerJob", () => {
     rerender({ jobId: "j2" });
 
     expect(result.current.stdout).toBe("");
-    expect(result.current.status).toBe("idle");
+    // New job/channel → re-seeded to "queued", not "idle".
+    expect(result.current.status).toBe("queued");
     expect(p.unsubscribed).toContain("private-run-j1");
     expect(p.channel("private-run-j2")).toBeDefined();
   });
