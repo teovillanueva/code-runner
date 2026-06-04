@@ -27,7 +27,10 @@ primary_region = "gru"
   SOKETI_USE_TLS = "true"
   SOKETI_APP_ID = "code-runner"
   SOKETI_APP_KEY = "code-runner-key"
-  WORKER_MAX_SANDBOXES = "2"
+  # High-concurrency deployment (e.g. exam bursts): 50 live sandboxes per node.
+  # Size the VM below to match — ~each sandbox needs its memoryMb (default 128) +
+  # CPU share on top of dockerd. Tune both down together for smaller setups.
+  WORKER_MAX_SANDBOXES = "50"
   SANDBOX_IMAGE_REGISTRY = "ghcr.io/teovillanueva"
   # ── Artifacts retention TTLs (Phase 9, D-11) — NON-secret config ──
   # Object TTL is in DAYS; the two URL/result TTLs are in SECONDS. The object TTL
@@ -51,27 +54,22 @@ primary_region = "gru"
   # The API app needs NONE of these — only the worker uploads/signs/lifecycles.
   # The worker auto-creates the Tigris bucket on boot if absent (S3Store.EnsureLifecycle).
 
-# [mounts] — OPTIONAL with the self-contained worker image.
-#
-# The language images are baked into the image and `docker load`ed on boot (see
-# deploy/fly/worker/Dockerfile + entrypoint.sh), so the /var/lib/docker volume is
-# no longer needed as an image cache. DROP it to make the worker fully stateless
-# — which is what lets an autoscaler create/destroy nodes freely (volumes are
-# per-machine and block that). See docs/self-hosting/scaling.
-#
-# Trade-off when stateless: /var/lib/docker lives on the machine's ephemeral
-# rootfs, so it must be large enough to hold the loaded images (size the VM's
-# disk accordingly). Keep the mount below ONLY if you prefer load-once-per-volume
-# over a slightly larger rootfs.
-#
-# [mounts]
-#   source = "docker_data"
-#   destination = "/var/lib/docker"
+# Volume for /var/lib/docker. With self-contained images this is OPTIONAL for the
+# image cache, BUT at high per-node concurrency (50 sandboxes) you want a volume
+# anyway: the baked images load into it (~several GB) and 50 container layers live
+# here too — an ephemeral rootfs is too small. Start/stop pool autoscaling
+# (FAS_STARTED_MACHINE_COUNT) is fully compatible with volumes; only create/destroy
+# autoscaling requires going volume-less. Size the volume for images + headroom
+# (≈40 GB). For a small stateless setup instead, drop this and use a larger rootfs.
+[mounts]
+  source = "docker_data"
+  destination = "/var/lib/docker"
 
-# Size for real load: dockerd + the loaded language images (R alone is ~847MB) +
-# N live sandboxes share this VM. For a stateless (no-volume) node give it enough
-# disk for the baked images plus headroom, and raise size/memory together with
-# WORKER_MAX_SANDBOXES. shared-cpu-1x/1GB is only enough for light TESTING.
+# Sized for 50 concurrent sandboxes: dedicated CPUs (accurate CPU-clock accounting,
+# no noisy-neighbour) + memory for 50 × ~128 MB sandboxes plus dockerd/OS. The
+# loaded language images sit on the volume (disk), not RAM. Tune down with
+# WORKER_MAX_SANDBOXES for smaller deployments.
 [[vm]]
-  size = "shared-cpu-2x"
-  memory = "2048mb"
+  cpu_kind = "performance"
+  cpus = 8
+  memory_mb = 16384

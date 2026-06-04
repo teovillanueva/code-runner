@@ -10,6 +10,7 @@ import { registerExecuteRoutes } from "./routes/execute.ts";
 import { registerJobsRoutes } from "./routes/jobs.ts";
 import { registerLanguagesRoutes } from "./routes/languages.ts";
 import { registerControlRoutes } from "./routes/control.ts";
+import { registerMetricsRoutes } from "./routes/metrics.ts";
 import { registerChannelAuthRoutes } from "./channelAuth.ts";
 import { config } from "./config.ts";
 import { getLogger } from "./logger.ts";
@@ -23,6 +24,10 @@ export function makeApp(): Hono {
 
   // Health check (no auth required)
   app.get("/health", (c) => c.json({ status: "ok" }));
+
+  // Prometheus scrape endpoint (no auth — scraped by the platform). Exposes the
+  // job-queue depth for autoscaling. Lives outside /v1/* so bearer auth skips it.
+  registerMetricsRoutes(app);
 
   // Apply bearer auth to all /v1/* routes
   app.use("/v1/*", bearerAuth);
