@@ -39,7 +39,11 @@ set -euo pipefail
 APP="${APP:-code-runner-worker}"
 REGION="${REGION:-gru}"
 VOL_NAME="${VOL_NAME:-docker_data}"
-VOL_SIZE="${VOL_SIZE:-40}"
+# Store is only ~2-3 GB (the language images) + thin per-sandbox writable layers;
+# 40 GB volumes were ~94% empty. 16 GB gives generous headroom and snapshots/
+# restores faster + cheaper. (Fly volumes can grow but NOT shrink, so existing
+# 40 GB volumes only downsize when recreated from the golden snapshot at this size.)
+VOL_SIZE="${VOL_SIZE:-16}"
 IMAGE="${IMAGE:-ghcr.io/teovillanueva/code-runner-worker-fly:latest}"
 # A dedicated, never-attached-to-the-pool volume name used only for baking, so a
 # half-baked volume can never be grabbed by `fly scale count`.
@@ -68,13 +72,21 @@ bake)
   # don't need the worker loop; --restart=no keeps it from looping on a missing
   # Redis after the marker is written.
   log "booting bake machine (will pull language images + write marker)..."
-  m_json="$(flyctl machine run "$IMAGE" \
+  # REDIS_URL is pointed at a dead address on purpose: the bootstrap (dockerd →
+  # pull images → write marker) runs BEFORE the entrypoint execs the worker, and
+  # we must NOT let the bake worker connect to the real Redis and claim prod jobs
+  # (`*.internal` resolves org-wide). The worker simply fails to connect after the
+  # marker is already written — which is all we need.
+  # NOTE: `flyctl machine run` has no --json (unlike `volumes create`), so parse
+  # the "Machine ID: <id>" line from its human output.
+  m_out="$(flyctl machine run "$IMAGE" \
     -a "$APP" -r "$REGION" \
     --vm-cpu-kind performance --vm-cpus 2 --vm-memory 4096 \
     --volume "${GOLDEN_VOL}:/var/lib/docker" \
-    --restart no \
-    --json)"
-  mach_id="$(echo "$m_json" | jq -r '.id')"
+    -e REDIS_URL=redis://127.0.0.1:1 \
+    --restart no 2>&1)"
+  echo "$m_out" | tail -4 >&2
+  mach_id="$(echo "$m_out" | grep -oiE 'Machine ID: [0-9a-f]+' | head -1 | awk '{print $NF}')"
   [ -n "$mach_id" ] && [ "$mach_id" != "null" ] || die "failed to launch bake machine"
   log "bake machine: $mach_id — waiting for 'language images ready' (one-time pull)..."
 
@@ -139,17 +151,33 @@ grow)
   # snapshot-forked volumes (minus any unattached ones already lying around).
   need_new=$(( want - existing_machines ))
   need_vols=$(( need_new - unattached ))
+  new_vol_ids=""
   if [ "$need_vols" -gt 0 ]; then
     log "pre-creating $need_vols snapshot-forked $VOL_NAME volume(s) so new machines boot fast..."
     for _ in $(seq 1 "$need_vols"); do
-      flyctl volumes create "$VOL_NAME" -a "$APP" -r "$REGION" -s "$VOL_SIZE" \
-        --snapshot-id "$snap" -y >/dev/null
+      vid="$(flyctl volumes create "$VOL_NAME" -a "$APP" -r "$REGION" -s "$VOL_SIZE" \
+        --snapshot-id "$snap" -y --json | jq -r '.id')"
+      log "  created $vid (restoring...)"
+      new_vol_ids="$new_vol_ids $vid"
+    done
+    # A snapshot-forked volume is `restoring` (async data restore) and a machine
+    # attaching it would HANG until that finishes. Wait for restore to complete
+    # before scaling, so the new machines boot straight away.
+    log "waiting for the new volume(s) to finish restoring (the pre-warm cost; boot afterwards is seconds)..."
+    for vid in $new_vol_ids; do
+      i=0
+      while [ "$(flyctl volumes list -a "$APP" --json 2>/dev/null \
+                  | jq -r ".[] | select(.id==\"$vid\") | .state")" = "restoring" ]; do
+        i=$((i + 1)); [ "$i" -gt 180 ] && die "volume $vid stuck restoring (>30m)"
+        sleep 10
+      done
+      log "  $vid restored"
     done
   else
     log "enough volumes already present; no new ones needed."
   fi
 
-  log "scaling pool to $want (machines attach the pre-populated volumes → seconds, no load)..."
+  log "scaling pool to $want (machines attach the pre-populated, restored volumes → seconds, no load)..."
   flyctl scale count "$want" -a "$APP" -r "$REGION" -y
   log "done. New machines should boot fast (entrypoint hits the marker, skips the pull)."
   ;;
