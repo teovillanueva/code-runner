@@ -60,24 +60,36 @@ Scale the worker fleet on `LLEN jobs:queue`.
   capacity would die at the warm-up timeout, which defeats the point of autoscaling.
 </Callout>
 
-**Fly.io** — use [`fly-autoscaler`](https://github.com/superfly/fly-autoscaler) with
-the Redis LLEN metric:
+**Fly.io** — use [`fly-autoscaler`](https://github.com/superfly/fly-autoscaler), a
+separate app that scales your worker by a metric. It reads from **Prometheus or
+Temporal** (there is no built-in Redis collector), so the queue depth must be exposed
+as a scrapable Prometheus metric first. The autoscaler then runs an Expr expression
+each loop:
 
 ```toml
-[metrics.redis_queue_depth]
-type   = "redis"
-url    = "redis://your-redis-host:6379"
-metric = "llen"
-key    = "jobs:queue"
-
-[scaling]
-min   = 1
-max   = 50
-count = "min(50, max(1, qdepth / 2))"
+# fly.toml for the autoscaler app (image: flyio/fly-autoscaler:0.3, --ha=false)
+[env]
+  FAS_APP_NAME              = "code-runner-worker"
+  FAS_PROMETHEUS_ADDRESS    = "https://api.fly.io/prometheus/<org>"
+  FAS_PROMETHEUS_METRIC_NAME = "qdepth"
+  FAS_PROMETHEUS_QUERY      = "max(code_runner_queue_depth)"
+  # ~2 jobs per machine; clamp to a sane ceiling.
+  FAS_STARTED_MACHINE_COUNT = "min(20, max(1, ceil(qdepth / 2)))"
+  # FAS_API_TOKEN / FAS_PROMETHEUS_TOKEN are set as secrets.
 ```
 
+<Callout type="warn">
+  fly-autoscaler queries **Prometheus**, so `code_runner_queue_depth` has to be in
+  Fly's managed Prometheus — which means scraping it from a `/metrics` endpoint, not
+  the OTLP push path that's off by default. See the
+  [Autoscaling on Fly runbook](/docs/self-hosting/autoscaling-fly) for the full setup,
+  including why **scheduled pre-warming** (you know when exams/batches run) beats
+  reactive scaling for predictable bursts.
+</Callout>
+
 **Kubernetes** — use [KEDA](https://keda.sh/) with the Redis scaler on
-`LLEN jobs:queue`, or an HPA backed by a custom metric from a Redis exporter.
+`LLEN jobs:queue` (KEDA *does* have a native Redis list scaler), or an HPA backed by a
+custom metric from a Redis exporter.
 
 ## Scale to zero
 

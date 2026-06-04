@@ -1,0 +1,161 @@
+---
+title: Autoscaling on Fly
+description: A tiered runbook for scaling the worker fleet on Fly — baseline capacity, scheduled pre-warming, and reactive fly-autoscaler.
+icon: TrendingUp
+---
+
+This is the operational companion to [Scaling & Statelessness](/docs/self-hosting/scaling).
+It targets a **bursty** workload — e.g. an exam platform where many students run code
+in the same few minutes, with quiet stretches in between — and a worker built from the
+[self-contained image](/docs/self-hosting/scaling#self-contained-worker-images) so nodes
+are stateless and fast to start.
+
+Work the tiers in order. Each stands on its own; later tiers add automation, not
+correctness.
+
+<Callout type="info">
+  Everything here depends on the [durable start-handshake](/docs/concepts/lifecycle#the-start-handshake):
+  when a burst outruns capacity, jobs **queue and run when a slot frees** instead of
+  failing. Without it, autoscaling would just convert dropped capacity into dropped jobs.
+</Callout>
+
+## The capacity model
+
+Effective concurrency = **running machines × `WORKER_MAX_SANDBOXES`**. A job holds its
+slot until it exits *or* hits a clock — so for interactive work, a slot is pinned for up
+to `idleMs` / `wallTimeMs` while a student thinks. Size for the **peak simultaneous
+slots** you need, not the total number of students.
+
+> Example: 120 students, ~each running once per minute, each run holding a slot ~10s →
+> ~20 simultaneous slots at peak. With `WORKER_MAX_SANDBOXES=5` that's **4 machines**.
+> Interactive prompts that wait on input hold longer — budget accordingly.
+
+## Tier 0 — Baseline capacity
+
+The floor every other tier builds on. Two knobs:
+
+- **`WORKER_MAX_SANDBOXES`** — concurrent sandboxes per node. Size the VM to match:
+  each sandbox needs its memory (`memoryMb`) + CPU share, on top of dockerd. A
+  `shared-cpu-2x` / 2 GB node comfortably runs a handful of light runs; bump both
+  together for more.
+- **Machine count** — `fly scale count N -a code-runner-worker`.
+
+```bash
+# raise per-node concurrency (redeploy picks it up; or set as a secret/env)
+#   WORKER_MAX_SANDBOXES lives in deploy/fly/worker/fly.toml [env]
+fly scale count 3 -a code-runner-worker          # 3 nodes
+fly scale show     -a code-runner-worker          # verify
+```
+
+<Callout type="warn">
+  A single node with `WORKER_MAX_SANDBOXES=2` (the starter default) is ~2 concurrent
+  executions — far too low for any real exam. Raise this first; autoscaling a too-small
+  baseline just thrashes.
+</Callout>
+
+## Tier 1 — Scheduled pre-warm (recommended for known schedules)
+
+Reactive autoscaling always lags: the queue has to build, the autoscaler polls (~15s),
+then a machine boots. For **predictable** bursts you already know the start time, so
+don't wait — pre-warm.
+
+A cron/job (in edalef's own scheduler, or a Fly Machine cron) raises the worker count a
+few minutes before each exam and lowers it after:
+
+```bash
+# before the exam window
+fly scale count 6 -a code-runner-worker
+
+# after it closes
+fly scale count 1 -a code-runner-worker
+```
+
+This needs **no Prometheus, no autoscaler app, no code changes** — just a deploy token
+(`fly tokens create deploy -a code-runner-worker`) and `flyctl` (or the Machines API)
+in your scheduler. It's the highest-ROI move for an exam platform.
+
+<Callout type="info">
+  Combine with Tier 2 as a safety net: the scheduled floor absorbs the planned burst
+  with zero cold-start lag; the reactive autoscaler covers anything unplanned.
+</Callout>
+
+## Tier 2 — Reactive autoscaling with fly-autoscaler
+
+[`fly-autoscaler`](https://github.com/superfly/fly-autoscaler) runs as its own Fly app
+and adjusts the worker count from a metric every ~15s. It reads from **Prometheus or
+Temporal** — there is **no native Redis collector** — so the queue depth has to be a
+scrapable Prometheus metric first.
+
+### Prerequisite: queue depth in Prometheus
+
+The worker/API emit metrics over **OTLP (push)**, which is off unless
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set — and Fly's managed Prometheus **scrapes**, it
+doesn't receive OTLP. So you need a Prometheus `/metrics` endpoint exposing the queue
+depth, scraped by Fly. Two ways:
+
+1. **Expose it from the service** (cleanest): add a Prometheus endpoint that publishes
+   `code_runner_queue_depth` (`LLEN jobs:queue`) and point Fly at it via `[metrics]` in
+   that app's `fly.toml`:
+
+   ```toml
+   [metrics]
+     port = 9091
+     path = "/metrics"
+   ```
+
+   <Callout type="warn">
+     This endpoint does not exist in the default build yet — it's a small addition
+     (a `promhttp` handler around the same `LLEN` the admission gate already does). Track
+     it before enabling Tier 2, or use option 2.
+   </Callout>
+
+2. **Run a `redis_exporter`** sidecar app that exposes Redis metrics (including list
+   length) for Fly to scrape — no code change, one more small app.
+
+### The autoscaler app
+
+```toml
+# autoscaler/fly.toml
+app = "code-runner-autoscaler"
+
+[build]
+  image = "flyio/fly-autoscaler:0.3"
+
+[env]
+  FAS_APP_NAME               = "code-runner-worker"
+  FAS_PROMETHEUS_ADDRESS     = "https://api.fly.io/prometheus/edalef"
+  FAS_PROMETHEUS_METRIC_NAME = "qdepth"
+  FAS_PROMETHEUS_QUERY       = "max(code_runner_queue_depth)"
+  # ~2 jobs per machine; floor 1, ceiling 20. Use STARTED_ for a fixed pool you
+  # start/stop, or CREATED_ to create/destroy nodes (fine now that the worker is
+  # stateless — no per-machine volume to manage).
+  FAS_STARTED_MACHINE_COUNT  = "min(20, max(1, ceil(qdepth / 2)))"
+```
+
+```bash
+fly apps create code-runner-autoscaler -o edalef
+# token to read+scale the worker, and to read Prometheus
+fly tokens create deploy   -a code-runner-worker | fly secrets set FAS_API_TOKEN=-        -a code-runner-autoscaler
+fly tokens create readonly edalef               | fly secrets set FAS_PROMETHEUS_TOKEN=- -a code-runner-autoscaler
+fly deploy -c autoscaler/fly.toml --ha=false    -a code-runner-autoscaler
+```
+
+Scale-up reacts in ~15s; keep the floor (`max(1, …)`) ≥ 1 so the first job of a burst
+never waits on a cold create. Pair with a generous `MAX_QUEUE_DEPTH` (below) so a burst
+*queues* — giving the autoscaler something to react to — instead of returning `429`.
+
+## Tuning for bursts
+
+| Knob | Where | Set it to… |
+| --- | --- | --- |
+| `WORKER_MAX_SANDBOXES` | worker `[env]` | as high as the VM can run sandboxes for |
+| `MAX_QUEUE_DEPTH` | API `[env]` | generous — let bursts queue, not `429`, while machines spin up |
+| `idleMs` / `wallTimeMs` | per-request `limits` or manifest | longer = friendlier interactive UX but each waiting session pins a slot → more capacity needed |
+| autoscaler floor | `FAS_*` expr `max(1, …)` | ≥ 1 to avoid cold-start on the first job |
+
+## Recommended path for edalef
+
+1. **Tier 0** now: raise `WORKER_MAX_SANDBOXES` off the starter `2` and set a sane
+   machine count for expected peak.
+2. **Tier 1** as the primary: a scheduled pre-warm driven by the exam calendar.
+3. **Tier 2** as the safety net once the queue-depth `/metrics` endpoint exists.
