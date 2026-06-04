@@ -1,0 +1,63 @@
+# fly-autoscaler — reactive scaling of code-runner-worker by job-queue depth.
+#
+# Runs as its OWN single-Machine app (deploy with --ha=false). It polls a metric
+# every ~15s and starts/stops (or creates/destroys) worker Machines to match.
+#
+# ── PREREQUISITE ─────────────────────────────────────────────────────────────
+# fly-autoscaler reads PROMETHEUS or Temporal — there is NO native Redis
+# collector. So `code_runner_queue_depth` must be a SCRAPABLE Prometheus metric
+# in Fly's managed Prometheus. Fly scrapes a `/metrics` endpoint (the default
+# OTLP push path does NOT feed Prometheus). Either:
+#   1. expose a Prometheus /metrics endpoint publishing LLEN jobs:queue and add a
+#      [metrics] block to that app's fly.toml so Fly scrapes it, or
+#   2. run a redis_exporter app that exposes Redis list length, and query that.
+# Until one exists, prefer the SCHEDULED PRE-WARM tier (just `fly scale count`
+# from the exam calendar — no Prometheus needed). See
+# docs/self-hosting/autoscaling-fly.
+#
+# ── DEPLOY ───────────────────────────────────────────────────────────────────
+#   fly apps create code-runner-autoscaler -o edalef
+#   # token that can read + scale the worker app:
+#   fly tokens create deploy   -a code-runner-worker \
+#       | fly secrets set FAS_API_TOKEN=-        -a code-runner-autoscaler
+#   # token to read the org's managed Prometheus:
+#   fly tokens create readonly edalef \
+#       | fly secrets set FAS_PROMETHEUS_TOKEN=- -a code-runner-autoscaler
+#   fly deploy -c deploy/fly/autoscaler/fly.toml --ha=false -a code-runner-autoscaler
+
+app = "code-runner-autoscaler"
+primary_region = "gru"
+
+[build]
+  image = "flyio/fly-autoscaler:0.3"
+
+[env]
+  # Target app to scale.
+  FAS_APP_NAME = "code-runner-worker"
+
+  # Prometheus source (replace <org> if not "edalef").
+  FAS_PROMETHEUS_ADDRESS     = "https://api.fly.io/prometheus/edalef"
+  FAS_PROMETHEUS_METRIC_NAME = "qdepth"
+  # max() — queue depth is a single global value; if multiple instances export it,
+  # max() avoids summing duplicates. Swap to the metric name you actually expose.
+  FAS_PROMETHEUS_QUERY = "max(code_runner_queue_depth)"
+
+  # Scaling expression (Expr). ~2 jobs per machine; floor 1 so the first job of a
+  # burst never waits on a cold start; ceiling 20 as a cost guard — raise for big
+  # exams. STARTED = start/stop a PRE-CREATED pool (`fly scale count N` once; the
+  # ceiling is then N). For create/destroy instead (viable now that the worker is
+  # stateless — self-contained image, no per-machine volume), comment this out and
+  # use FAS_CREATED_MACHINE_COUNT with the same expression.
+  FAS_STARTED_MACHINE_COUNT = "min(20, max(1, ceil(qdepth / 2)))"
+  # FAS_CREATED_MACHINE_COUNT = "min(20, max(1, ceil(qdepth / 2)))"
+
+  # Reconcile interval (default 15s).
+  # FAS_INTERVAL = "15s"
+
+  # Secrets (set via `fly secrets`, never commit):
+  #   FAS_API_TOKEN         — deploy/org token to start/stop/create worker Machines
+  #   FAS_PROMETHEUS_TOKEN  — readonly org token to query managed Prometheus
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
