@@ -454,6 +454,13 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 		stderrBuf bytes.Buffer
 	)
 
+	// Compile-stage result (Piston-style separate `compile` block). Set once in
+	// the compile section below (for compiled languages); nil for interpreted
+	// languages or when no compile step ran. Threaded into the persisted
+	// RunResult by teardown. Written before the run stage starts and read in
+	// teardown afterward, so no synchronization is needed.
+	var compileBlock *wire.CompileResult
+
 	// Artifact capture stash (R4/R5/D-07): the session supervisor's terminate()
 	// removes the container (Kill+Cleanup) on EVERY terminal path, so the read
 	// MUST happen inside the session's BeforeCleanup hook — while the container
@@ -628,6 +635,10 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 				runResult := assembleRunResult(result, stdoutBuf.String(), stderrBuf.String())
 				outputMu.Unlock()
 
+				// Attach the compile-stage result (build logs kept separate from
+				// the run stdout/stderr, mirroring Piston's `compile` object).
+				runResult.Compile = compileBlock
+
 				if _, ok := sb.(DockerSandbox); ok && w.cfg.Artifacts != nil {
 					// Artifacts were read in the session BeforeCleanup hook above —
 					// the container is already gone by now (terminate() killed it),
@@ -739,22 +750,38 @@ parkLoop:
 		}
 
 		compileResult, compileErr := sb.Compile(compileCtx, []string(*spec.Compile), func(b []byte) {
-			if pubErr := w.pub.Stderr(jobID, string(b)); pubErr != nil {
-				log.Warn("worker: publish compile stderr failed", "err", pubErr)
+			// Live real-time build log on its OWN event (compile_output), kept
+			// separate from the run stdout/stderr streams.
+			if pubErr := w.pub.CompileOutput(jobID, string(b)); pubErr != nil {
+				log.Warn("worker: publish compile output failed", "err", pubErr)
 			}
 		})
 
+		// Infrastructure failure (Docker exec error, context cancelled): treat as
+		// a non-zero exit so the client receives a correct failure.
+		compileExitCode := compileResult.ExitCode
+		if compileErr != nil && compileExitCode == 0 {
+			compileExitCode = 1
+		}
+
+		// Build the Piston-style compile block (build logs kept separate from the
+		// run stdout/stderr). Persisted into RunResult.compile by teardown on
+		// BOTH the failure path here and the run-completion path below.
+		ce := compileExitCode
+		compileBlock = &wire.CompileResult{
+			ExitCode:   &ce,
+			Signal:     nil,
+			Stdout:     compileResult.Stdout,
+			Stderr:     compileResult.Stderr,
+			Output:     compileResult.Output,
+			DurationMs: compileResult.DurationMs,
+		}
+
 		// On compile failure (non-zero exit OR infrastructure error), publish a
 		// terminal result and return — the run argv MUST NOT execute.
-		compileExitCode := compileResult.ExitCode
-		if compileErr != nil || compileExitCode != 0 {
+		if compileErr != nil || compileResult.ExitCode != 0 {
 			if compileErr != nil {
-				// Infrastructure failure (Docker exec error, context cancelled):
-				// treat as non-zero exit.
 				log.Warn("worker: compile step error", "err", compileErr)
-				if compileExitCode == 0 {
-					compileExitCode = 1 // normalise infrastructure errors to exit 1
-				}
 			}
 			// Build a Result with the compile exit code so the client receives
 			// the correct non-zero exit in the terminal event.

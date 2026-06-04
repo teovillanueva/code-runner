@@ -103,6 +103,8 @@ func TestEventConstants(t *testing.T) {
 		{"EventStdout", keys.EventStdout, "stdout"},
 		{"EventStderr", keys.EventStderr, "stderr"},
 		{"EventResult", keys.EventResult, "result"},
+		{"EventArtifact", keys.EventArtifact, "artifact"},
+		{"EventCompileOutput", keys.EventCompileOutput, "compile_output"},
 	}
 	for _, tt := range tests {
 		if tt.got != tt.want {

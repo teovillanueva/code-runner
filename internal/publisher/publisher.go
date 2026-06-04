@@ -175,6 +175,14 @@ func (p *Publisher) Stderr(jobID string, chunk string) error {
 	return p.triggerOutput(jobID, keys.EventStderr, chunk)
 }
 
+// CompileOutput triggers one or more "compile_output" events for the given
+// chunk — the live interleaved build log of the compile stage. Kept on its own
+// event (separate from Stdout/Stderr) so the client can render a dedicated
+// real-time build panel. Shares the same chunking + per-job seq machinery.
+func (p *Publisher) CompileOutput(jobID string, chunk string) error {
+	return p.triggerOutput(jobID, keys.EventCompileOutput, chunk)
+}
+
 // Result triggers the terminal "result" event on the job's channel.
 func (p *Publisher) Result(jobID string, ev wire.ResultEvent) error {
 	return p.t.Trigger(keys.ChannelForJob(jobID), keys.EventResult, ev)

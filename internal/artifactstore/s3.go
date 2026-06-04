@@ -30,6 +30,7 @@ const lifecycleRuleID = "code-runner-artifacts-expiry"
 // ride on Config, established by configFromEnv in apps/worker/main.go).
 type S3Store struct {
 	cli          *minio.Client
+	presignCli   *minio.Client // signs presigned URLs; == cli unless a public endpoint is set
 	bucket       string
 	region       string
 	presignedTTL time.Duration
@@ -67,8 +68,33 @@ func NewS3Store(cfg config.Config) (*S3Store, error) {
 		return nil, fmt.Errorf("artifactstore: create S3 client for %q: %w", endpoint, err)
 	}
 
+	// Optional split-horizon: presign URLs against a public endpoint distinct
+	// from the connect/upload endpoint. Presigning is pure local crypto (no
+	// network call), so this second client never connects — it only controls the
+	// host the signed URL points at, which SigV4 binds into the signature.
+	presignCli := cli
+	if cfg.S3PublicEndpoint != "" {
+		pubEndpoint := cfg.S3PublicEndpoint
+		pubSecure := strings.HasPrefix(strings.ToLower(pubEndpoint), "https://")
+		pubEndpoint = strings.TrimPrefix(pubEndpoint, "https://")
+		pubEndpoint = strings.TrimPrefix(pubEndpoint, "http://")
+		pubEndpoint = strings.TrimSuffix(pubEndpoint, "/")
+		if pubEndpoint == "" {
+			return nil, fmt.Errorf("artifactstore: empty S3 public endpoint")
+		}
+		presignCli, err = minio.New(pubEndpoint, &minio.Options{
+			Creds:  credentials.NewStaticV4(cfg.S3AccessKeyID, cfg.S3SecretAccessKey, ""),
+			Secure: pubSecure,
+			Region: cfg.S3Region,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("artifactstore: create S3 presign client for %q: %w", pubEndpoint, err)
+		}
+	}
+
 	return &S3Store{
 		cli:          cli,
+		presignCli:   presignCli,
 		bucket:       cfg.S3Bucket,
 		region:       cfg.S3Region,
 		presignedTTL: cfg.PresignedURLTTL,
@@ -89,7 +115,7 @@ func (s *S3Store) Put(ctx context.Context, jobID, name, mimeType string, data []
 		return "", fmt.Errorf("artifactstore: put %q: %w", key, err)
 	}
 
-	u, err := s.cli.PresignedGetObject(ctx, s.bucket, key, s.presignedTTL, nil)
+	u, err := s.presignCli.PresignedGetObject(ctx, s.bucket, key, s.presignedTTL, nil)
 	if err != nil {
 		return "", fmt.Errorf("artifactstore: presign %q: %w", key, err)
 	}

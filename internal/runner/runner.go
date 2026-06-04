@@ -25,6 +25,17 @@ type CompileResult struct {
 	// DurationMs is the wall-clock time taken by the compile step in
 	// milliseconds (from exec start to exec completion).
 	DurationMs int
+
+	// Stdout is the accumulated stdout of the compile command.
+	Stdout string
+
+	// Stderr is the accumulated stderr of the compile command (compiler
+	// diagnostics — where rustc/cargo write errors).
+	Stderr string
+
+	// Output is the interleaved stdout+stderr of the compile stage, captured in
+	// emission (frame) order. Mirrors Piston's compile.output.
+	Output string
 }
 
 // Result is the terminal outcome of a sandbox execution. It mirrors the shape
@@ -130,13 +141,16 @@ type Sandbox interface {
 	// /workspace). Any artifact produced in /workspace (e.g. /workspace/prog)
 	// persists in the container for the subsequent run step.
 	//
-	// The stderr callback is called synchronously for each stderr chunk from
-	// the compile command. Callers forward these to the publisher so the
-	// client sees compiler diagnostics.
+	// The onOutput callback is called synchronously for each output chunk
+	// (interleaved stdout+stderr, in emission order) as the compile command
+	// produces it. Callers forward these to the publisher so the client sees a
+	// live, real-time build log. The full captured streams are also returned in
+	// CompileResult.{Stdout,Stderr,Output} for persistence.
 	//
-	// Returns a CompileResult with the exit code and duration. A non-zero
-	// ExitCode means compilation failed; the caller MUST NOT proceed to the
-	// run step. An error return indicates an infrastructure failure (Docker
-	// exec failed, context cancelled, etc.) — treat it as a failed compile.
-	Compile(ctx context.Context, argv []string, stderr func([]byte)) (CompileResult, error)
+	// Returns a CompileResult with the exit code, duration and captured output.
+	// A non-zero ExitCode means compilation failed; the caller MUST NOT proceed
+	// to the run step. An error return indicates an infrastructure failure
+	// (Docker exec failed, context cancelled, etc.) — treat it as a failed
+	// compile.
+	Compile(ctx context.Context, argv []string, onOutput func([]byte)) (CompileResult, error)
 }

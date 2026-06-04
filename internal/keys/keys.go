@@ -17,6 +17,11 @@ const (
 	EventStderr   = "stderr"
 	EventResult   = "result"
 	EventArtifact = "artifact"
+	// EventCompileOutput is the live interleaved build log of the compile stage
+	// (compiled languages only). Kept separate from EventStdout/EventStderr so
+	// the client can render a dedicated real-time build panel. Matches
+	// events.compileOutput in index.ts.
+	EventCompileOutput = "compile_output"
 )
 
 // JobStatusKey returns the Redis key holding the JSON-encoded JobStatus for

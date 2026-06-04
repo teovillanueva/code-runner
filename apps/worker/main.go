@@ -315,6 +315,11 @@ func configFromEnv() config.Config {
 	if v := os.Getenv("ARTIFACT_S3_ENDPOINT"); v != "" {
 		cfg.S3Endpoint = v
 	}
+	// Optional public endpoint for presigned URLs (split-horizon: connect via
+	// S3Endpoint, sign client-fetchable URLs against this one).
+	if v := os.Getenv("ARTIFACT_S3_PUBLIC_ENDPOINT"); v != "" {
+		cfg.S3PublicEndpoint = v
+	}
 	if v := os.Getenv("BUCKET_NAME"); v != "" {
 		cfg.S3Bucket = v
 	}

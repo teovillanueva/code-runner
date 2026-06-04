@@ -87,6 +87,17 @@ type Config struct {
 	// Env: AWS_ENDPOINT_URL_S3 (override: ARTIFACT_S3_ENDPOINT)
 	S3Endpoint string
 
+	// S3PublicEndpoint, when non-empty, is the endpoint used to SIGN presigned
+	// GET URLs — distinct from S3Endpoint (used to connect/upload). This solves
+	// the split-horizon case where the worker reaches the object store at an
+	// internal address (e.g. http://minio:9000) but clients/browsers must fetch
+	// from a different public address (e.g. http://localhost:9000 in dev, or a
+	// CDN/public domain in prod). SigV4 signs the host, so a presigned URL must
+	// be signed with the SAME host the client will request. Empty → presign with
+	// S3Endpoint (the common single-host case).
+	// Env: ARTIFACT_S3_PUBLIC_ENDPOINT
+	S3PublicEndpoint string
+
 	// S3Bucket is the bucket artifacts are uploaded into under the artifacts/
 	// key prefix. Env: BUCKET_NAME (override: ARTIFACT_S3_BUCKET)
 	S3Bucket string
