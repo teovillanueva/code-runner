@@ -29,6 +29,15 @@ type Sinks struct {
 	// Cleanup run, the container and its /workspace volume are gone. It is called
 	// at most once and must not block indefinitely; the supervised ctx is passed.
 	BeforeCleanup func(ctx context.Context)
+	// StdinActivity, if non-nil, is signalled by the caller (worker) on each
+	// stdin chunk written to the sandbox. The session fans these signals into
+	// the idle clock so that interactive INPUT counts as activity — a process
+	// blocked on input() produces no output, so without this the idle clock
+	// would kill it mid-prompt while the user is typing (the headline
+	// interactive-stdin use case). The session NEVER reads or writes the stdin
+	// pipe; it only observes this out-of-band signal. May be nil (the plain Run
+	// path and non-interactive callers leave it unset).
+	StdinActivity <-chan struct{}
 }
 
 // RunInteractive supervises sb like Run, but publishes each stdout/stderr chunk
@@ -73,6 +82,29 @@ func (s *session) superviseInteractive(ctx context.Context, sinks Sinks) {
 	// Activity channel: Pump goroutines send a signal for every forwarded
 	// output chunk; the idle clock receives this to reset its timer.
 	activityCh := make(chan struct{}, 64)
+
+	// Stdin activity (interactive input) also resets the idle clock. The worker
+	// signals sinks.StdinActivity on each chunk it writes to the sandbox's stdin;
+	// we fan it into the same activityCh the output pumps use. Without this, a
+	// process blocked on input() emits no output and the idle clock would kill it
+	// while the user is still typing (STDIN interactive use case). The forwarder
+	// exits with the session via s.done. Non-blocking send: a full buffer already
+	// implies pending activity, so dropping an extra signal is harmless.
+	if sinks.StdinActivity != nil {
+		go func() {
+			for {
+				select {
+				case <-sinks.StdinActivity:
+					select {
+					case activityCh <- struct{}{}:
+					default:
+					}
+				case <-s.done:
+					return
+				}
+			}
+		}()
+	}
 
 	// Start output pumps (stdout + stderr share one combined budget).
 	budget := &atomic.Int64{}

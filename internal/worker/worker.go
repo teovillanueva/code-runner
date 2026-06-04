@@ -835,6 +835,13 @@ parkLoop:
 	//    session.RunInteractive runs in this goroutine.
 	sessionDone := make(chan struct{})
 
+	// stdinActivity signals the session's idle clock that interactive input
+	// arrived. A process blocked on input() produces no output, so without this
+	// the idle clock (driven solely by stdout/stderr) would kill it while the
+	// user is typing. Buffered + non-blocking sends below so feeding stdin never
+	// blocks on a slow idle-clock consumer.
+	stdinActivity := make(chan struct{}, 64)
+
 	go func() {
 		for {
 			select {
@@ -848,6 +855,11 @@ parkLoop:
 				if _, err := writeAll(sb.Stdin(), chunk); err != nil {
 					// Stdin pipe closed (process exited) — stop forwarding.
 					return
+				}
+				// Count this input as idle-clock activity (see stdinActivity).
+				select {
+				case stdinActivity <- struct{}{}:
+				default:
 				}
 			case msg := <-ctrlCh:
 				switch msg.Type {
@@ -915,6 +927,9 @@ parkLoop:
 			capturedArtifacts = captured
 			capturedMu.Unlock()
 		},
+		// Interactive input resets the idle clock (the stdin goroutine above
+		// signals this on each chunk written to the sandbox).
+		StdinActivity: stdinActivity,
 	}
 
 	runCtx, runSpan := tracer().Start(ctx, "run")

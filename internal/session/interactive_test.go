@@ -122,6 +122,60 @@ func TestRunInteractive_IdleClockFires(t *testing.T) {
 	assert.Equal(t, 1, sb.cleanups(), "Cleanup must be called once on idle timeout")
 }
 
+// TestRunInteractive_StdinActivityResetsIdleClock verifies that signalling
+// Sinks.StdinActivity keeps a silent (output-less) process alive past the idle
+// deadline. Interactive INPUT counts as activity, so a process blocked on
+// input() is not idle-killed while the user is typing — the inverse of
+// TestRunInteractive_IdleClockFires.
+func TestRunInteractive_StdinActivityResetsIdleClock(t *testing.T) {
+	sb := newFakeSandbox()
+	sb.waitResult = runner.Result{ExitCode: intPtr(0)}
+	sb.waitDelay = 300 * time.Millisecond // outlives several IdleMs windows
+
+	stdinActivity := make(chan struct{}, 1)
+
+	sinks := session.Sinks{
+		Stdout:        func(_ []byte) {},
+		Stderr:        func(_ []byte) {},
+		StdinActivity: stdinActivity,
+	}
+
+	limits := testLimits()
+	limits.WallTimeMs = 5000
+	limits.IdleMs = 50 // would fire long before waitDelay WITHOUT activity
+
+	fakeCPU := func(_ context.Context) (int, error) { return 0, nil }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Pump stdin activity every 20ms (< IdleMs) for the life of the session.
+	stopPump := make(chan struct{})
+	defer close(stopPump)
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				select {
+				case stdinActivity <- struct{}{}:
+				default:
+				}
+			case <-stopPump:
+				return
+			}
+		}
+	}()
+
+	result, err := session.RunInteractive(ctx, sb, limits, fakeCPU, sinks)
+	require.NoError(t, err)
+
+	assert.False(t, result.IdleTimedOut, "stdin activity must keep resetting the idle clock so it never fires")
+	assert.NotNil(t, result.ExitCode)
+	assert.Equal(t, 0, *result.ExitCode, "process must exit normally, not be idle-killed")
+}
+
 // TestRunInteractive_TruncationSetsFlag verifies that outputting more bytes
 // than the budget sets Result.Truncated.
 func TestRunInteractive_TruncationSetsFlag(t *testing.T) {
