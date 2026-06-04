@@ -76,6 +76,16 @@ func reaperOrphans() metric.Int64Counter {
 	return c
 }
 
+// reapMinAge is a grace period: a container younger than this is NEVER reaped,
+// even if its jobID looks unowned. This is defence-in-depth against the
+// register-after-create race (a sandbox exists for a brief moment before its
+// owning worker records ownership) and against transient Redis read failures
+// that make live jobs momentarily look orphaned. A genuinely dead-worker orphan
+// is reclaimed as soon as it crosses this age (its container keeps running, so
+// it ages past the grace within one or two sweeps). Must comfortably exceed the
+// heartbeat TTL + the worst-case AddOwnedJob latency.
+const reapMinAge = 45 * time.Second
+
 // workerJobsKeyPrefix is the pattern used to scan for all worker owned-jobs
 // keys in Redis.  keys.WorkerJobsKey returns "worker:<id>:jobs"; the prefix
 // "worker:" and suffix ":jobs" let us extract the workerID from the key name.
@@ -89,6 +99,11 @@ type Reaper struct {
 	cli      *client.Client
 	store    *jobstore.Store
 	interval time.Duration
+	// minAge is the grace period below which a container is never reaped
+	// (defence against the register-after-create race). Defaults to reapMinAge;
+	// the integration test sets it to 0 to assert reap/protect logic without
+	// waiting out the grace.
+	minAge time.Duration
 }
 
 // New creates a Reaper.
@@ -103,8 +118,13 @@ func New(cli *client.Client, store *jobstore.Store, interval time.Duration) *Rea
 		cli:      cli,
 		store:    store,
 		interval: interval,
+		minAge:   reapMinAge,
 	}
 }
+
+// SetMinAgeForTest overrides the reap grace period. Test-only; production uses
+// the reapMinAge default set in New.
+func (r *Reaper) SetMinAgeForTest(d time.Duration) { r.minAge = d }
 
 // Run starts the reaper ticker loop, calling Sweep on every interval tick until
 // ctx is cancelled.  Intended to be started as a goroutine at worker boot.
@@ -187,6 +207,18 @@ func (r *Reaper) Sweep(ctx context.Context) error {
 			// Owned by a live worker — never reap.
 			slog.Debug("reaper.Sweep: container owned by live worker, skipping",
 				"containerID", c.ID[:12], "jobID", jobID)
+			continue
+		}
+
+		// Grace period: never reap a freshly-created container, even if it looks
+		// unowned — it may be a sandbox whose worker has not yet recorded
+		// ownership (register-after-create race), or a live job that looked
+		// orphaned during a transient Redis read failure. c.Created is unix
+		// seconds. A real dead-worker orphan keeps running and is reaped once it
+		// ages past reapMinAge.
+		if age := time.Since(time.Unix(c.Created, 0)); age < r.minAge {
+			slog.Debug("reaper.Sweep: container within grace period, skipping",
+				"containerID", c.ID[:12], "jobID", jobID, "age", age)
 			continue
 		}
 

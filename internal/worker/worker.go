@@ -215,6 +215,20 @@ type Worker struct {
 
 	// heartbeatTTL is the TTL applied to the heartbeat key on each write.
 	heartbeatTTL time.Duration
+
+	// ── Graceful drain (scale-down / deploy safety) ──────────────────────────
+	// In-flight job goroutines run under jobsCtx + are tracked by wg, NOT under
+	// the claim context passed to Run. So when a SIGTERM cancels the claim
+	// context (Fly stops the Machine on scale-down or deploy), the claim loop
+	// stops taking NEW jobs but active sandboxes keep running. main then calls
+	// Drain to wait for them to finish before the process exits — instead of
+	// killing a student mid-session. The heartbeat also runs under jobsCtx so the
+	// node stays "live" during the drain (its sandboxes are never seen as
+	// orphans by another worker's reaper). jobsCancel is the hard stop after the
+	// drain deadline.
+	wg         sync.WaitGroup
+	jobsCtx    context.Context
+	jobsCancel context.CancelFunc
 }
 
 // New creates a Worker using the concrete *stdintransport.RedisTransport.
@@ -260,6 +274,7 @@ func NewWithTransport(
 	for i := 0; i < cfg.MaxSandboxes; i++ {
 		slots <- struct{}{}
 	}
+	jobsCtx, jobsCancel := context.WithCancel(context.Background())
 	return &Worker{
 		store:             store,
 		transport:         transport,
@@ -270,6 +285,8 @@ func NewWithTransport(
 		workerID:          newWorkerID(),
 		heartbeatInterval: time.Duration(cfg.HeartbeatIntervalMs) * time.Millisecond,
 		heartbeatTTL:      time.Duration(cfg.HeartbeatTTLMs) * time.Millisecond,
+		jobsCtx:           jobsCtx,
+		jobsCancel:        jobsCancel,
 	}
 }
 
@@ -367,8 +384,11 @@ func (w *Worker) RegisterMetrics() (func() error, error) {
 // sync.Once teardown in runJobFromSpec on every terminal path.
 func (w *Worker) Run(ctx context.Context) {
 	// Start heartbeat goroutine only when we have a real store to write to.
+	// It runs under jobsCtx (NOT the claim ctx) so the node stays "live" while
+	// in-flight jobs drain after a SIGTERM — otherwise its draining sandboxes
+	// would look orphaned to other workers' reapers once the heartbeat lapsed.
 	if w.store != nil {
-		w.startHeartbeat(ctx)
+		w.startHeartbeat(w.jobsCtx)
 	}
 
 	for {
@@ -399,12 +419,39 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 
-		// Handle the job in a goroutine. The slot is released inside teardown
-		// (or on early-return paths) inside runJobFromSpec — NOT here.
+		// Handle the job in a goroutine under jobsCtx (NOT the claim ctx) and
+		// track it in wg, so a SIGTERM stops claiming but lets this sandbox run
+		// to completion during Drain. The slot is released inside teardown (or on
+		// early-return paths) inside runJobFromSpec — NOT here.
+		w.wg.Add(1)
 		go func(id string) {
-			w.runJob(ctx, id, w.releaseSlot)
+			defer w.wg.Done()
+			w.runJob(w.jobsCtx, id, w.releaseSlot)
 		}(jobID)
 	}
+}
+
+// Drain waits for in-flight jobs to finish after the claim loop has stopped
+// (i.e. after Run returns because a SIGTERM cancelled its context). It gives
+// active sandboxes up to `timeout` to complete on their own — so a Fly
+// scale-down or deploy does not kill a student mid-session — then force-cancels
+// any stragglers and stops the heartbeat. Fly's kill_timeout (fly.toml) must be
+// ≥ this timeout, or Fly SIGKILLs the Machine before the drain completes.
+func (w *Worker) Drain(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		slog.Info("worker: in-flight jobs drained cleanly")
+	case <-time.After(timeout):
+		slog.Warn("worker: drain deadline exceeded — cancelling remaining in-flight jobs", "timeout", timeout)
+		w.jobsCancel()
+		w.wg.Wait()
+	}
+	w.jobsCancel() // stop the heartbeat goroutine; release jobsCtx
 }
 
 // HandleJobForTest is a test-only entry point that runs a job from a fully
@@ -561,24 +608,38 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	//    into Create, so docker.go's ContainerCreate/ContainerStart execute WITHIN
 	//    this span. (The create-latency histogram is wired separately in 08-04
 	//    inside the same Create function — span here, histogram there, no overlap.)
+	// Record ownership BEFORE creating the container (reaper-race fix). The
+	// reaper marks a container orphaned if its jobID is in NO live worker's
+	// owned-jobs set. If we created the container first, a reaper sweep landing
+	// in the window before AddOwnedJob would force-remove a perfectly healthy
+	// sandbox — observed as ~6% spurious failures under a burst with concurrent
+	// scale-up. Adding ownership first closes the window: our heartbeat is
+	// already live (startHeartbeat writes the first beat synchronously before the
+	// claim loop), so the instant the container exists its jobID is already owned
+	// by a live worker. On Create failure we roll the membership back below.
+	if w.store != nil {
+		if err := w.store.AddOwnedJob(ctx, w.workerID, jobID); err != nil {
+			log.Warn("worker: AddOwnedJob failed", "err", err)
+		}
+	}
+
 	createCtx, createSpan := tracer().Start(ctx, "sandbox.create")
 	sb, err := w.runner.Create(createCtx, spec)
 	createSpan.End()
 	if err != nil {
 		log.Error("worker: Create sandbox failed", "err", err)
+		// Roll back the ownership recorded above — no container was created.
+		if w.store != nil {
+			if rmErr := w.store.RemoveOwnedJob(ctx, w.workerID, jobID); rmErr != nil {
+				log.Warn("worker: RemoveOwnedJob failed", "err", rmErr)
+			}
+		}
 		stdinSub.Close() //nolint:errcheck
 		ctrlSub.Close()  //nolint:errcheck
 		w.publishError(ctx, jobID, spec)
 		recordTerminal(ctx, terminalError)
 		releaseSlot() // early return — sandbox never occupied a slot
 		return
-	}
-
-	// Record ownership of this job in Redis (best-effort — log on error).
-	if w.store != nil {
-		if err := w.store.AddOwnedJob(ctx, w.workerID, jobID); err != nil {
-			log.Warn("worker: AddOwnedJob failed", "err", err)
-		}
 	}
 
 	// Single sync.Once teardown — called on every terminal path after Create.

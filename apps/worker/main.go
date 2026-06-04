@@ -279,6 +279,20 @@ func run(ctx context.Context) error {
 	)
 
 	w.Run(ctx)
+
+	// Graceful drain (scale-down / deploy safety): Run returned because the
+	// signal context was cancelled (SIGTERM), which stops claiming NEW jobs but
+	// leaves in-flight sandboxes running. Wait for them to finish so a Fly
+	// scale-down or deploy doesn't kill a student mid-session. Fly's fly.toml
+	// kill_timeout must be ≥ this drain timeout or the Machine is SIGKILLed first.
+	drainTimeout := 120 * time.Second
+	if v := os.Getenv("WORKER_DRAIN_TIMEOUT_MS"); v != "" {
+		if ms, perr := strconv.Atoi(v); perr == nil && ms > 0 {
+			drainTimeout = time.Duration(ms) * time.Millisecond
+		}
+	}
+	slog.Info("worker: shutdown signal received — draining in-flight sandboxes", "drain_timeout", drainTimeout)
+	w.Drain(drainTimeout)
 	return ctx.Err()
 }
 

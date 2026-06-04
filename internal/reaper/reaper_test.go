@@ -231,6 +231,7 @@ func TestReaper_OrphanedContainer_IsReaped(t *testing.T) {
 	// Create and run the reaper with a very short interval (not used here; we call
 	// Sweep directly for deterministic test control).
 	r := reaper.New(dockerCli, store, 24*time.Hour)
+	r.SetMinAgeForTest(0) // reap immediately in tests; prod uses the 45s grace
 
 	sweepErr := r.Sweep(ctx)
 	require.NoError(t, sweepErr, "Sweep should complete without error")
@@ -296,6 +297,7 @@ func TestReaper_LiveWorkerContainer_IsProtected(t *testing.T) {
 
 	// Run one sweep.
 	r := reaper.New(dockerCli, store, 24*time.Hour)
+	r.SetMinAgeForTest(0) // reap immediately in tests; prod uses the 45s grace
 	sweepErr := r.Sweep(ctx)
 	require.NoError(t, sweepErr, "Sweep should complete without error")
 
