@@ -69,18 +69,30 @@ ENV MPLCONFIGDIR=/tmp/mplconfig
 # NO apt libglpk package is needed and the image requires ZERO new apt deps.
 # NOTE for the executor: network IS available during `docker build`; if any single
 # pin ever fails to resolve, loosen that one pin to the nearest compatible release.
-RUN pip install --no-cache-dir \
-    numpy==2.2.6 \
-    pandas==2.2.3 \
-    requests==2.32.3 \
-    matplotlib==3.10.3 \
-    scipy==1.15.3 \
-    statsmodels==0.14.4 \
-    scikit-learn==1.6.1 \
-    seaborn==0.13.2 \
-    cvxopt==1.3.2 \
-    swiglpk==5.0.12 \
-    PICOS==2.6.0
+RUN set -eu; \
+    pip install --no-cache-dir \
+      numpy==2.2.6 \
+      pandas==2.2.3 \
+      requests==2.32.3 \
+      matplotlib==3.10.3 \
+      scipy==1.15.3 \
+      statsmodels==0.14.4 \
+      scikit-learn==1.6.1 \
+      seaborn==0.13.2 \
+      cvxopt==1.3.2 \
+      swiglpk==5.0.12 \
+      PICOS==2.6.0; \
+    # ── In-RUN slim: only what we install here can be shrunk (a later-layer rm
+    #    leaves the bytes in this layer, bloating the pull AND the worker's baked
+    #    store). Drop the package test suites, bytecode caches, and bundled
+    #    Fortran/C/Cython sources — none are imported by user code at runtime.
+    #    `testing` modules (e.g. numpy.testing) are deliberately KEPT; only dirs
+    #    named exactly tests/test are pruned. --network=none at runtime is
+    #    unaffected (pip is still present for build-time only). ──
+    sp="$(python -c 'import site; print(site.getsitepackages()[0])')"; \
+    find "$sp" -depth -type d \( -name tests -o -name test -o -name __pycache__ \) -prune -exec rm -rf '{}' +; \
+    find "$sp" -type f \( -name '*.pyc' -o -name '*.pyx' -o -name '*.pxd' -o -name '*.c' -o -name '*.cpp' -o -name '*.f' -o -name '*.f90' \) -delete; \
+    rm -rf /root/.cache
 
 # ── Auto-capture matplotlib figures as /workspace artifacts ───────────────────
 # COPY (after the pip install so site-packages exists) the sitecustomize.py hook

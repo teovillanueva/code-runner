@@ -17,6 +17,18 @@
 
 FROM rust:1.83-slim
 
+# ── Image-size note (deliberate non-trim) ─────────────────────────────────────
+# The rustc/cargo toolchain (~740 MB, dominated by the 230 MB librustc_driver.so
+# that statically links LLVM) lives in rust:1.83-slim's BASE layers. The only
+# meaningful trim is `strip --strip-debug` on the toolchain .so files (~110 MB,
+# verified rustc still compiles), but realising it requires rebuilding FROM
+# debian-slim and re-adding the gcc/cc LINKER toolchain rustc shells out to — a
+# fragile change for a prod exam runner, for marginal gain. An in-place strip or
+# COPY over the rust-slim base does NOT shrink the pull (the fat files stay in the
+# lower layer; the edit just adds a second copy on top). So the toolchain ships
+# as-is; we shrink the Python/R images instead, where the heavy bits are in OUR
+# install layer and CAN be trimmed in the same RUN.
+
 # ── Workspace directory ────────────────────────────────────────────────────────
 # The runner (internal/runner/docker.go) sets WorkingDir=/workspace and
 # tar-copies user files here before starting the process.

@@ -60,13 +60,25 @@ ENV XDG_CACHE_HOME=/tmp
 # data.table: fast data manipulation (widely used in data science)
 # lpSolve: linear-programming solver (university-exam optimization problems)
 # ggplot2: grammar-of-graphics plotting (G3) — pulls deps, all from the same snapshot
-RUN Rscript -e "\
+RUN set -eu; \
+    Rscript -e "\
     options(repos = c(CRAN = 'https://packagemanager.posit.co/cran/__linux__/bookworm/2024-11-01')); \
     install.packages(c('jsonlite', 'data.table', 'lpSolve', 'ggplot2'), \
         Ncpus = parallel::detectCores(), \
         quiet = TRUE, \
         clean = TRUE) \
-"
+"; \
+    # ── In-RUN slim: strip help/HTML/vignette/man payloads from the packages we
+    #    just installed (Rscript never serves interactive help). Only the
+    #    site-library populated by THIS layer can shrink; r-base's own docs live
+    #    in lower layers and stay. Saves a chunk of the ggplot2 dependency tree. ──
+    for lib in /usr/local/lib/R/site-library /usr/lib/R/site-library; do \
+      [ -d "$lib" ] || continue; \
+      find "$lib" -mindepth 2 -maxdepth 2 -type d \
+        \( -name help -o -name html -o -name doc -o -name man -o -name tests -o -name demo \) \
+        -prune -exec rm -rf '{}' +; \
+    done; \
+    rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache 2>/dev/null || true
 
 # ── Auto-source the site profile: lazy png device + flush + finalizer ─────────
 # /etc/R/Rprofile.site is the ONLY auto-sourced R site profile (R_HOME's
