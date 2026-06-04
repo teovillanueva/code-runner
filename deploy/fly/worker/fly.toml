@@ -22,28 +22,33 @@
 app = "code-runner-worker"
 primary_region = "gru"
 
+# Graceful drain: on SIGTERM (scale-down / deploy) the worker stops claiming new
+# jobs but lets in-flight sandboxes finish (worker Drain, default 120s). Fly must
+# wait at least that long before SIGKILL or it would kill active sessions anyway.
+# 130s > the worker drain timeout (≥ Rust's 120s wall-clock).
+kill_timeout = "130s"
+
 [env]
   REDIS_URL = "redis://code-runner-redis.internal:6379"
-  # The worker→soketi trigger MUST stay private (trust boundary: soketi is
+  # The worker→soketi trigger stays private (trust boundary: soketi is
   # output-only toward clients; the public edge never receives trusted input).
-  # soketi listens IPv4-only, but Fly's .internal DNS is IPv6 (6PN) → a direct
-  # .internal:6001 trigger is refused. The private IPv4 path is `.flycast`:
-  # allocate a private v4 for soketi (`fly ips allocate-v4 --private -a <soketi-app>`)
-  # and trigger it over 6PN — no public exposure. (Alternatively, make soketi
-  # bind IPv6 and use code-runner-soketi.internal:6001.)
-  # NOTE: flycast routes through soketi's http_service, so PORT/USE_TLS here must
-  # match how that service is published — verify on your deploy and adjust if the
-  # trigger is refused.
-  SOKETI_HOST = "code-runner-soketi.flycast"
-  SOKETI_PORT = "443"
-  SOKETI_USE_TLS = "true"
+  # soketi binds dual-stack (`SOKETI_HOST=::` in its fly.toml), so the worker
+  # triggers it directly over Fly's 6PN private network at
+  # `code-runner-soketi.internal:6001` — plain HTTP, no TLS, no flycast, no
+  # public exposure. (The earlier flycast/`force_https` path failed: the private
+  # proxy doesn't terminate TLS → `Post https://...flycast:443: EOF`.)
+  SOKETI_HOST = "code-runner-soketi.internal"
+  SOKETI_PORT = "6001"
+  SOKETI_USE_TLS = "false"
   SOKETI_APP_ID = "code-runner"
   SOKETI_APP_KEY = "code-runner-key"
-  # Bursty deployment (e.g. exams): 20 live sandboxes per node on a small VM, and
-  # let the autoscaler add nodes. Smaller nodes give a cheap floor + fine-grained
-  # scaling; each sandbox needs ~its memoryMb (default 128) + a CPU share on top
-  # of dockerd. Raise both together (e.g. 45 on perf-4x/8GB) for fewer, bigger nodes.
-  WORKER_MAX_SANDBOXES = "20"
+  # Benchmarked on perf-2x/4GB (2026-06-04): RAM is the hard ceiling — ~30
+  # memory-active Python sandboxes (~110 MB each) before OOM; idle sessions are
+  # ~10 MB so 140+ fit; the 2 CPUs never bound the slot count. 24 leaves headroom
+  # under the ~30 ceiling. Flat slot count (NOT memory-weighted), so a burst of
+  # heavy R(256MB)/Rust(512MB) jobs can still pressure RAM. For more density,
+  # raise VM RAM + this together (≈50 on perf-2x/8GB).
+  WORKER_MAX_SANDBOXES = "24"
   SANDBOX_IMAGE_REGISTRY = "ghcr.io/teovillanueva"
   # Prometheus scrape port (slots_used/_max + queue_depth) for in-flight autoscaling.
   WORKER_METRICS_PORT = "9091"

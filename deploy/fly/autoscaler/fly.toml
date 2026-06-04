@@ -46,17 +46,18 @@ primary_region = "gru"
   # unlike scaling on queue depth alone.
   FAS_PROMETHEUS_QUERY = "sum(code_runner_slots_used) + max(code_runner_queue_depth)"
 
-  # Scaling expression (Expr). WORKER_MAX_SANDBOXES=20, so each node holds ~20
-  # in-flight sessions → ceil(inflight / 20). Floor 1 so the first job of a burst
-  # doesn't wait on a cold start; ceiling 6 (=120 concurrent) as a cost guard —
+  # Scaling expression (Expr). WORKER_MAX_SANDBOXES=24, so each node holds ~24
+  # in-flight sessions → ceil(inflight / 24). Floor 1 so the first job of a burst
+  # doesn't wait on a cold start; ceiling 6 (=144 concurrent) as a cost guard —
   # raise it AND the pre-created pool together for bigger exams.
   #
-  # STARTED = start/stop a PRE-CREATED pool (run `fly scale count 6 -a
-  # code-runner-worker` once; the ceiling can't exceed the pool size). Volumes are
-  # fine with start/stop. With the in-flight signal above, scale-down waits for
-  # sessions to finish, so this is safe even for long interactive sessions.
-  FAS_STARTED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 20)))"
-  # FAS_CREATED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 20)))"
+  # STARTED = start/stop a PRE-CREATED pool (provision the pool with
+  # `deploy/fly/worker/provision-pool.sh grow N` so new machines fork the golden
+  # snapshot and boot fast; the ceiling can't exceed the pool size). Scale-down:
+  # the worker DRAINS in-flight sandboxes on SIGTERM (kill_timeout=130s in the
+  # worker fly.toml), so stopping a node lets its active sessions finish first.
+  FAS_STARTED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 24)))"
+  # FAS_CREATED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 24)))"
 
   # Reconcile interval (default 15s).
   # FAS_INTERVAL = "15s"

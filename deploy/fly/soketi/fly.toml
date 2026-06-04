@@ -12,6 +12,12 @@ primary_region = "gru"
   SOKETI_DEFAULT_APP_KEY = "code-runner-key"
   SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES = "false"
   SOKETI_DEBUG = "0"
+  # Bind dual-stack (default is IPv4-only 0.0.0.0). `::` with Linux bindv6only=0
+  # accepts BOTH the public proxy path (IPv4) and the private 6PN path (IPv6),
+  # so the worker can trigger soketi directly over `code-runner-soketi.internal:6001`
+  # — no flycast, no TLS, fully private. Without this, `.internal` (IPv6) is
+  # refused and the worker→soketi publish fails (output never reaches clients).
+  SOKETI_HOST = "::"
   # SOKETI_DEFAULT_APP_SECRET is set via: fly secrets set -a code-runner-soketi SOKETI_DEFAULT_APP_SECRET=...
 
 [http_service]
