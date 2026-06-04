@@ -1,6 +1,6 @@
 {
   "name": "@teovilla/code-runner-contract",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Single-source-of-truth wire contract for code-runner: generated TS types + zod validators + channel/event helpers shared by the SDKs and the gateway.",
   "license": "MIT",
