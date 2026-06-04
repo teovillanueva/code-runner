@@ -35,6 +35,8 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
@@ -45,11 +47,17 @@
     "@teovilla/code-runner-contract": "workspace:*"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.1.0",
     "@types/node": "^22.10.0",
     "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "jsdom": "^25.0.1",
     "pusher-js": "^8",
     "react": "^18",
+    "react-dom": "^18",
     "tsup": "^8",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.0"
   }
 }
