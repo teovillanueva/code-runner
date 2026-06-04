@@ -1,5 +1,12 @@
 # @teovilla/code-runner-sdk-node
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [81cac83]
+  - @teovilla/code-runner-contract@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
