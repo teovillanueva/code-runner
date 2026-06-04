@@ -1,0 +1,29 @@
+{
+  "name": "example-with-nextjs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "types:check": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@teovilla/code-runner-contract": "workspace:*",
+    "@teovilla/code-runner-react": "workspace:*",
+    "@teovilla/code-runner-sdk-node": "workspace:*",
+    "next": "16.2.6",
+    "pusher-js": "^8.4.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5.7.2"
+  }
+}
