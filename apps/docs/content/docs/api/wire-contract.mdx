@@ -38,7 +38,7 @@ keys.jobSpec('abc');    // "job:abc:spec"
 keys.jobStatus('abc');  // "job:abc:status"
 keys.jobOutput('abc');  // "job:abc:output"
 
-events;                 // { stage, stdout, stderr, result, artifact }
+events;                 // { stage, stdout, stderr, compileOutput, result, artifact }
 ```
 
 ## Core types
@@ -62,12 +62,24 @@ These are exported from `@teovilla/code-runner-contract` and re-exported by the 
 | Type | Shape | Carried on |
 | --- | --- | --- |
 | `StageEvent` | `{ phase: "queued" \| "compiling" \| "running" }` | soketi `stage` |
-| `OutputChunkEvent` | `{ chunk: string, seq: number }` | soketi `stdout` / `stderr` |
+| `OutputChunkEvent` | `{ chunk: string, seq: number }` | soketi `stdout` / `stderr` / `compile_output` |
 | `ResultEvent` | `{ exitCode, signal, timedOut, idleTimedOut, truncated, durationMs }` | soketi `result` |
 | `Artifact` | `{ name, mimeType, bytes, url }` | soketi `artifact` / `RunResult` |
-| `RunResult` | `ResultEvent` + `{ stdout, stderr, artifacts: Artifact[], artifactsTruncated }` | `GET /v1/jobs/:id/output` |
+| `CompileResult` | `{ exitCode: number \| null, signal: string \| null, stdout, stderr, output, durationMs }` | `RunResult.compile` |
+| `RunResult` | `ResultEvent` + `{ stdout, stderr, compile?: CompileResult, artifacts: Artifact[], artifactsTruncated }` | `GET /v1/jobs/:id/output` |
 | `StdinMessage` | `{ chunk: string }` | Redis `stdin:<id>` |
 | `ControlMessage` | `{ type: "start" \| "kill" \| "stdin_close" }` | Redis `ctrl:<id>` |
+
+<Callout type="info">
+  `RunResult.compile` is present **only** for compiled languages that actually ran a
+  compile step — it's absent for interpreted languages (e.g. Python) or when no
+  compile ran. Build logs live in `compile` and are kept **distinct** from the run
+  `stdout` / `stderr` (which cover the run stage only). `CompileResult.output` is the
+  interleaved compile stdout + stderr in emission order (mirroring Piston's
+  `compile.output`). A non-zero `compile.exitCode` means compilation failed and the
+  run stage did **not** execute: the run `stdout` / `stderr` are empty and the
+  top-level `exitCode` reflects the compile failure.
+</Callout>
 
 ## Regenerating the contract
 

@@ -175,6 +175,27 @@ Pull the persisted `RunResult` for a job that ran with `collectOutput: true`.
 }
 ```
 
+For **compiled** languages, an optional `compile` field carries the build stage,
+kept distinct from the run `stdout`/`stderr`. It's absent for interpreted languages.
+A non-zero `compile.exitCode` means compilation failed and the run stage did **not**
+execute.
+
+```json
+{
+  "compile": {
+    "exitCode": 0,
+    "signal": null,
+    "stdout": "",
+    "stderr": "",
+    "output": "",
+    "durationMs": 540
+  }
+}
+```
+
+`compile.output` is the interleaved stdout+stderr of the compile command in emission
+order (mirrors Piston's `compile.output`).
+
 See [Artifacts & Pullable Output](/docs/guides/artifacts).
 
 ---

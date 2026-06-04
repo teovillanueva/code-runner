@@ -1,0 +1,32 @@
+# Local dev override — copy to docker-compose.override.yml (auto-merged by
+# `docker compose up`). The base compose keeps api/soketi/minio on the internal
+# network only; an app running on the HOST (e.g. apps/example-with-nextjs) needs
+# them published. Adjust the host ports if any clash with something you already
+# run.
+
+services:
+  api:
+    ports:
+      - "8080:8080" # gateway → route handlers / SDK
+
+  soketi:
+    ports:
+      - "6001:6001" # browser pusher-js live output
+
+  minio:
+    ports:
+      - "9000:9000" # browser fetches artifact presigned URLs
+
+  worker:
+    environment:
+      # Connect/upload to MinIO via the internal address, but SIGN presigned
+      # artifact URLs against a host-reachable address so the browser can fetch
+      # them. SigV4 signs the host, so the signed host must equal the one the
+      # client requests.
+      #
+      # Use 127.0.0.1 (NOT localhost) on purpose: cookies are scoped by host and
+      # ignore the port, so artifacts served from localhost would inherit every
+      # cookie the browser holds for localhost (your app, other dev tools…). A
+      # large enough Cookie header makes MinIO reject the request with
+      # `MetadataTooLarge`. 127.0.0.1 is a separate cookie jar → no bleed.
+      ARTIFACT_S3_PUBLIC_ENDPOINT: "http://127.0.0.1:9000"

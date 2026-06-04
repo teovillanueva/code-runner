@@ -67,14 +67,26 @@ This applies to **batch jobs too** (no stdin expected) — follow the same seque
 If `/start` never arrives, the worker reclaims the slot after `WORKER_WARMUP_MS`
 (default 30s) so a never-started job can't hold capacity forever.
 
+<Callout type="info">
+  With the [React SDK](/docs/guides/react-sdk), `useCodeRunnerJob` exposes an
+  `onSubscribed` callback that fires exactly on `subscription_succeeded` — wire
+  your `start` call there and the handshake is handled for you.
+</Callout>
+
 ## Stages and the terminal result
 
 As a job progresses, the worker emits `stage` events on the soketi channel:
 
 `queued` → `compiling` (compiled languages only) → `running`
 
-and exactly one terminal **`result`** event when the sandbox exits. The result tells
-you *why* it ended:
+During the `compiling` stage the worker streams a **live build log** on its own
+`compile_output` event — the interleaved stdout+stderr of the compile command, kept
+separate from the program's run `stdout`/`stderr`. If compilation fails (non-zero
+exit) the run stage never starts, and the persisted `RunResult.compile` block holds
+the full build output. (A clean compile emits nothing, so the build log stays empty.)
+
+The worker then emits exactly one terminal **`result`** event when the sandbox exits.
+The result tells you *why* it ended:
 
 ```json
 {

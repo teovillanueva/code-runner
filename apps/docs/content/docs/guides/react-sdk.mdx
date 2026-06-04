@@ -89,9 +89,11 @@ export function App() {
 import { useCodeRunnerJob } from '@teovilla/code-runner-react';
 
 function JobView({ jobId }: { jobId: string }) {
-  const { stage, stdout, stderr, result, status, sendStdin, kill } =
+  const { stage, stdout, stderr, compileOutput, result, status, sendStdin, kill } =
     useCodeRunnerJob({
       jobId,
+      // The start-handshake: subscribe FIRST, then start once soketi confirms it.
+      onSubscribed: () => fetch(`/api/jobs/${jobId}/start`, { method: 'POST' }),
       // sendStdin / kill don't talk to code-runner directly — they call YOUR backend,
       // which holds the bearer token and forwards to the code-runner API.
       onStdin: (chunk) =>
@@ -106,6 +108,8 @@ function JobView({ jobId }: { jobId: string }) {
   return (
     <div>
       <p>stage: {stage ?? '—'} · status: {status}</p>
+      {/* Compiled languages stream a live build log here, separate from the run. */}
+      {compileOutput && <pre>{compileOutput}</pre>}
       <pre>{stdout}</pre>
       <pre style={{ color: 'crimson' }}>{stderr}</pre>
       <button onClick={() => sendStdin('World\n')}>Send stdin</button>
@@ -124,22 +128,44 @@ function JobView({ jobId }: { jobId: string }) {
 | `channel` | `string?` | Override; defaults to `private-run-${jobId}`. |
 | `onStdin` | `(chunk: string) => void \| Promise<void>` | Called by `sendStdin`. Route to your backend. |
 | `onKill` | `() => void \| Promise<void>` | Called by `kill`. Route to your backend. |
+| `onSubscribed` | `() => void \| Promise<void>` | Fires once soketi confirms the subscription. The correct place to trigger the job's `start` (the [start-handshake](#start-handshake)). |
 
 ### Hook return value
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `stage` | `StagePhase \| null` | `"queued" \| "compiling" \| "running"`. |
-| `stdout` | `string` | Reassembled, ordered stdout. |
-| `stderr` | `string` | Reassembled, ordered stderr. |
+| `stdout` | `string` | Reassembled, ordered stdout (program run output only). |
+| `stderr` | `string` | Reassembled, ordered stderr (program run output only). |
+| `compileOutput` | `string` | Live build log of the compile stage (compiled languages only), reassembled in emission order. Separate from `stdout`/`stderr` so you can render a dedicated build panel. Empty for interpreted languages, before the compiler emits anything, or on a clean compile with no warnings/errors. |
 | `result` | `ResultEvent \| null` | Terminal result once the job ends. |
 | `artifacts` | `Artifact[]` | Captured workspace artifacts (if any). |
 | `status` | `"idle" \| "running" \| "done"` | Coarse lifecycle state. |
 | `sendStdin` | `(chunk: string) => void \| Promise<void>` | Invokes `onStdin`. |
 | `kill` | `() => void \| Promise<void>` | Invokes `onKill`. |
 
-The hook handles chunk ordering by `seq` internally, so `stdout`/`stderr` are always
-correctly ordered even if WebSocket frames arrive out of order.
+The hook handles chunk ordering by `seq` internally, so `stdout`/`stderr` (and
+`compileOutput`) are always correctly ordered even if WebSocket frames arrive out
+of order.
+
+### Start-handshake [#start-handshake]
+
+A job runs the instant it is started — and can finish in single-digit
+milliseconds. If you call `start` before this client has finished subscribing,
+the output is emitted to nobody and you see nothing. So **subscribe first, then
+start**: pass `onSubscribed` and trigger the job's `start` (via your backend)
+only once soketi confirms the subscription (`pusher:subscription_succeeded`).
+
+```tsx
+useCodeRunnerJob({
+  jobId,
+  onSubscribed: () => fetch(`/api/jobs/${jobId}/start`, { method: 'POST' }),
+});
+```
+
+The compile-stage build log (`compileOutput`) arrives on its own `compile_output`
+event, so a clean compile that prints nothing simply leaves `compileOutput` empty
+— there is no run output to confuse it with.
 
 ## Putting it together
 

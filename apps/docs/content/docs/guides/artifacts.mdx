@@ -61,6 +61,33 @@ The `url` is a **presigned GET URL** — it needs no bearer token, so you can ha
 straight to a browser. Input files, the compile-output binary, and internal markers
 are excluded from capture automatically.
 
+### Browser-reachable URLs (split-horizon)
+
+Presigned URLs are SigV4-signed, and the signature **binds the host** — so the URL
+must be signed with the same host the client (browser or backend) will fetch from. In
+most deployments the worker connects to object storage at the same address clients use,
+and there's nothing to do. But in a **split-horizon** setup the worker reaches storage
+at an internal address (e.g. `http://minio:9000`) while clients must fetch from a
+different public one. Set `ARTIFACT_S3_PUBLIC_ENDPOINT` to the client-facing endpoint:
+the worker still connects and uploads via `AWS_ENDPOINT_URL_S3` (override
+`ARTIFACT_S3_ENDPOINT`), but signs presigned URLs against the public endpoint. Signing
+is pure local crypto, so there's no extra network round-trip. Left empty (the default),
+presigned URLs use the connect endpoint.
+
+```bash
+# Worker uploads internally, clients fetch from the public host:
+AWS_ENDPOINT_URL_S3=http://minio:9000
+ARTIFACT_S3_PUBLIC_ENDPOINT=http://127.0.0.1:9000
+```
+
+<Callout type="info">
+  For local dev, prefer `127.0.0.1` over `localhost`. Cookies are scoped by host and
+  ignore the port, so artifacts served from `localhost` inherit the browser's localhost
+  cookies — a large `Cookie` header makes MinIO reject the request with
+  `MetadataTooLarge`. `127.0.0.1` is a separate cookie jar. In production, set this to
+  your public S3/CDN domain when it differs from the worker's internal endpoint.
+</Callout>
+
 <Callout type="info">
   Artifact capture is **opt-in infrastructure**: it's active only when the worker is
   configured with object storage (`BUCKET_NAME` + S3 credentials). With no storage
