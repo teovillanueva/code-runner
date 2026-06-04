@@ -265,6 +265,35 @@ export interface Artifact {
   url: string;
 }
 /**
+ * Result of the compile stage for compiled languages (Piston-style separate `compile` object). Present in RunResult.compile only when a compile step actually ran. Compiler diagnostics conventionally go to stderr; a non-zero exitCode means compilation failed and the run stage did NOT execute.
+ */
+export interface CompileResult {
+  /**
+   * Exit code of the compile command. Non-zero means compilation failed and the run stage did not execute.
+   */
+  exitCode: number | null;
+  /**
+   * Signal that terminated the compile command, if any.
+   */
+  signal: string | null;
+  /**
+   * Accumulated stdout of the compile command.
+   */
+  stdout: string;
+  /**
+   * Accumulated stderr of the compile command (compiler diagnostics).
+   */
+  stderr: string;
+  /**
+   * Interleaved stdout+stderr of the compile stage, in emission order (mirrors Piston's compile.output).
+   */
+  output: string;
+  /**
+   * Wall-clock time of the compile stage in ms.
+   */
+  durationMs: number;
+}
+/**
  * The persisted, pullable result of a collected run (GET /v1/jobs/:id/output). ResultEvent's terminal fields plus accumulated stdout/stderr and captured artifacts.
  */
 export interface RunResult {
@@ -284,13 +313,14 @@ export interface RunResult {
   truncated: boolean;
   durationMs: number;
   /**
-   * Accumulated stdout (within the outputKb budget; same bytes streamed to soketi).
+   * Accumulated stdout of the RUN stage (within the outputKb budget; same bytes streamed to soketi). Compile-stage output lives in `compile`, not here.
    */
   stdout: string;
   /**
-   * Accumulated stderr (within the outputKb budget; same bytes streamed to soketi).
+   * Accumulated stderr of the RUN stage (within the outputKb budget; same bytes streamed to soketi). Compile-stage diagnostics live in `compile.stderr`, not here.
    */
   stderr: string;
+  compile?: CompileResult1;
   /**
    * Captured workspace artifacts, each referenced by presigned URL.
    */
@@ -299,4 +329,33 @@ export interface RunResult {
    * True when captured files exceeded maxArtifacts/maxArtifactBytes and excess was dropped.
    */
   artifactsTruncated: boolean;
+}
+/**
+ * Compile-stage result for compiled languages; absent for interpreted languages or when no compile step ran. Mirrors Piston's separate `compile` object — build logs are kept distinct from the run stdout/stderr.
+ */
+export interface CompileResult1 {
+  /**
+   * Exit code of the compile command. Non-zero means compilation failed and the run stage did not execute.
+   */
+  exitCode: number | null;
+  /**
+   * Signal that terminated the compile command, if any.
+   */
+  signal: string | null;
+  /**
+   * Accumulated stdout of the compile command.
+   */
+  stdout: string;
+  /**
+   * Accumulated stderr of the compile command (compiler diagnostics).
+   */
+  stderr: string;
+  /**
+   * Interleaved stdout+stderr of the compile stage, in emission order (mirrors Piston's compile.output).
+   */
+  output: string;
+  /**
+   * Wall-clock time of the compile stage in ms.
+   */
+  durationMs: number;
 }
