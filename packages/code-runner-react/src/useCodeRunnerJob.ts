@@ -7,6 +7,7 @@
 
 import type {
   Artifact,
+  JobState,
   OutputChunkEvent,
   ResultEvent,
   StageEvent,
@@ -26,7 +27,39 @@ const EVENTS = {
   compileOutput: "compile_output",
 } as const;
 
-export type JobStatusState = "idle" | "running" | "done";
+// "idle"   — no job/channel to track yet.
+// "queued" — accepted and waiting for a worker to claim it (the window between
+//            /execute and the first run/compile stage; includes the wire
+//            `queued` stage). Without this the UI sat at "idle" while a job
+//            waited behind worker capacity.
+// "running"— a worker is actively compiling/running and emitting output.
+// "done"   — terminal result received.
+export type JobStatusState = "idle" | "queued" | "running" | "done";
+
+// Monotonic lifecycle ordering. Reconciliation (onResolveStatus) only ADOPTS a
+// pulled status if it is AHEAD of the current one, so a slow status pull never
+// regresses a live event that already arrived.
+const STATUS_RANK: Record<JobStatusState, number> = {
+  idle: 0,
+  queued: 1,
+  running: 2,
+  done: 3,
+};
+
+/** Map the wire JobState (from a status pull) to the hook's JobStatusState. */
+function wireStateToStatus(state: JobState): JobStatusState {
+  switch (state) {
+    case "running":
+      return "running";
+    case "done":
+    case "killed":
+    case "error":
+      return "done";
+    default:
+      // "queued" | "starting"
+      return "queued";
+  }
+}
 
 export interface UseCodeRunnerJobArgs {
   jobId: string;
@@ -44,6 +77,15 @@ export interface UseCodeRunnerJobArgs {
    * /docs/concepts/lifecycle#the-start-handshake.
    */
   onSubscribed?: () => void | Promise<void>;
+  /**
+   * Called once on subscribe to RECONCILE state for a late join. Should GET the
+   * persisted JobStatus from your backend (`GET /v1/jobs/:id/status` via
+   * sdk-node's `getStatus`) and return its `state`, or null if unavailable. A
+   * job that already advanced past "queued" before this client subscribed missed
+   * those soketi events; the hook adopts the pulled state only if it is AHEAD of
+   * what it currently shows, so a live event that arrived first is never undone.
+   */
+  onResolveStatus?: () => Promise<JobState | null>;
 }
 
 export interface UseCodeRunnerJobResult {
@@ -80,7 +122,8 @@ function reassemble(buffer: Map<number, string>): string {
 export function useCodeRunnerJob(
   args: UseCodeRunnerJobArgs,
 ): UseCodeRunnerJobResult {
-  const { jobId, channel, onStdin, onKill, onSubscribed } = args;
+  const { jobId, channel, onStdin, onKill, onSubscribed, onResolveStatus } =
+    args;
   const pusher = usePusher();
 
   // No jobId yet → channelName is null and we DON'T subscribe. Subscribing to a
@@ -88,13 +131,15 @@ export function useCodeRunnerJob(
   // that doesn't exist. The caller sets jobId once `execute` returns.
   const channelName = channel ?? (jobId ? `private-run-${jobId}` : null);
 
-  // Keep onSubscribed in a ref so it never enters the subscribe effect deps —
-  // an unstable callback there would re-subscribe (and re-fire start) every
-  // render.
+  // Keep onSubscribed/onResolveStatus in refs so they never enter the subscribe
+  // effect deps — an unstable callback there would re-subscribe (and re-fire
+  // start / re-pull status) every render.
   const onSubscribedRef = useRef(onSubscribed);
+  const onResolveStatusRef = useRef(onResolveStatus);
   useEffect(() => {
     onSubscribedRef.current = onSubscribed;
-  }, [onSubscribed]);
+    onResolveStatusRef.current = onResolveStatus;
+  }, [onSubscribed, onResolveStatus]);
 
   const [stage, setStage] = useState<StagePhase | null>(null);
   const [stdout, setStdout] = useState("");
@@ -102,7 +147,13 @@ export function useCodeRunnerJob(
   const [compileOutput, setCompileOutput] = useState("");
   const [result, setResult] = useState<ResultEvent | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
-  const [status, setStatus] = useState<JobStatusState>("idle");
+  // Optimistically "queued" the moment we have a channel to subscribe to — the
+  // job is already enqueued (/execute returned status:"queued"), so showing
+  // "idle" until the worker's first stage event is wrong (and gets worse the
+  // longer the job waits behind capacity).
+  const [status, setStatus] = useState<JobStatusState>(
+    channelName ? "queued" : "idle",
+  );
 
   // Per-stream seq->chunk buffers for ordered reassembly (worker emits monotonic
   // seq across ~8KB chunks).
@@ -121,22 +172,47 @@ export function useCodeRunnerJob(
     setCompileOutput("");
     setResult(null);
     setArtifacts([]);
-    setStatus("idle");
+    // Reset to "queued" (not "idle") when we have a channel: a new job/channel
+    // is enqueued and waiting, not idle.
+    setStatus(channelName ? "queued" : "idle");
 
     // No channel yet (no jobId) — nothing to subscribe to.
     if (!channelName) return;
 
+    // Guards a late status-pull resolving after this effect tore down (new job,
+    // unmount) — don't apply stale reconciliation to the next job's state.
+    let active = true;
+
     const ch = pusher.subscribe(channelName);
 
-    // Fire the start-handshake signal once soketi confirms the subscription.
+    // Once soketi confirms the subscription: (1) fire the start-handshake, and
+    // (2) reconcile against the persisted status for a late join — a job that
+    // advanced past "queued" before we were listening missed those events. Adopt
+    // the pulled state only if it is AHEAD of what we currently show.
     const onSubscriptionSucceeded = () => {
       void onSubscribedRef.current?.();
+      const resolve = onResolveStatusRef.current;
+      if (resolve) {
+        void resolve()
+          .then((wireState) => {
+            if (!active || !wireState) return;
+            const pulled = wireStateToStatus(wireState);
+            setStatus((prev) =>
+              STATUS_RANK[pulled] > STATUS_RANK[prev] ? pulled : prev,
+            );
+          })
+          .catch(() => {
+            // Reconciliation is best-effort; live events remain the primary path.
+          });
+      }
     };
     ch.bind("pusher:subscription_succeeded", onSubscriptionSucceeded);
 
     const onStage = (data: StageEvent) => {
       setStage(data.phase);
-      setStatus("running");
+      // The wire `queued` stage keeps us "queued"; compiling/running mean a
+      // worker is actively executing.
+      setStatus(data.phase === "queued" ? "queued" : "running");
     };
     const onStdout = (data: OutputChunkEvent) => {
       stdoutBuf.current.set(data.seq, data.chunk);
@@ -171,6 +247,7 @@ export function useCodeRunnerJob(
     ch.bind(EVENTS.artifact, onArtifact);
 
     return () => {
+      active = false;
       ch.unbind("pusher:subscription_succeeded", onSubscriptionSucceeded);
       ch.unbind(EVENTS.stage, onStage);
       ch.unbind(EVENTS.stdout, onStdout);
