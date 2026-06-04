@@ -73,7 +73,7 @@ const client = new CodeRunnerClient({
 | `listLanguages()` | `GET /v1/languages` | List available languages & versions. |
 | `execute(req)` | `POST /v1/execute` | Enqueue a job → `{ jobId, channel, status }`. |
 | `getJob(id)` | `GET /v1/jobs/:id` | Poll job status. |
-| `getOutput(id)` | `GET /v1/jobs/:id/output` | Pull the persisted `RunResult` (needs `collectOutput`). |
+| `getOutput(id)` | `GET /v1/jobs/:id/output` | Pull the persisted `RunResult` (needs `collectOutput`). For compiled languages it includes an optional `compile` block with the build logs, distinct from the run `stdout`/`stderr`. |
 | `start(id)` | `POST /v1/jobs/:id/start` | Send the start signal (the handshake). |
 | `sendStdin(id, chunk)` | `POST /v1/jobs/:id/stdin` | Write a chunk to the process stdin. |
 | `closeStdin(id)` | `POST /v1/jobs/:id/stdin/close` | Signal EOF (Ctrl-D). |

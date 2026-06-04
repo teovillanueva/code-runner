@@ -41,6 +41,20 @@ A chunk of process output. Same shape for both streams.
 | `chunk` | `string` | UTF-8 output text. |
 | `seq` | `number` | Monotonic sequence number for ordering. A single logical output may be split across several events (each ≤ ~8 KB); reassemble by `seq`. |
 
+## `compile_output`
+
+The live, interleaved **build log** — emitted during the `compiling` stage for
+**compiled languages only**. Same `OutputChunkEvent` shape as `stdout` / `stderr`.
+
+```json
+{ "chunk": "compiling main.go\n", "seq": 0 }
+```
+
+It carries the compile command's stdout and stderr in emission order. It's kept on
+its own event — separate from `stdout` / `stderr` — so a client can render a
+dedicated real-time build panel. The `seq` shares the **same per-job sequence space**
+as `stdout` / `stderr`; reassemble by `seq` like the other output streams.
+
 ## `result`
 
 The **terminal** event, emitted exactly once when the sandbox exits.
@@ -85,8 +99,9 @@ With pusher-js directly (the React SDK abstracts this):
 ```ts
 const channel = pusher.subscribe(`private-run-${jobId}`);
 
-channel.bind('stage',  (d: string) => { const { phase } = JSON.parse(d); });
-channel.bind('stdout', (d: string) => { const { chunk, seq } = JSON.parse(d); });
-channel.bind('stderr', (d: string) => { const { chunk, seq } = JSON.parse(d); });
+channel.bind('stage',          (d: string) => { const { phase } = JSON.parse(d); });
+channel.bind('stdout',         (d: string) => { const { chunk, seq } = JSON.parse(d); });
+channel.bind('stderr',         (d: string) => { const { chunk, seq } = JSON.parse(d); });
+channel.bind('compile_output', (d: string) => { const { chunk, seq } = JSON.parse(d); });
 channel.bind('result', (d: string) => { const r = JSON.parse(d); /* terminal */ });
 ```

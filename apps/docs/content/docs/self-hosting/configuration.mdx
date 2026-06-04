@@ -47,6 +47,7 @@ stdout/stderr still works). See [Artifacts](/docs/guides/artifacts).
 | Variable | Default | Description |
 | --- | --- | --- |
 | `AWS_ENDPOINT_URL_S3` | `http://minio:9000` (dev) | S3 endpoint (MinIO dev, Tigris/S3/R2 prod). |
+| `ARTIFACT_S3_PUBLIC_ENDPOINT` | _(unset)_ | Endpoint used to **sign** presigned GET URLs when clients fetch from a different host than the worker connects to (split-horizon). When set, the worker uploads via `AWS_ENDPOINT_URL_S3` but signs against this. See [Artifacts](/docs/guides/artifacts#browser-reachable-urls-split-horizon). |
 | `BUCKET_NAME` | `code-runner-artifacts` | Bucket name. Auto-created on worker boot. |
 | `AWS_ACCESS_KEY_ID` | `minioadmin` (dev) | S3 access key. |
 | `AWS_SECRET_ACCESS_KEY` | `minioadmin` (dev) | S3 secret key. |

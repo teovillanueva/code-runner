@@ -234,6 +234,21 @@
       },
       "required": ["name", "mimeType", "bytes", "url"]
     },
+    "CompileResult": {
+      "title": "CompileResult",
+      "description": "Result of the compile stage for compiled languages (Piston-style separate `compile` object). Present in RunResult.compile only when a compile step actually ran. Compiler diagnostics conventionally go to stderr; a non-zero exitCode means compilation failed and the run stage did NOT execute.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exitCode": { "type": ["integer", "null"], "description": "Exit code of the compile command. Non-zero means compilation failed and the run stage did not execute." },
+        "signal": { "type": ["string", "null"], "description": "Signal that terminated the compile command, if any." },
+        "stdout": { "type": "string", "description": "Accumulated stdout of the compile command." },
+        "stderr": { "type": "string", "description": "Accumulated stderr of the compile command (compiler diagnostics)." },
+        "output": { "type": "string", "description": "Interleaved stdout+stderr of the compile stage, in emission order (mirrors Piston's compile.output)." },
+        "durationMs": { "type": "integer", "description": "Wall-clock time of the compile stage in ms." }
+      },
+      "required": ["exitCode", "signal", "stdout", "stderr", "output", "durationMs"]
+    },
     "RunResult": {
       "title": "RunResult",
       "description": "The persisted, pullable result of a collected run (GET /v1/jobs/:id/output). ResultEvent's terminal fields plus accumulated stdout/stderr and captured artifacts.",
@@ -246,8 +261,9 @@
         "idleTimedOut": { "type": "boolean", "description": "Killed by the idle clock." },
         "truncated": { "type": "boolean", "description": "Output exceeded outputKb and was truncated." },
         "durationMs": { "type": "integer" },
-        "stdout": { "type": "string", "description": "Accumulated stdout (within the outputKb budget; same bytes streamed to soketi)." },
-        "stderr": { "type": "string", "description": "Accumulated stderr (within the outputKb budget; same bytes streamed to soketi)." },
+        "stdout": { "type": "string", "description": "Accumulated stdout of the RUN stage (within the outputKb budget; same bytes streamed to soketi). Compile-stage output lives in `compile`, not here." },
+        "stderr": { "type": "string", "description": "Accumulated stderr of the RUN stage (within the outputKb budget; same bytes streamed to soketi). Compile-stage diagnostics live in `compile.stderr`, not here." },
+        "compile": { "$ref": "#/$defs/CompileResult", "description": "Compile-stage result for compiled languages; absent for interpreted languages or when no compile step ran. Mirrors Piston's separate `compile` object — build logs are kept distinct from the run stdout/stderr." },
         "artifacts": { "type": "array", "items": { "$ref": "#/$defs/Artifact" }, "description": "Captured workspace artifacts, each referenced by presigned URL." },
         "artifactsTruncated": { "type": "boolean", "description": "True when captured files exceeded maxArtifacts/maxArtifactBytes and excess was dropped." }
       },

@@ -26,6 +26,39 @@ type Artifact struct {
 // hand.
 type CodeRunnerWire map[string]interface{}
 
+// Result of the compile stage for compiled languages (Piston-style separate
+// `compile` object). Present in RunResult.compile only when a compile step
+// actually ran. Compiler diagnostics conventionally go to stderr; a non-zero
+// exitCode means compilation failed and the run stage did NOT execute.
+type CompileResult struct {
+	// Wall-clock time of the compile stage in ms.
+	DurationMs int `json:"durationMs"`
+
+	// Exit code of the compile command. Non-zero means compilation failed and the run
+	// stage did not execute.
+	ExitCode CompileResultExitCode `json:"exitCode"`
+
+	// Interleaved stdout+stderr of the compile stage, in emission order (mirrors
+	// Piston's compile.output).
+	Output string `json:"output"`
+
+	// Signal that terminated the compile command, if any.
+	Signal CompileResultSignal `json:"signal"`
+
+	// Accumulated stderr of the compile command (compiler diagnostics).
+	Stderr string `json:"stderr"`
+
+	// Accumulated stdout of the compile command.
+	Stdout string `json:"stdout"`
+}
+
+// Exit code of the compile command. Non-zero means compilation failed and the run
+// stage did not execute.
+type CompileResultExitCode *int
+
+// Signal that terminated the compile command, if any.
+type CompileResultSignal *string
+
 // Published on ctrl:<jobId>. Routes lifecycle control to the owning worker.
 type ControlMessage struct {
 	// Type corresponds to the JSON schema field "type".
@@ -312,6 +345,11 @@ type RunResult struct {
 	// dropped.
 	ArtifactsTruncated bool `json:"artifactsTruncated"`
 
+	// Compile-stage result for compiled languages; absent for interpreted languages
+	// or when no compile step ran. Mirrors Piston's separate `compile` object — build
+	// logs are kept distinct from the run stdout/stderr.
+	Compile *CompileResult `json:"compile,omitempty,omitzero"`
+
 	// DurationMs corresponds to the JSON schema field "durationMs".
 	DurationMs int `json:"durationMs"`
 
@@ -324,10 +362,13 @@ type RunResult struct {
 	// Signal corresponds to the JSON schema field "signal".
 	Signal RunResultSignal `json:"signal"`
 
-	// Accumulated stderr (within the outputKb budget; same bytes streamed to soketi).
+	// Accumulated stderr of the RUN stage (within the outputKb budget; same bytes
+	// streamed to soketi). Compile-stage diagnostics live in `compile.stderr`, not
+	// here.
 	Stderr string `json:"stderr"`
 
-	// Accumulated stdout (within the outputKb budget; same bytes streamed to soketi).
+	// Accumulated stdout of the RUN stage (within the outputKb budget; same bytes
+	// streamed to soketi). Compile-stage output lives in `compile`, not here.
 	Stdout string `json:"stdout"`
 
 	// Killed by the wall-clock or cpu clock.

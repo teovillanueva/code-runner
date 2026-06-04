@@ -124,9 +124,20 @@ func (r *compileSandboxRunner) Create(_ context.Context, _ wire.JobSpec) (runner
 
 // stderrChunks returns all stderr event content as a single string.
 func stderrEventContent(events []capturedEvent) string {
+	return outputEventContent(events, "stderr")
+}
+
+// compileOutputContent returns all compile_output event content concatenated.
+func compileOutputContent(events []capturedEvent) string {
+	return outputEventContent(events, "compile_output")
+}
+
+// outputEventContent concatenates the chunk payloads of all events named
+// eventName (an OutputChunkEvent-shaped event).
+func outputEventContent(events []capturedEvent, eventName string) string {
 	var buf bytes.Buffer
 	for _, ev := range events {
-		if ev.event != "stderr" {
+		if ev.event != eventName {
 			continue
 		}
 		raw, _ := json.Marshal(ev.data)
@@ -282,9 +293,12 @@ func TestWorker_CompileGate_NonZero_TerminatesWithoutRun(t *testing.T) {
 	require.NotNil(t, re.ExitCode, "result ExitCode must be non-nil")
 	assert.Equal(t, 2, *re.ExitCode, "result ExitCode must equal the compile exit code (2)")
 
-	// Compiler stderr must have been forwarded.
-	allStderr := stderrEventContent(events.all())
-	assert.Contains(t, allStderr, "undefined symbol", "compiler stderr must be forwarded to the publisher")
+	// Compiler diagnostics must have been forwarded LIVE on the dedicated
+	// compile_output event (the real-time build log), NOT mixed into run stderr.
+	buildLog := compileOutputContent(events.all())
+	assert.Contains(t, buildLog, "undefined symbol", "compiler output must be forwarded on compile_output")
+	assert.NotContains(t, stderrEventContent(events.all()), "undefined symbol",
+		"compile diagnostics must NOT leak into the run stderr stream")
 }
 
 // TestWorker_CompileGate_NilCompile_NilPathUnchanged verifies that when

@@ -13,6 +13,10 @@ coverage.out
 .env
 .env.local
 
+# Local docker compose override (machine-specific ports/endpoints).
+# A committed template lives at docker-compose.override.yml.example.
+docker-compose.override.yml
+
 # OS / editors
 .DS_Store
 *.swp

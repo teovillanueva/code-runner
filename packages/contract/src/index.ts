@@ -33,4 +33,12 @@ export const events = {
   stderr: "stderr",
   result: "result",
   artifact: "artifact",
+  /**
+   * Live interleaved build log of the compile stage (compiled languages only),
+   * emitted in emission order during the `compiling` stage. Kept on its OWN
+   * event — separate from run stdout/stderr — so the client can show a dedicated
+   * real-time build panel. The persisted RunResult.compile carries the same
+   * bytes split into stdout/stderr/output (Piston-style).
+   */
+  compileOutput: "compile_output",
 } as const;

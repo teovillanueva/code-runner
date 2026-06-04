@@ -23,6 +23,7 @@ const EVENTS = {
   stderr: "stderr",
   result: "result",
   artifact: "artifact",
+  compileOutput: "compile_output",
 } as const;
 
 export type JobStatusState = "idle" | "running" | "done";
@@ -49,6 +50,13 @@ export interface UseCodeRunnerJobResult {
   stage: StagePhase | null;
   stdout: string;
   stderr: string;
+  /**
+   * Live interleaved build log of the compile stage (compiled languages only),
+   * reassembled in emission order from `compile_output` events. Empty for
+   * interpreted languages or before compilation produces output. Kept separate
+   * from stdout/stderr so consumers can render a dedicated real-time build panel.
+   */
+  compileOutput: string;
   result: ResultEvent | null;
   /**
    * Captured workspace artifacts, accumulated from soketi `artifact` events.
@@ -91,6 +99,7 @@ export function useCodeRunnerJob(
   const [stage, setStage] = useState<StagePhase | null>(null);
   const [stdout, setStdout] = useState("");
   const [stderr, setStderr] = useState("");
+  const [compileOutput, setCompileOutput] = useState("");
   const [result, setResult] = useState<ResultEvent | null>(null);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [status, setStatus] = useState<JobStatusState>("idle");
@@ -99,14 +108,17 @@ export function useCodeRunnerJob(
   // seq across ~8KB chunks).
   const stdoutBuf = useRef<Map<number, string>>(new Map());
   const stderrBuf = useRef<Map<number, string>>(new Map());
+  const compileBuf = useRef<Map<number, string>>(new Map());
 
   useEffect(() => {
     // Reset state for a new job/channel.
     stdoutBuf.current = new Map();
     stderrBuf.current = new Map();
+    compileBuf.current = new Map();
     setStage(null);
     setStdout("");
     setStderr("");
+    setCompileOutput("");
     setResult(null);
     setArtifacts([]);
     setStatus("idle");
@@ -136,6 +148,11 @@ export function useCodeRunnerJob(
       setStderr(reassemble(stderrBuf.current));
       setStatus("running");
     };
+    const onCompileOutput = (data: OutputChunkEvent) => {
+      compileBuf.current.set(data.seq, data.chunk);
+      setCompileOutput(reassemble(compileBuf.current));
+      setStatus("running");
+    };
     const onResult = (data: ResultEvent) => {
       setResult(data);
       setStatus("done");
@@ -149,6 +166,7 @@ export function useCodeRunnerJob(
     ch.bind(EVENTS.stage, onStage);
     ch.bind(EVENTS.stdout, onStdout);
     ch.bind(EVENTS.stderr, onStderr);
+    ch.bind(EVENTS.compileOutput, onCompileOutput);
     ch.bind(EVENTS.result, onResult);
     ch.bind(EVENTS.artifact, onArtifact);
 
@@ -157,6 +175,7 @@ export function useCodeRunnerJob(
       ch.unbind(EVENTS.stage, onStage);
       ch.unbind(EVENTS.stdout, onStdout);
       ch.unbind(EVENTS.stderr, onStderr);
+      ch.unbind(EVENTS.compileOutput, onCompileOutput);
       ch.unbind(EVENTS.result, onResult);
       ch.unbind(EVENTS.artifact, onArtifact);
       pusher.unsubscribe(channelName);
@@ -169,5 +188,15 @@ export function useCodeRunnerJob(
   );
   const kill = useMemo(() => () => onKill?.(), [onKill]);
 
-  return { stage, stdout, stderr, result, artifacts, status, sendStdin, kill };
+  return {
+    stage,
+    stdout,
+    stderr,
+    compileOutput,
+    result,
+    artifacts,
+    status,
+    sendStdin,
+    kill,
+  };
 }

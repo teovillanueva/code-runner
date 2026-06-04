@@ -736,7 +736,7 @@ func (s *dockerSandbox) ReadArtifacts(ctx context.Context, exclude map[string]bo
 //
 // argv comes only from the manifest compile field; no language-name branching
 // occurs here or in the callers.
-func (s *dockerSandbox) Compile(ctx context.Context, argv []string, stderrFn func([]byte)) (CompileResult, error) {
+func (s *dockerSandbox) Compile(ctx context.Context, argv []string, onOutput func([]byte)) (CompileResult, error) {
 	start := time.Now()
 
 	// Create the exec configuration. Use sandboxUser (non-root) and
@@ -760,21 +760,36 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, stderrFn fun
 	}
 	defer execResp.Close()
 
-	// Demux the exec output stream. Compiler stdout is discarded; stderr is
-	// forwarded to the caller via stderrFn so the worker can publish it.
-	var stderrBuf bytes.Buffer
-	stdoutW := io.Discard
-	_, copyErr := stdcopy.StdCopy(stdoutW, &stderrBuf, execResp.Reader)
+	// Demux the exec output stream. We capture stdout AND stderr (so the
+	// persisted RunResult.compile mirrors Piston's compile.stdout/stderr), plus
+	// an interleaved `output` buffer. stdcopy.StdCopy reads frames sequentially
+	// on this goroutine, so each frame is forwarded to onOutput live AND appended
+	// to the interleaved buffer in true emission order — a real-time build log.
+	var stdoutBuf, stderrBuf, outputBuf bytes.Buffer
+	tap := func(dst *bytes.Buffer) io.Writer {
+		return writerFunc(func(b []byte) (int, error) {
+			dst.Write(b)       //nolint:errcheck // bytes.Buffer.Write never errors
+			outputBuf.Write(b) //nolint:errcheck
+			if onOutput != nil && len(b) > 0 {
+				// Copy: stdcopy reuses its frame buffer across reads.
+				cp := make([]byte, len(b))
+				copy(cp, b)
+				onOutput(cp)
+			}
+			return len(b), nil
+		})
+	}
+	_, copyErr := stdcopy.StdCopy(tap(&stdoutBuf), tap(&stderrBuf), execResp.Reader)
 
-	// Forward accumulated stderr to the callback.
-	if stderrBuf.Len() > 0 && stderrFn != nil {
-		stderrFn(stderrBuf.Bytes())
+	captured := CompileResult{
+		DurationMs: int(time.Since(start).Milliseconds()),
+		Stdout:     stdoutBuf.String(),
+		Stderr:     stderrBuf.String(),
+		Output:     outputBuf.String(),
 	}
 
 	if copyErr != nil && copyErr != io.EOF {
-		return CompileResult{
-			DurationMs: int(time.Since(start).Milliseconds()),
-		}, fmt.Errorf("docker: Compile demux: %w", copyErr)
+		return captured, fmt.Errorf("docker: Compile demux: %w", copyErr)
 	}
 
 	// Inspect the exec to retrieve the exit code.
@@ -783,15 +798,12 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, stderrFn fun
 
 	insp, err := s.cli.ContainerExecInspect(inspCtx, execCreate.ID)
 	if err != nil {
-		return CompileResult{
-			DurationMs: int(time.Since(start).Milliseconds()),
-		}, fmt.Errorf("docker: Compile ExecInspect: %w", err)
+		return captured, fmt.Errorf("docker: Compile ExecInspect: %w", err)
 	}
 
-	result := CompileResult{
-		ExitCode:   insp.ExitCode,
-		DurationMs: int(time.Since(start).Milliseconds()),
-	}
+	result := captured
+	result.ExitCode = insp.ExitCode
+	result.DurationMs = int(time.Since(start).Milliseconds())
 
 	// On exit 0: write the compile-run marker so the bridge script (started
 	// by buildCompileHoldCmd in Create) detects success and exec's spec.Run.
@@ -820,6 +832,12 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, stderrFn fun
 
 	return result, nil
 }
+
+// writerFunc adapts a plain function to io.Writer so stdcopy.StdCopy can tap
+// each demuxed frame (for live forwarding + interleaved capture).
+type writerFunc func(p []byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
 // isNotFound reports whether err is a Docker "not found" error (container
 // already removed). Uses the containerd errdefs package exposed by the moby
