@@ -10,7 +10,6 @@ import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   type ReactNode,
 } from "react";
@@ -51,10 +50,17 @@ export function CodeRunnerProvider(props: CodeRunnerProviderProps): JSX.Element 
     children,
   } = props;
 
+  // Create the Pusher client EXACTLY ONCE via a ref-guard — NOT in `useMemo`.
+  // `new Pusher()` opens a WebSocket eagerly; React StrictMode (and any future
+  // React feature that may re-invoke memo factories) double-invokes a `useMemo`
+  // factory, which would spawn multiple sockets and leak orphaned connections.
+  // The ref-guard is StrictMode-safe: the double-rendered pass sees a non-null
+  // ref and skips re-creation, so only one socket is ever made. Connection
+  // params are read once at mount (a provider's host/key don't change at
+  // runtime); remount with different props is not supported by design.
   const pusherRef = useRef<Pusher | null>(null);
-
-  const pusher = useMemo(() => {
-    const instance = new Pusher(appKey, {
+  if (pusherRef.current === null) {
+    pusherRef.current = new Pusher(appKey, {
       wsHost: host,
       wsPort: port,
       wssPort: port,
@@ -70,16 +76,18 @@ export function CodeRunnerProvider(props: CodeRunnerProviderProps): JSX.Element 
       // (same-origin cookie auth).
       ...(authHeaders ? { auth: { headers: authHeaders } } : {}),
     });
-    pusherRef.current = instance;
-    return instance;
-    // Recreate the client only when connection-defining props change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appKey, host, port, useTLS, cluster, authEndpoint]);
+  }
+  const pusher = pusherRef.current;
 
   useEffect(() => {
+    // StrictMode runs a simulated unmount (cleanup → disconnect) then remounts;
+    // reconnect if a prior cleanup left us disconnected so the live tree always
+    // has an open socket.
+    if (pusher.connection.state === "disconnected") {
+      pusher.connect();
+    }
     return () => {
-      pusherRef.current?.disconnect();
-      pusherRef.current = null;
+      pusher.disconnect();
     };
   }, [pusher]);
 
