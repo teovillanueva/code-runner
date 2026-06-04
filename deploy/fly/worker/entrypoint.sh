@@ -1,16 +1,22 @@
 #!/bin/sh
-# Fly worker entrypoint: start the in-Machine dockerd, make the sandbox language
-# images available, then exec the worker.
+# Fly worker entrypoint: start the in-Machine dockerd against the volume-backed
+# store, ensure the language images are present, then exec the worker.
 #
-# Self-contained path (default): the language images are baked into this image as
-# docker-archive tarballs at /app/images/*.tar (see the Dockerfile's skopeo
-# stage) and `docker load`ed here — no registry pull, no network needed at boot.
-# A marker on the docker storage skips the (idempotent) load on warm restarts.
-# If no baked tarballs are present, we fall back to pulling from GHCR.
+# The data-root /var/lib/docker is a mounted ext4 VOLUME (overlay2 cannot run on
+# the Machine's overlay rootfs — see the Dockerfile header). Cold-start speed
+# comes from the volume already being populated:
+#
+#   Fast path (normal): the volume was forked from the golden snapshot, so it
+#   already holds the images AND the .cr-images-loaded marker. We skip loading
+#   entirely and dockerd is up in seconds. Warm restarts of an existing machine
+#   hit this path too (the marker persists on the volume).
+#
+#   Bootstrap path (one-time): an EMPTY volume (used to build the golden snapshot,
+#   or any unforked volume) has no marker, so we pull the images from GHCR once
+#   and write the marker. Subsequent boots take the fast path.
 set -eu
 
 REGISTRY="${SANDBOX_IMAGE_REGISTRY:-ghcr.io/teovillanueva}"
-IMAGES_DIR="${SANDBOX_IMAGES_DIR:-/app/images}"
 LOADED_MARKER="/var/lib/docker/.cr-images-loaded"
 
 log() { echo "[cr-entrypoint] $*"; }
@@ -35,27 +41,18 @@ until docker info >/dev/null 2>&1; do
 done
 log "dockerd is up"
 
-# ── 3. Make the language images available ─────────────────────────────────────
-# Prefer the baked tarballs (self-contained, no network). docker load is
-# idempotent (skips layers it already has); the marker avoids re-reading the
-# tarballs on warm restarts when a /var/lib/docker volume persists them.
+# ── 3. Ensure the language images are present ─────────────────────────────────
+# Fast path: marker present (volume forked from the golden snapshot or a warm
+# restart) → nothing to do. Bootstrap path: pull from GHCR once, then mark.
 if [ -f "$LOADED_MARKER" ]; then
-  log "language images already loaded (marker present) — skipping"
-elif ls "$IMAGES_DIR"/*.tar >/dev/null 2>&1; then
-  for tar in "$IMAGES_DIR"/*.tar; do
-    log "loading baked image: $tar"
-    docker load -i "$tar"
-  done
-  touch "$LOADED_MARKER" 2>/dev/null || true
-  log "baked language images loaded"
+  log "language images already present (marker) — skipping pull"
 else
-  # Fallback: no baked tarballs — pull from GHCR (the pre-self-contained path).
-  log "no baked images at $IMAGES_DIR — falling back to GHCR pull"
+  log "no marker — bootstrap: pulling language images from GHCR (one-time, builds the golden volume)"
   if [ -n "${GHCR_TOKEN:-}" ]; then
     log "authenticating to ghcr.io"
     echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER:-teovillanueva}" --password-stdin
   fi
-  warm() {
+  pull() {
     local_ref="$1"; remote_ref="$2"
     if docker image inspect "$local_ref" >/dev/null 2>&1; then
       log "present: $local_ref"; return 0
@@ -64,11 +61,12 @@ else
     docker pull "$remote_ref"
     docker tag "$remote_ref" "$local_ref"
   }
-  warm "executor/python:3.12" "${REGISTRY}/executor-python:3.12"
-  warm "executor/rust:1.83"   "${REGISTRY}/executor-rust:1.83"
-  warm "executor/r:4.4"       "${REGISTRY}/executor-r:4.4"
-  warm "executor/sqlite:3"    "${REGISTRY}/executor-sqlite:3"
+  pull "executor/python:3.12" "${REGISTRY}/executor-python:3.12"
+  pull "executor/rust:1.83"   "${REGISTRY}/executor-rust:1.83"
+  pull "executor/r:4.4"       "${REGISTRY}/executor-r:4.4"
+  pull "executor/sqlite:3"    "${REGISTRY}/executor-sqlite:3"
   touch "$LOADED_MARKER" 2>/dev/null || true
+  log "bootstrap complete — snapshot this volume to seed the pool (provision-pool.sh)"
 fi
 log "language images ready"
 

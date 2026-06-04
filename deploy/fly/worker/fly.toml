@@ -1,14 +1,26 @@
 # Worker — runs its OWN dockerd inside the Fly Machine (Camino C) and launches
-# hardened sandboxes against it. PRIVATE only (no public service). Needs a volume
-# for /var/lib/docker (image cache + sandbox storage) and a beefier VM.
+# hardened sandboxes against it. PRIVATE only (no public service).
 #
-# Build context is the repo root. Run from there:
-#   fly deploy -c deploy/fly/worker/fly.toml --dockerfile deploy/fly/worker/Dockerfile .
+# REQUIRES a volume for /var/lib/docker: dockerd's overlay2 store needs an ext4
+# backing fs, and the Machine's rootfs is overlayfs (overlay2 won't start on it).
+# Verified on Fly 2026-06-04. So the worker is NOT volume-less.
+#
+# NEAR-INSTANT COLD START: new pool machines get their docker_data volume FORKED
+# from a golden snapshot (already holds the images + the load marker), so boot
+# skips the slow store-populate and dockerd is up in seconds. Build/refresh the
+# golden snapshot and pre-create snapshot-backed volumes with
+# deploy/fly/worker/provision-pool.sh. The autoscaler only start/stops this
+# PRE-CREATED pool (FAS_STARTED_MACHINE_COUNT), so machine creation — the only
+# slow-without-snapshot step — is an operator/pre-warm action, not a runtime one.
+#
+# DEPLOY = PULL (no Fly build). The image is built in GitHub CI and published to
+# GHCR. Deploy the prebuilt image:
+#   fly deploy -c deploy/fly/worker/fly.toml \
+#     --image ghcr.io/teovillanueva/code-runner-worker-fly:latest
+# Pin an immutable :sha-<short> tag for reproducible releases; `fly releases -a
+# code-runner-worker` + redeploying the previous --image rolls back.
 app = "code-runner-worker"
 primary_region = "gru"
-
-[build]
-  dockerfile = "Dockerfile"
 
 [env]
   REDIS_URL = "redis://code-runner-redis.internal:6379"
@@ -57,13 +69,14 @@ primary_region = "gru"
   # The API app needs NONE of these — only the worker uploads/signs/lifecycles.
   # The worker auto-creates the Tigris bucket on boot if absent (S3Store.EnsureLifecycle).
 
-# Volume for /var/lib/docker. With self-contained images this is OPTIONAL for the
-# image cache, BUT at high per-node concurrency (50 sandboxes) you want a volume
-# anyway: the baked images load into it (~several GB) and 50 container layers live
-# here too — an ephemeral rootfs is too small. Start/stop pool autoscaling
-# (FAS_STARTED_MACHINE_COUNT) is fully compatible with volumes; only create/destroy
-# autoscaling requires going volume-less. Size the volume for images + headroom
-# (≈40 GB). For a small stateless setup instead, drop this and use a larger rootfs.
+# Volume for /var/lib/docker (MANDATORY — overlay2 needs ext4; the rootfs is
+# overlayfs). Holds the language images (~a few GB, shrunk by the trimmed images)
+# plus the overlay upper-dirs of up to WORKER_MAX_SANDBOXES live containers.
+# New machines should attach a volume FORKED FROM THE GOLDEN SNAPSHOT (Fly
+# attaches an existing unattached docker_data volume before creating an empty
+# one) — provision-pool.sh pre-creates those. An empty/unforked volume still
+# works; it just pays the one-time GHCR bootstrap on its first boot. 40 GB gives
+# generous headroom; the store itself needs only a few GB.
 [mounts]
   source = "docker_data"
   destination = "/var/lib/docker"
@@ -78,7 +91,7 @@ primary_region = "gru"
 
 # Sized for 20 concurrent sandboxes: dedicated CPUs (accurate CPU-clock accounting,
 # no noisy-neighbour) + memory for 20 × ~128 MB sandboxes plus dockerd/OS (~1.2 GB).
-# The loaded language images sit on the volume (disk), not RAM. The autoscaler adds
+# The language images sit on the volume (disk), not RAM. The autoscaler adds
 # more nodes under load; scale this VM up + WORKER_MAX_SANDBOXES together for
 # fewer/bigger nodes (e.g. performance/4cpu/8192 for ~45 sandboxes).
 [[vm]]

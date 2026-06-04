@@ -7,12 +7,30 @@
 # the Firecracker microVM (the worker + all its sandboxes live inside it); the
 # per-execution boundary is the hardened container.
 #
-# SELF-CONTAINED: the sandbox language images are baked INTO this image as
-# docker-archive tarballs (Stage 2) and `docker load`ed on boot — no registry
-# pull at runtime, no GHCR dependency, and no /var/lib/docker volume required for
-# the image cache. That makes the worker stateless, so an autoscaler can
-# create/destroy nodes freely and cold start is fast (local load, not a network
-# pull). See docs/self-hosting/scaling#self-contained-worker-images.
+# STORAGE — why a volume is REQUIRED (verified on Fly, 2026-06-04):
+#   dockerd's overlay2 graphdriver needs its data-root on a NON-overlay filesystem
+#   (ext4). A Fly Machine's rootfs `/` is itself overlayfs, and overlay2 refuses to
+#   run there ("filesystem ... not supported as upperdir"). So /var/lib/docker MUST
+#   be a mounted ext4 volume (see fly.toml [mounts]). The worker therefore canNOT
+#   be made volume-less, and baking the dockerd store INTO this image is pointless
+#   (the volume mount shadows it, and without the volume overlay2 won't start).
+#
+# COLD START — how it stays fast despite the volume:
+#   A FRESH volume is empty, so its first boot must populate the store (the slow
+#   path). To avoid that on every new pool machine, new volumes are forked from a
+#   GOLDEN SNAPSHOT (a volume pre-populated once) — see deploy/fly/worker/
+#   provision-pool.sh and docs/self-hosting/scaling. A snapshot-restored volume
+#   already contains the images + the /var/lib/docker/.cr-images-loaded marker, so
+#   the entrypoint skips loading entirely and dockerd is up in seconds. The
+#   entrypoint's GHCR pull is the ONE-TIME bootstrap used only to build the golden
+#   volume (or if a truly empty volume is ever booted).
+#
+# DEPLOY = PULL (no Fly build). This image is built in GitHub CI
+# (.github/workflows/release-images.yml, job `worker-fly`) and published to
+# ghcr.io/teovillanueva/code-runner-worker-fly; Fly just pulls it:
+#   fly deploy -c deploy/fly/worker/fly.toml \
+#     --image ghcr.io/teovillanueva/code-runner-worker-fly:latest
+# Pin an immutable :sha-<short> tag for reproducible/rollback-able releases.
 #
 # Build context = repo root. Referenced from deploy/fly/worker/fly.toml.
 
@@ -24,34 +42,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/worker ./apps/worker
 
-# ── Stage 2: bake the language images into docker-archive tarballs ────────────
-# skopeo copies straight from the registry to a docker-archive WITHOUT a Docker
-# daemon, so it runs cleanly inside buildkit. Each archive is tagged with the
-# manifest's LOCAL ref (executor/<lang>:<tag>), so `docker load` on boot imports
-# it under exactly the name the worker resolves from manifest.json — no retag.
-# Public GHCR packages need no creds; for PRIVATE ones pass at build time:
-#   fly deploy ... --build-arg GHCR_SRC_CREDS=<user>:<token>
-# To add a language: publish its image, then add a skopeo line here (and the
-# entrypoint loads every *.tar automatically).
-#
-# --override-arch amd64 --override-os linux: the executor images are linux/amd64
-# only (what Fly Machines run), and the Go binary above is built for amd64. The
-# override pins the amd64 variant so the bake also works when building on an
-# arm64 host (e.g. an Apple-Silicon dev machine), which would otherwise fail
-# resolving a non-existent arm64 variant.
-FROM quay.io/skopeo/stable AS images
-ARG SANDBOX_IMAGE_REGISTRY=ghcr.io/teovillanueva
-ARG GHCR_SRC_CREDS=
-RUN set -eu; \
-    creds=""; if [ -n "${GHCR_SRC_CREDS}" ]; then creds="--src-creds ${GHCR_SRC_CREDS}"; fi; \
-    arch="--override-arch amd64 --override-os linux"; \
-    mkdir -p /images; \
-    skopeo copy $arch $creds docker://${SANDBOX_IMAGE_REGISTRY}/executor-python:3.12 docker-archive:/images/python.tar:executor/python:3.12; \
-    skopeo copy $arch $creds docker://${SANDBOX_IMAGE_REGISTRY}/executor-rust:1.83  docker-archive:/images/rust.tar:executor/rust:1.83; \
-    skopeo copy $arch $creds docker://${SANDBOX_IMAGE_REGISTRY}/executor-r:4.4      docker-archive:/images/r.tar:executor/r:4.4; \
-    skopeo copy $arch $creds docker://${SANDBOX_IMAGE_REGISTRY}/executor-sqlite:3   docker-archive:/images/sqlite.tar:executor/sqlite:3
-
-# ── Stage 3: docker-in-docker runtime + the worker ───────────────────────────
+# ── Stage 2: docker-in-docker runtime + the worker ───────────────────────────
 FROM docker:27-dind
 
 # Manifests + seccomp profile the worker needs at runtime.
@@ -62,13 +53,11 @@ COPY --from=build /out/worker /usr/local/bin/worker
 COPY deploy/fly/worker/entrypoint.sh /usr/local/bin/cr-entrypoint.sh
 RUN chmod +x /usr/local/bin/cr-entrypoint.sh
 
-# Baked language images (docker-archive tarballs), loaded on boot by the entrypoint.
-COPY --from=images /images /app/images
-
 ENV LANGUAGES_DIR=/app/languages \
     SECCOMP_PROFILE_PATH=/app/profiles/seccomp/runner.json \
     DOCKER_HOST=unix:///var/run/docker.sock \
     SANDBOX_IMAGE_REGISTRY=ghcr.io/teovillanueva
 
-# cr-entrypoint.sh starts dockerd, loads the baked language images, then execs the worker.
+# cr-entrypoint.sh starts dockerd against the (volume-backed) store, ensures the
+# language images are present, then execs the worker.
 ENTRYPOINT ["/usr/local/bin/cr-entrypoint.sh"]
