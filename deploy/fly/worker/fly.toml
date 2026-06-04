@@ -51,13 +51,27 @@ primary_region = "gru"
   # The API app needs NONE of these — only the worker uploads/signs/lifecycles.
   # The worker auto-creates the Tigris bucket on boot if absent (S3Store.EnsureLifecycle).
 
-[mounts]
-  source = "docker_data"
-  destination = "/var/lib/docker"
+# [mounts] — OPTIONAL with the self-contained worker image.
+#
+# The language images are baked into the image and `docker load`ed on boot (see
+# deploy/fly/worker/Dockerfile + entrypoint.sh), so the /var/lib/docker volume is
+# no longer needed as an image cache. DROP it to make the worker fully stateless
+# — which is what lets an autoscaler create/destroy nodes freely (volumes are
+# per-machine and block that). See docs/self-hosting/scaling.
+#
+# Trade-off when stateless: /var/lib/docker lives on the machine's ephemeral
+# rootfs, so it must be large enough to hold the loaded images (size the VM's
+# disk accordingly). Keep the mount below ONLY if you prefer load-once-per-volume
+# over a slightly larger rootfs.
+#
+# [mounts]
+#   source = "docker_data"
+#   destination = "/var/lib/docker"
 
-# Cheapest viable for TESTING: shared-cpu-1x + 1GB runs dockerd + a python/sqlite/rust
-# sandbox fine. R (847MB image) may need a bump to 2048mb. dockerd + N live sandboxes
-# share this VM — raise size/memory together with WORKER_MAX_SANDBOXES for real load.
+# Size for real load: dockerd + the loaded language images (R alone is ~847MB) +
+# N live sandboxes share this VM. For a stateless (no-volume) node give it enough
+# disk for the baked images plus headroom, and raise size/memory together with
+# WORKER_MAX_SANDBOXES. shared-cpu-1x/1GB is only enough for light TESTING.
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "1024mb"
+  size = "shared-cpu-2x"
+  memory = "2048mb"

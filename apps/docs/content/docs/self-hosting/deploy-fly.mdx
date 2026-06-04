@@ -21,12 +21,16 @@ live under `deploy/fly/`.
   The worker is a Fly Machine (Firecracker microVM) that runs **its own dockerd** and
   launches sandbox containers inside it. The microVM is the strong outer boundary; the
   [hardened container](/docs/concepts/sandbox-hardening) is the per-execution boundary.
-  Language images are pulled from GHCR on first boot and cached on a volume.
+  The language images are **baked into the worker image** and `docker load`ed on boot —
+  no registry pull at runtime — so the worker is self-contained and stateless. See
+  [Self-contained worker images](/docs/self-hosting/scaling#self-contained-worker-images).
 </Callout>
 
 <Callout type="warn" title="Cost heads-up">
-  This provisions real Machines + volumes. The worker wants ~2 GB RAM and a ~6–10 GB
-  volume. Keep `min_machines_running` low and lean on scale-to-zero.
+  This provisions real Machines. The worker wants ~2 GB RAM and enough disk to hold the
+  baked language images. With self-contained images the `/var/lib/docker` volume is
+  **optional** — drop it for stateless autoscaling. Keep `min_machines_running` low and
+  lean on scale-to-zero.
 </Callout>
 
 ## Prerequisites
@@ -60,7 +64,10 @@ fly apps create code-runner-worker
 
 ```bash
 fly volumes create redis_data  -a code-runner-redis  -r gru -s 1 --yes
-fly volumes create docker_data -a code-runner-worker -r gru -s 6 --yes
+# Worker volume is OPTIONAL with self-contained images (they're baked in, not
+# cached on a volume). Create it only if you kept the [mounts] block in the
+# worker fly.toml; drop both for stateless autoscaling.
+# fly volumes create docker_data -a code-runner-worker -r gru -s 6 --yes
 ```
 
 </Step>
@@ -117,10 +124,10 @@ fly deploy -c deploy/fly/api/fly.toml    --dockerfile apps/api/Dockerfile       
 fly deploy -c deploy/fly/worker/fly.toml --dockerfile deploy/fly/worker/Dockerfile -a code-runner-worker .
 ```
 
-The worker's first boot pulls the four language images from GHCR — watch it:
+The worker `docker load`s the baked language images on boot (no GHCR pull) — watch it:
 
 ```bash
-fly logs -a code-runner-worker   # dockerd up → pulling executor-* → starting worker
+fly logs -a code-runner-worker   # dockerd up → loading baked image → starting worker
 ```
 
 </Step>
