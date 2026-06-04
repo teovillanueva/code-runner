@@ -7,5 +7,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@code-runner/api", "@code-runner/stub"]
+  "ignore": ["@code-runner/api", "@code-runner/stub", "example-with-nextjs"]
 }
