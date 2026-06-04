@@ -705,32 +705,49 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	warmupTimer := time.NewTimer(time.Duration(w.cfg.WarmupMs) * time.Millisecond)
 	defer warmupTimer.Stop()
 
-parkLoop:
-	for {
-		select {
-		case <-ctx.Done():
-			handshakeSpan.End()
-			teardown(runner.Result{}, wire.JobStateError)
-			return
+	// Durable start (start-handshake race fix): /start may have been called while
+	// this job was still queued — at that moment no worker was subscribed to
+	// ctrl:<id>, so the fire-and-forget ctrl publish was lost. The API also
+	// persists a durable start flag; check it now that we ARE subscribed (step 1).
+	// This is race-free combined with the live ctrlCh below: a start that landed
+	// BEFORE this read is caught here; one that lands AFTER is delivered live.
+	started := false
+	if w.store != nil {
+		if s, sErr := w.store.WasStartRequested(ctx, jobID); sErr != nil {
+			log.Warn("worker: WasStartRequested failed", "err", sErr)
+		} else {
+			started = s
+		}
+	}
 
-		case <-warmupTimer.C:
-			// Warm-up expired — reclaim slot, tear down (SESS-03).
-			log.Info("worker: warmup timeout — no start received, tearing down")
-			handshakeSpan.End()
-			teardown(runner.Result{}, wire.JobStateError)
-			return
-
-		case msg := <-ctrlCh:
-			switch msg.Type {
-			case wire.ControlTypeStart:
-				break parkLoop
-			case wire.ControlTypeKill:
+	if !started {
+	parkLoop:
+		for {
+			select {
+			case <-ctx.Done():
 				handshakeSpan.End()
-				teardown(runner.Result{}, wire.JobStateKilled)
+				teardown(runner.Result{}, wire.JobStateError)
 				return
-			default:
-				// stdin_close before start — ignore.
-				log.Warn("worker: received ctrl before start", "type", msg.Type)
+
+			case <-warmupTimer.C:
+				// Warm-up expired — reclaim slot, tear down (SESS-03).
+				log.Info("worker: warmup timeout — no start received, tearing down")
+				handshakeSpan.End()
+				teardown(runner.Result{}, wire.JobStateError)
+				return
+
+			case msg := <-ctrlCh:
+				switch msg.Type {
+				case wire.ControlTypeStart:
+					break parkLoop
+				case wire.ControlTypeKill:
+					handshakeSpan.End()
+					teardown(runner.Result{}, wire.JobStateKilled)
+					return
+				default:
+					// stdin_close before start — ignore.
+					log.Warn("worker: received ctrl before start", "type", msg.Type)
+				}
 			}
 		}
 	}

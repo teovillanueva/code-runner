@@ -61,6 +61,15 @@ func ControlChannel(jobID string) string {
 	return fmt.Sprintf("ctrl:%s", jobID)
 }
 
+// StartFlagKey returns the Redis key the API SETs on POST /start and the worker
+// EXISTS-checks when it claims a job.  It makes the start signal DURABLE: a job
+// still queued (no worker subscribed to ctrl:<id>) when /start is called would
+// otherwise lose the fire-and-forget ctrl publish.  The API writes it with a
+// TTL to bound leakage.  Matches keys.startFlag(id) in index.ts.
+func StartFlagKey(jobID string) string {
+	return fmt.Sprintf("start:%s", jobID)
+}
+
 // ── Worker-internal keys (reaper-consumed, not API-readable) ──────────────────
 
 // WorkerHeartbeatKey returns the Redis key for a worker's heartbeat.  The key

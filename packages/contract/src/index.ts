@@ -24,6 +24,14 @@ export const keys = {
   jobSpec: (jobId: string): string => `job:${jobId}:spec`,
   /** Key holding the JSON-encoded RunResult (collected output) for a job; written with a TTL. */
   jobOutput: (jobId: string): string => `job:${jobId}:output`,
+  /**
+   * Durable start signal: SET by POST /start and read by the worker when it
+   * claims the job. Makes the start-handshake survive the queued window — a job
+   * still waiting in the queue (no worker subscribed to ctrl:<id>) would lose
+   * the fire-and-forget ctrl publish, so the API also persists this flag.
+   * Written with a TTL to bound leakage for jobs that are never claimed.
+   */
+  startFlag: (jobId: string): string => `start:${jobId}`,
 } as const;
 
 /** soketi event names emitted on the private-run-<jobId> channel. */

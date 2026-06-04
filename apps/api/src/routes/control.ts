@@ -10,15 +10,28 @@
 
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
-import { controlChannel, stdinChannel, StdinMessageSchema } from "@teovilla/code-runner-contract";
+import { controlChannel, stdinChannel, keys, StdinMessageSchema } from "@teovilla/code-runner-contract";
 import { getRedis } from "../redis.ts";
 import { stdinRateLimit, stdinByteCapCheck } from "../ratelimit.ts";
 
+// TTL (seconds) for the durable start flag. Must comfortably outlive the worst
+// case a job spends queued behind capacity before a worker claims it, while
+// still self-cleaning for jobs that are started but never claimed (e.g. the tab
+// closed). Admission caps queue depth, so an hour is far beyond any real wait.
+const START_FLAG_TTL_SECONDS = 3600;
+
 export function registerControlRoutes(app: Hono): void {
-  // POST /v1/jobs/:id/start → PUBLISH controlChannel {type:"start"}
+  // POST /v1/jobs/:id/start → durable start flag + PUBLISH controlChannel {type:"start"}
+  //
+  // The flag is the SOURCE OF TRUTH for the start-handshake: a job still queued
+  // (no worker subscribed to ctrl:<id>) when /start is called would lose the
+  // fire-and-forget publish, so the worker reads this flag when it claims the
+  // job. The publish stays as the low-latency path for an already-parked worker.
+  // SET first so the durable record exists before the ephemeral signal.
   app.post("/v1/jobs/:id/start", async (c) => {
     const jobId = c.req.param("id");
     const redis = getRedis();
+    await redis.set(keys.startFlag(jobId), "1", "EX", START_FLAG_TTL_SECONDS);
     await redis.publish(controlChannel(jobId), JSON.stringify({ type: "start" }));
     return c.json({ ok: true }, 202);
   });

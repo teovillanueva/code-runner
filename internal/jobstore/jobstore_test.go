@@ -9,6 +9,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/teovillanueva/code-runner/internal/jobstore"
+	"github.com/teovillanueva/code-runner/internal/keys"
 	"github.com/teovillanueva/code-runner/internal/redisx"
 	"github.com/teovillanueva/code-runner/packages/contract/gen/go/wire"
 )
@@ -220,5 +221,41 @@ func TestJobStore_ClaimTimeout(t *testing.T) {
 	}
 	if !errors.Is(err, jobstore.ErrTimeout) {
 		t.Errorf("expected errors.Is(err, ErrTimeout); got %v", err)
+	}
+}
+
+// TestJobStore_WasStartRequested verifies the durable start-handshake flag:
+// false when absent (job not started yet), true once the API has SET it. This
+// is what lets the worker recover a /start that was sent while the job was still
+// queued (no live ctrl:<id> subscriber).
+func TestJobStore_WasStartRequested(t *testing.T) {
+	client := dialOrSkip(t)
+	defer client.Close() //nolint:errcheck
+
+	store := jobstore.New(client)
+	ctx := context.Background()
+
+	jobID := uniqueJobID("startflag")
+
+	// Absent flag → not started.
+	started, err := store.WasStartRequested(ctx, jobID)
+	if err != nil {
+		t.Fatalf("WasStartRequested (absent): %v", err)
+	}
+	if started {
+		t.Error("WasStartRequested must be false before /start sets the flag")
+	}
+
+	// Simulate POST /start writing the durable flag (the API SETs it with a TTL).
+	if err := client.Set(ctx, keys.StartFlagKey(jobID), "1", time.Minute).Err(); err != nil {
+		t.Fatalf("SET start flag: %v", err)
+	}
+
+	started, err = store.WasStartRequested(ctx, jobID)
+	if err != nil {
+		t.Fatalf("WasStartRequested (present): %v", err)
+	}
+	if !started {
+		t.Error("WasStartRequested must be true after the start flag is SET")
 	}
 }

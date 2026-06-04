@@ -68,6 +68,20 @@ func (s *Store) ReadSpec(ctx context.Context, jobID string) (wire.JobSpec, error
 	return spec, nil
 }
 
+// WasStartRequested reports whether POST /start has already been called for
+// jobID, by checking the durable start flag the API SETs (keys.StartFlagKey).
+// The worker calls this once after subscribing to ctrl:<id> so a start sent
+// while the job was still queued (no live ctrl subscriber, so the publish was
+// lost) is not missed. A missing key — the job simply has not been started yet —
+// returns (false, nil), not an error.
+func (s *Store) WasStartRequested(ctx context.Context, jobID string) (bool, error) {
+	n, err := s.client.Exists(ctx, keys.StartFlagKey(jobID)).Result()
+	if err != nil {
+		return false, fmt.Errorf("jobstore.WasStartRequested: EXISTS %s: %w", keys.StartFlagKey(jobID), err)
+	}
+	return n > 0, nil
+}
+
 // WriteStatus serialises st to JSON, stamps UpdatedAtMs to the current Unix
 // epoch milliseconds, and stores it at keys.JobStatusKey(st.JobId).
 func (s *Store) WriteStatus(ctx context.Context, st wire.JobStatus) error {
