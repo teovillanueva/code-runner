@@ -86,39 +86,38 @@ and adjusts the worker count from a metric every ~15s. It reads from **Prometheu
 Temporal** — there is **no native Redis collector** — so the queue depth has to be a
 scrapable Prometheus metric first.
 
-### Prerequisite: queue depth in Prometheus
+### The in-flight metric (built in)
 
-The worker/API emit metrics over **OTLP (push)**, which is off unless
-`OTEL_EXPORTER_OTLP_ENDPOINT` is set — and Fly's managed Prometheus **scrapes**, it
-doesn't receive OTLP. So you need a Prometheus `/metrics` endpoint exposing the queue
-depth, scraped by Fly. Two ways:
+fly-autoscaler reads **Prometheus**, so the load has to be a scrapable Prometheus
+metric. The **worker** exposes one directly: set `WORKER_METRICS_PORT` (the Fly worker
+config uses `9091`) and it serves `/metrics` with:
 
-1. **Expose it from the service** (cleanest): add a Prometheus endpoint that publishes
-   `code_runner_queue_depth` (`LLEN jobs:queue`) and point Fly at it via `[metrics]` in
-   that app's `fly.toml`:
+- `code_runner_slots_used` — live sandboxes on **this** node (in-flight work).
+- `code_runner_slots_max` — this node's `WORKER_MAX_SANDBOXES`.
+- `code_runner_queue_depth` — global `LLEN jobs:queue`.
 
-   ```toml
-   [metrics]
-     port = 9091
-     path = "/metrics"
-   ```
+Fly scrapes it via the `[metrics]` block already in `deploy/fly/worker/fly.toml`:
 
-   <Callout type="warn">
-     This endpoint does not exist in the default build yet — it's a small addition
-     (a `promhttp` handler around the same `LLEN` the admission gate already does). Track
-     it before enabling Tier 2, or use option 2.
-   </Callout>
+```toml
+[metrics]
+  port = 9091
+  path = "/metrics"
+```
 
-2. **Run a `redis_exporter`** sidecar app that exposes Redis metrics (including list
-   length) for Fly to scrape — no code change, one more small app.
+Scale on **in-flight = running + queued**:
+`sum(code_runner_slots_used) + max(code_runner_queue_depth)`. This is what makes
+scale-**down** safe — the target only falls when sessions actually END (slots free),
+so a node mid-session is never stopped. (Scaling on queue depth alone would stop a
+node the moment its queue drained, killing any sessions still running on it.)
 
 ### The autoscaler app
 
 A ready-to-deploy config ships at **`deploy/fly/autoscaler/fly.toml`** (image
 `flyio/fly-autoscaler:0.3`). It targets `code-runner-worker`, queries
-`max(code_runner_queue_depth)` from the org's managed Prometheus, and runs the Expr
-expression `min(20, max(1, ceil(qdepth / 2)))` (~2 jobs/machine, floor 1, ceiling 20).
-Edit the org name, query, and bounds for your deployment, then:
+`sum(code_runner_slots_used) + max(code_runner_queue_depth)` from the org's managed
+Prometheus, and runs the Expr expression `min(6, max(1, ceil(inflight / 20)))`
+(20 sessions/machine, floor 1, ceiling 6). Edit the org name, query, and bounds for
+your deployment, then:
 
 ```bash
 fly apps create code-runner-autoscaler -o edalef

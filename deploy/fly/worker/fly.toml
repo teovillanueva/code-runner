@@ -33,6 +33,8 @@ primary_region = "gru"
   # of dockerd. Raise both together (e.g. 45 on perf-4x/8GB) for fewer, bigger nodes.
   WORKER_MAX_SANDBOXES = "20"
   SANDBOX_IMAGE_REGISTRY = "ghcr.io/teovillanueva"
+  # Prometheus scrape port (slots_used/_max + queue_depth) for in-flight autoscaling.
+  WORKER_METRICS_PORT = "9091"
   # ── Artifacts retention TTLs (Phase 9, D-11) — NON-secret config ──
   # Object TTL is in DAYS; the two URL/result TTLs are in SECONDS. The object TTL
   # MUST be >= the presigned-URL TTL or the worker fails fast at boot (R15). S3
@@ -65,6 +67,14 @@ primary_region = "gru"
 [mounts]
   source = "docker_data"
   destination = "/var/lib/docker"
+
+# Fly scrapes this into the org's managed Prometheus: code_runner_slots_used/_max
+# (this node's in-flight) + code_runner_queue_depth (global). fly-autoscaler scales
+# the fleet on in-flight = sum(slots_used) + max(queue_depth), so scaling DOWN only
+# happens when sessions actually end — it never stops a node mid-session.
+[metrics]
+  port = 9091
+  path = "/metrics"
 
 # Sized for 20 concurrent sandboxes: dedicated CPUs (accurate CPU-clock accounting,
 # no noisy-neighbour) + memory for 20 × ~128 MB sandboxes plus dockerd/OS (~1.2 GB).

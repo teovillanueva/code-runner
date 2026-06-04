@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -209,6 +210,36 @@ func run(ctx context.Context) error {
 	}
 
 	w := worker.New(store, transport, dockerRunner, pub, workerCfg)
+
+	// ── Prometheus scrape endpoint (autoscaling) ───────────────────────────────
+	// When WORKER_METRICS_PORT is set, serve /metrics with slots_used/_max +
+	// queue_depth so the platform's Prometheus can scrape it and an autoscaler can
+	// scale on in-flight load (running + queued). Off by default (no port, no
+	// server) — purely additive, like the OTEL path.
+	if v := os.Getenv("WORKER_METRICS_PORT"); v != "" {
+		if port, perr := strconv.Atoi(v); perr == nil && port > 0 {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/metrics", w.MetricsHandler())
+			metricsSrv := &http.Server{
+				Addr:              fmt.Sprintf(":%d", port),
+				Handler:           mux,
+				ReadHeaderTimeout: 5 * time.Second,
+			}
+			go func() {
+				slog.Info("worker metrics server listening", "addr", metricsSrv.Addr)
+				if sErr := metricsSrv.ListenAndServe(); sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
+					slog.Warn("worker metrics server error", "err", sErr)
+				}
+			}()
+			defer func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = metricsSrv.Shutdown(shutdownCtx)
+			}()
+		} else {
+			slog.Warn("invalid WORKER_METRICS_PORT, metrics server disabled", "value", v)
+		}
+	}
 
 	// ── Observable gauges (OBS-06) ─────────────────────────────────────────────
 	// Register the queue-depth + slots-used/max observable gauges against the

@@ -18,8 +18,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"path/filepath"
 	"sync"
 	"time"
@@ -969,6 +971,48 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 // releaseSlot returns one capacity unit to the semaphore.
 func (w *Worker) releaseSlot() {
 	w.slots <- struct{}{}
+}
+
+// WriteMetrics renders this worker's scrape metrics in Prometheus text format:
+//
+//   - code_runner_slots_used  — live sandboxes on THIS node (in-flight work).
+//   - code_runner_slots_max   — this node's WORKER_MAX_SANDBOXES.
+//   - code_runner_queue_depth — global LLEN jobs:queue (omitted on Redis error,
+//     so a blip never publishes a misleading 0).
+//
+// An autoscaler scales on IN-FLIGHT load = sum(code_runner_slots_used) +
+// max(code_runner_queue_depth). Because slots_used only drops when a session
+// actually ends, scaling DOWN never stops a node with a running session — unlike
+// scaling on queue depth alone.
+func (w *Worker) WriteMetrics(ctx context.Context, out io.Writer) {
+	used := w.cfg.MaxSandboxes - len(w.slots)
+	if used < 0 {
+		used = 0
+	}
+	fmt.Fprintf(out, "# HELP code_runner_slots_used Live sandboxes on this worker node.\n"+
+		"# TYPE code_runner_slots_used gauge\ncode_runner_slots_used %d\n", used)
+	fmt.Fprintf(out, "# HELP code_runner_slots_max Configured max sandboxes on this worker node.\n"+
+		"# TYPE code_runner_slots_max gauge\ncode_runner_slots_max %d\n", w.cfg.MaxSandboxes)
+
+	if w.store != nil {
+		cctx, cancel := context.WithTimeout(ctx, gaugeCallbackTimeout)
+		defer cancel()
+		if depth, err := w.store.QueueDepth(cctx); err == nil {
+			fmt.Fprintf(out, "# HELP code_runner_queue_depth Jobs waiting in jobs:queue (LLEN).\n"+
+				"# TYPE code_runner_queue_depth gauge\ncode_runner_queue_depth %d\n", depth)
+		}
+	}
+}
+
+// MetricsHandler is the http.HandlerFunc serving WriteMetrics at /metrics. The
+// worker binary mounts it on WORKER_METRICS_PORT so the platform's Prometheus
+// (e.g. Fly's [metrics] block) can scrape it. Unauthenticated — it exposes only
+// low-cardinality counts (no job_id, no payloads).
+func (w *Worker) MetricsHandler() http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
+		rw.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		w.WriteMetrics(r.Context(), rw)
+	}
 }
 
 // publishError publishes an error result when job setup fails before session start.

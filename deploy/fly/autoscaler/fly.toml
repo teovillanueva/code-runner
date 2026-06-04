@@ -37,25 +37,26 @@ primary_region = "gru"
 
   # Prometheus source (replace <org> if not "edalef").
   FAS_PROMETHEUS_ADDRESS     = "https://api.fly.io/prometheus/edalef"
-  FAS_PROMETHEUS_METRIC_NAME = "qdepth"
-  # max() — queue depth is a single global value; if multiple instances export it,
-  # max() avoids summing duplicates. Swap to the metric name you actually expose.
-  FAS_PROMETHEUS_QUERY = "max(code_runner_queue_depth)"
+  FAS_PROMETHEUS_METRIC_NAME = "inflight"
+  # IN-FLIGHT load = running + queued. The worker exports code_runner_slots_used
+  # (live sandboxes per node) and code_runner_queue_depth (global). sum() the
+  # per-node slots across the fleet; max() the queue (every node reports the same
+  # global LLEN). Scaling on this makes scale-DOWN safe: the target only drops when
+  # sessions actually END (slots free), so a node mid-session is never stopped —
+  # unlike scaling on queue depth alone.
+  FAS_PROMETHEUS_QUERY = "sum(code_runner_slots_used) + max(code_runner_queue_depth)"
 
-  # Scaling expression (Expr). WORKER_MAX_SANDBOXES=20, so each node clears ~20
-  # queued jobs → ceil(qdepth / 20). Floor 1 so the first job of a burst doesn't
-  # wait on a cold start; ceiling 6 (=120 concurrent) as a cost guard — raise it
-  # AND the pre-created pool together for bigger exams.
+  # Scaling expression (Expr). WORKER_MAX_SANDBOXES=20, so each node holds ~20
+  # in-flight sessions → ceil(inflight / 20). Floor 1 so the first job of a burst
+  # doesn't wait on a cold start; ceiling 6 (=120 concurrent) as a cost guard —
+  # raise it AND the pre-created pool together for bigger exams.
   #
   # STARTED = start/stop a PRE-CREATED pool (run `fly scale count 6 -a
   # code-runner-worker` once; the ceiling can't exceed the pool size). Volumes are
-  # fine with start/stop. CAVEAT: the signal is QUEUE depth only — when the queue
-  # drains the autoscaler stops extra machines, which kills any sessions still
-  # running on them. Safe for short exam runs (they finish ~when the queue drains);
-  # for long interactive sessions, expose an in-flight (running+queued) metric and
-  # scale on that instead. Keep a floor that covers steady load during exam hours.
-  FAS_STARTED_MACHINE_COUNT = "min(6, max(1, ceil(qdepth / 20)))"
-  # FAS_CREATED_MACHINE_COUNT = "min(6, max(1, ceil(qdepth / 20)))"
+  # fine with start/stop. With the in-flight signal above, scale-down waits for
+  # sessions to finish, so this is safe even for long interactive sessions.
+  FAS_STARTED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 20)))"
+  # FAS_CREATED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 20)))"
 
   # Reconcile interval (default 15s).
   # FAS_INTERVAL = "15s"

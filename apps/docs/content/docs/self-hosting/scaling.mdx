@@ -71,20 +71,21 @@ each loop:
 [env]
   FAS_APP_NAME              = "code-runner-worker"
   FAS_PROMETHEUS_ADDRESS    = "https://api.fly.io/prometheus/<org>"
-  FAS_PROMETHEUS_METRIC_NAME = "qdepth"
-  FAS_PROMETHEUS_QUERY      = "max(code_runner_queue_depth)"
-  # ~2 jobs per machine; clamp to a sane ceiling.
-  FAS_STARTED_MACHINE_COUNT = "min(20, max(1, ceil(qdepth / 2)))"
+  FAS_PROMETHEUS_METRIC_NAME = "inflight"
+  # In-flight = running + queued. Scaling on this makes scale-down safe (the
+  # target only drops when sessions END), unlike queue depth alone.
+  FAS_PROMETHEUS_QUERY      = "sum(code_runner_slots_used) + max(code_runner_queue_depth)"
+  # ~20 sessions per machine; clamp to a sane ceiling.
+  FAS_STARTED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 20)))"
   # FAS_API_TOKEN / FAS_PROMETHEUS_TOKEN are set as secrets.
 ```
 
-<Callout type="warn">
-  fly-autoscaler queries **Prometheus**, so `code_runner_queue_depth` has to be in
-  Fly's managed Prometheus — which means scraping it from a `/metrics` endpoint, not
-  the OTLP push path that's off by default. See the
-  [Autoscaling on Fly runbook](/docs/self-hosting/autoscaling-fly) for the full setup,
-  including why **scheduled pre-warming** (you know when exams/batches run) beats
-  reactive scaling for predictable bursts.
+<Callout type="info">
+  The worker exposes `code_runner_slots_used/_max` + `code_runner_queue_depth` on
+  `WORKER_METRICS_PORT` (`9091`), scraped by Fly via the `[metrics]` block in the worker
+  `fly.toml`. Scaling on **in-flight** (`slots_used + queue_depth`) means scale-down
+  waits for sessions to finish. See the
+  [Autoscaling on Fly runbook](/docs/self-hosting/autoscaling-fly).
 </Callout>
 
 **Kubernetes** — use [KEDA](https://keda.sh/) with the Redis scaler on
