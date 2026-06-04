@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useCodeRunnerJob } from "@teovilla/code-runner-react";
-import type { RunResult } from "@teovilla/code-runner-contract";
+import type { JobState, RunResult } from "@teovilla/code-runner-contract";
 
 // Live view of a single job. `useCodeRunnerJob` subscribes to the
 // private-run-<jobId> soketi channel (output-only). Actions delegate to backend
@@ -24,6 +24,15 @@ export function JobView({ jobId }: { jobId: string }) {
       if (started.current) return;
       started.current = true;
       await fetch(`/api/jobs/${jobId}/start`, { method: "POST" });
+    },
+    // Late-join reconciliation: pull the authoritative status once subscribed so
+    // a job that already advanced past "queued" doesn't sit stale. The hook only
+    // adopts it if it's ahead of the live state.
+    onResolveStatus: async () => {
+      const res = await fetch(`/api/jobs/${jobId}/status`);
+      if (!res.ok) return null;
+      const data = (await res.json()) as { state?: JobState };
+      return data.state ?? null;
     },
     onStdin: async (chunk) => {
       await fetch(`/api/jobs/${jobId}/stdin`, {
@@ -61,8 +70,17 @@ export function JobView({ jobId }: { jobId: string }) {
     await job.sendStdin(line);
   }
 
+  // Single coherent badge label. `stage` (queued/compiling/running) is more
+  // granular than `status` while the job is live, so prefer it; collapse to
+  // "done" at the end. Avoids redundant "queued · queued" / "running · running"
+  // and the contradictory "done · running" (stage holds its last value).
+  const label = job.status === "done" ? "done" : (job.stage ?? job.status);
   const badgeClass =
-    job.status === "done" ? "badge done" : job.status === "running" ? "badge" : "badge idle";
+    job.status === "done"
+      ? "badge done"
+      : job.status === "running"
+        ? "badge"
+        : "badge idle";
 
   // Build log: live stream while compiling, persisted compile.output once done.
   const buildLog = job.compileOutput || output?.compile?.output || "";
@@ -77,10 +95,7 @@ export function JobView({ jobId }: { jobId: string }) {
     <div className="panel">
       <div className="panel-head">
         <span>Output</span>
-        <span className={badgeClass}>
-          {job.status}
-          {job.stage ? ` · ${job.stage}` : ""}
-        </span>
+        <span className={badgeClass}>{label}</span>
       </div>
 
       {showBuild ? (

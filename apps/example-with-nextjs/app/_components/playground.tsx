@@ -52,6 +52,12 @@ export function Playground({ soketi }: { soketi: SoketiPublicConfig }) {
           version: preset.version,
           files: [{ name: preset.file, content: code }],
           collectOutput: true,
+          // Generous interactive limits for a human-paced playground: the
+          // manifest defaults (python idleMs 10s / wallTimeMs 30s) are tuned for
+          // batch runs and idle-kill a prompt before you can read+type. The
+          // worker still resets the idle clock on every stdin chunk; these just
+          // widen the windows. Tune per your own UX/slot-cost tradeoff.
+          limits: { idleMs: 60_000, wallTimeMs: 120_000 },
         }),
       });
       const data = (await res.json()) as {
