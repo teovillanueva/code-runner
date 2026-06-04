@@ -73,7 +73,12 @@ job's soketi channel. See [Request Lifecycle](/docs/concepts/lifecycle#the-start
 POST /v1/jobs/:id/start  →  202 {"ok":true}
 ```
 
-Publishes `{type:"start"}` on `ctrl:<jobId>`.
+Persists a **durable** start flag (`start:<jobId>`, with a TTL) **and** publishes
+`{type:"start"}` on `ctrl:<jobId>`. The durable flag is the source of truth: a job
+still waiting in the queue when `/start` is called has no worker subscribed to
+`ctrl:<jobId>` yet, so the publish alone would be lost — the worker reads the flag
+when it claims the job. This makes the handshake safe under queue backpressure (the
+common case when [autoscaling](/docs/self-hosting/scaling) lags a burst).
 
 ---
 
@@ -142,6 +147,24 @@ Poll job status.
 ```
 
 `state` ∈ `queued` · `starting` · `running` · `done` · `killed` · `error`.
+
+---
+
+## GET /v1/jobs/:id/status
+
+Alias of `GET /v1/jobs/:id` — returns the same `JobStatus`. Provided as an explicit
+sub-path (mirroring `/output`) for **late-join reconciliation**: a client that
+subscribes to the soketi channel *after* the job already moved past `queued` missed
+those stage events, so it pulls the authoritative state here on subscribe instead of
+waiting for the next event. The [React SDK](/docs/guides/react-sdk)'s
+`onResolveStatus` callback wires this for you.
+
+**Responses**
+
+| Code | Body | When |
+| --- | --- | --- |
+| `200` | `JobStatus` | Job found. |
+| `404` | `{"error":"Job not found: <id>"}` | Unknown job id. |
 
 ---
 

@@ -67,10 +67,27 @@ This applies to **batch jobs too** (no stdin expected) — follow the same seque
 If `/start` never arrives, the worker reclaims the slot after `WORKER_WARMUP_MS`
 (default 30s) so a never-started job can't hold capacity forever.
 
+<Callout type="warn">
+  **The start signal is durable.** `/start` does more than publish to `ctrl:<id>` —
+  it also persists a `start:<jobId>` flag in Redis (with a TTL). This matters under
+  load: when more jobs arrive than there are free slots, a job sits in `jobs:queue`
+  with **no worker subscribed to its `ctrl` channel yet**, so a fire-and-forget
+  `start` publish would be lost and the job would die at the warm-up timeout. The
+  worker reads the durable flag the moment it claims the job, so a `start` sent while
+  the job was still queued is honoured. This is what makes the handshake safe when
+  the worker fleet is saturated or [autoscaling](/docs/self-hosting/scaling) is still
+  catching up to a burst.
+</Callout>
+
 <Callout type="info">
   With the [React SDK](/docs/guides/react-sdk), `useCodeRunnerJob` exposes an
   `onSubscribed` callback that fires exactly on `subscription_succeeded` — wire
-  your `start` call there and the handshake is handled for you.
+  your `start` call there and the handshake is handled for you. It also exposes
+  `onResolveStatus`, which pulls `GET /v1/jobs/:id/status` on subscribe to
+  **reconcile a late join**: if the job already advanced past `queued` before you
+  subscribed, you'd otherwise miss those events. The hook seeds `status: "queued"`
+  the instant it has a job (the job is already enqueued), so the UI never sits at a
+  misleading `"idle"` while waiting for a worker.
 </Callout>
 
 ## Stages and the terminal result

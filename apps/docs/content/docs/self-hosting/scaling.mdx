@@ -51,6 +51,15 @@ the Redis queue depth as the cross-fleet signal.
 
 Scale the worker fleet on `LLEN jobs:queue`.
 
+<Callout type="info">
+  Autoscaling **relies on queueing being safe**: when a burst arrives faster than
+  machines can boot, jobs wait in `jobs:queue` until a worker frees up. That works
+  because the [start-handshake is durable](/docs/concepts/lifecycle#the-start-handshake)
+  — a `start` sent while a job is still queued is persisted and honoured when a worker
+  finally claims it, instead of being lost. Without that, every job that queued behind
+  capacity would die at the warm-up timeout, which defeats the point of autoscaling.
+</Callout>
+
 **Fly.io** — use [`fly-autoscaler`](https://github.com/superfly/fly-autoscaler) with
 the Redis LLEN metric:
 
@@ -80,6 +89,50 @@ enqueued.
 
 soketi should **stay up** (min 1) — it's the live output transport and clients hold
 persistent WebSocket connections to it.
+
+## Self-contained worker images (fast, stateless autoscaling)
+
+By default a worker caches language images in a `/var/lib/docker` **volume**. That
+volume is what makes autoscaling awkward: volumes are per-machine, so an autoscaler
+can't freely create and destroy nodes, and a fresh node pays a cold-start penalty
+pulling images from a registry on first use.
+
+For a **fixed language set** (the common case — you know which runtimes your platform
+offers), bake the runner images **into the worker image** instead: `docker save` each
+language image into the build and `docker load` them into the embedded dockerd on
+boot. The payoff:
+
+- **No volume** → workers are fully stateless → the autoscaler can create/destroy
+  nodes freely (or start/stop a pool) with no per-machine storage to manage.
+- **No registry pulls at runtime** → a new node is ready to run the instant its
+  process is up; cold-start latency drops to image-load time (local, fast).
+
+The tradeoff is a larger worker image (the sum of all language images) and a rebuild
+when the language set changes — both fine for a stable platform. This is the
+recommended topology when you want clean, fast autoscaling.
+
+## Bursty & scheduled load (exams, batch windows)
+
+Reactive autoscaling always lags: the queue has to build before the autoscaler reacts
+(~15s loop) and machines take time to boot. For **predictable bursts** — an exam
+starting, a nightly batch — don't wait for the queue. **Pre-warm**: raise the
+autoscaler's `min` floor (or `fly scale count`) a few minutes *before* the window via
+a scheduled job, then drop it after. Combine the two:
+
+- **Scheduled floor** (calendar-driven) absorbs the burst with zero cold-start lag.
+- **Reactive ceiling** (queue-depth-driven) is the safety net for unplanned spikes.
+
+Two knobs to tune for bursts:
+
+- **`MAX_QUEUE_DEPTH`** (API admission) — the API returns `429` once `jobs:queue`
+  reaches this. Set it **generous** so a burst *queues and drains* instead of
+  rejecting users mid-session; pair it with a per-user rate limit so one client can't
+  flood. Too low and the autoscaler never sees enough depth to scale.
+- **`idleMs` / `wallTimeMs`** — interactive sessions hold a slot for up to these
+  windows. Longer idle = friendlier UX but each waiting session pins a slot, so you
+  need more capacity for the same concurrency. Pick deliberately: generous for
+  human-paced interactive work, short for fire-and-forget batch runs that should free
+  their slot the instant they finish.
 
 ## Orphan recovery
 
