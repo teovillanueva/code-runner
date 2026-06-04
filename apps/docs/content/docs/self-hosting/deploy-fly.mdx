@@ -21,16 +21,18 @@ live under `deploy/fly/`.
   The worker is a Fly Machine (Firecracker microVM) that runs **its own dockerd** and
   launches sandbox containers inside it. The microVM is the strong outer boundary; the
   [hardened container](/docs/concepts/sandbox-hardening) is the per-execution boundary.
-  The language images are **baked into the worker image** and `docker load`ed on boot —
-  no registry pull at runtime — so the worker is self-contained and stateless. See
-  [Self-contained worker images](/docs/self-hosting/scaling#self-contained-worker-images).
+  dockerd's `overlay2` store **requires an ext4 volume** at `/var/lib/docker` — the
+  Machine rootfs is `overlayfs`, which `overlay2` can't run on. A fresh volume pulls the
+  language images from GHCR on first boot; to make new machines boot in seconds, fork
+  their volume from a golden snapshot. See
+  [Near-instant new-machine boot](/docs/self-hosting/scaling#near-instant-new-machine-boot-on-fly-golden-volume-snapshot).
 </Callout>
 
 <Callout type="warn" title="Cost heads-up">
-  This provisions real Machines. The worker wants ~2 GB RAM and enough disk to hold the
-  baked language images. With self-contained images the `/var/lib/docker` volume is
-  **optional** — drop it for stateless autoscaling. Keep `min_machines_running` low and
-  lean on scale-to-zero.
+  This provisions real Machines. The worker wants ~2 GB RAM and a `/var/lib/docker`
+  volume sized for the language images + live-container layers (a few GB; 40 GB gives
+  generous headroom). The volume is **required** (overlay2 needs ext4). Keep
+  `min_machines_running` low and lean on the start/stop pool + pre-warm.
 </Callout>
 
 ## Prerequisites
@@ -64,10 +66,10 @@ fly apps create code-runner-worker
 
 ```bash
 fly volumes create redis_data  -a code-runner-redis  -r gru -s 1 --yes
-# Worker volume is OPTIONAL with self-contained images (they're baked in, not
-# cached on a volume). Create it only if you kept the [mounts] block in the
-# worker fly.toml; drop both for stateless autoscaling.
-# fly volumes create docker_data -a code-runner-worker -r gru -s 6 --yes
+# Worker volume is REQUIRED: dockerd's overlay2 store needs an ext4 fs, and the
+# Machine rootfs is overlayfs. For fast new-machine boot, fork it from a golden
+# snapshot instead (see deploy/fly/worker/provision-pool.sh).
+fly volumes create docker_data -a code-runner-worker -r gru -s 40 --yes
 ```
 
 </Step>

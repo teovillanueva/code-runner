@@ -6,9 +6,9 @@ icon: TrendingUp
 
 This is the operational companion to [Scaling & Statelessness](/docs/self-hosting/scaling).
 It targets a **bursty** workload — e.g. an exam platform where many students run code
-in the same few minutes, with quiet stretches in between — and a worker built from the
-[self-contained image](/docs/self-hosting/scaling#self-contained-worker-images) so nodes
-are stateless and fast to start.
+in the same few minutes, with quiet stretches in between. New worker machines boot fast
+by forking their `/var/lib/docker` volume from a
+[golden snapshot](/docs/self-hosting/scaling#near-instant-new-machine-boot-on-fly-golden-volume-snapshot).
 
 Work the tiers in order. Each stands on its own; later tiers add automation, not
 correctness.
@@ -127,14 +127,16 @@ fly tokens create readonly edalef               | fly secrets set FAS_PROMETHEUS
 fly deploy -c deploy/fly/autoscaler/fly.toml --ha=false -a code-runner-autoscaler
 ```
 
-It defaults to `FAS_STARTED_MACHINE_COUNT` (start/stop a pre-created pool — run
-`fly scale count N -a code-runner-worker` once to size it). Switch to
-`FAS_CREATED_MACHINE_COUNT` to create/destroy nodes instead — viable now that the
-worker is stateless ([self-contained image](/docs/self-hosting/scaling#self-contained-worker-images),
-no per-machine volume).
+Use `FAS_STARTED_MACHINE_COUNT` (start/stop a pre-created pool). Size the pool with
+`deploy/fly/worker/provision-pool.sh grow N` (it pre-creates snapshot-forked volumes so
+the new machines boot in seconds) rather than a bare `fly scale count`, which would give
+new machines empty volumes that pay the one-time GHCR pull. The worker needs a
+per-machine ext4 volume (overlay2 can't run on the overlay rootfs), so prefer start/stop
+of a pre-warmed pool over `FAS_CREATED_MACHINE_COUNT` create/destroy.
 
-Scale-up reacts in ~15s; keep the floor (`max(1, …)`) ≥ 1 so the first job of a burst
-never waits on a cold create. Pair with a generous `MAX_QUEUE_DEPTH` (below) so a burst
+Start/stop of an existing pool machine reuses its populated volume (marker hit) and is
+near-instant; scale-up reacts in ~15s; keep the floor (`max(1, …)`) ≥ 1 so the first job
+of a burst never waits. Pair with a generous `MAX_QUEUE_DEPTH` (below) so a burst
 *queues* — giving the autoscaler something to react to — instead of returning `429`.
 
 ## Tuning for bursts

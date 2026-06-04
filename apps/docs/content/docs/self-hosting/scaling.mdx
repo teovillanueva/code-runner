@@ -103,26 +103,51 @@ enqueued.
 soketi should **stay up** (min 1) — it's the live output transport and clients hold
 persistent WebSocket connections to it.
 
-## Self-contained worker images (fast, stateless autoscaling)
+## Worker image cache & cold-start
 
-By default a worker caches language images in a `/var/lib/docker` **volume**. That
-volume is what makes autoscaling awkward: volumes are per-machine, so an autoscaler
-can't freely create and destroy nodes, and a fresh node pays a cold-start penalty
-pulling images from a registry on first use.
+A worker caches language images in its embedded dockerd's store at `/var/lib/docker`.
+A fresh store is empty, so a brand-new node's first boot pays a one-time cost
+populating it (pull/load the language images). How you avoid that on every new node
+depends on the worker's filesystem:
 
-For a **fixed language set** (the common case — you know which runtimes your platform
-offers), bake the runner images **into the worker image** instead: `docker save` each
-language image into the build and `docker load` them into the embedded dockerd on
-boot. The payoff:
+- **Host-socket / k8s backends** (the worker's `/var/lib/docker` is a real ext4-like
+  fs): you can bake the runner images **into the worker image** for a stable language
+  set, so a new node is ready the instant its process is up — no volume, no registry
+  pull. Fully stateless; the autoscaler can create/destroy freely.
 
-- **No volume** → workers are fully stateless → the autoscaler can create/destroy
-  nodes freely (or start/stop a pool) with no per-machine storage to manage.
-- **No registry pulls at runtime** → a new node is ready to run the instant its
-  process is up; cold-start latency drops to image-load time (local, fast).
+- **Fly Machines (`dockerd`-in-the-VM) backend**: this option does **not** apply.
+  A Fly Machine's rootfs is `overlayfs`, and dockerd's `overlay2` graphdriver
+  refuses to run on an overlay upperdir (`filesystem ... not supported as upperdir`).
+  So `/var/lib/docker` **must** be a mounted **ext4 volume**, and baking the store
+  into the image is useless (the volume mount shadows it). The worker is therefore
+  not volume-less on Fly.
 
-The tradeoff is a larger worker image (the sum of all language images) and a rebuild
-when the language set changes — both fine for a stable platform. This is the
-recommended topology when you want clean, fast autoscaling.
+### Near-instant new-machine boot on Fly: golden volume snapshot
+
+Since the volume is required, make a *fresh* one boot fast by **forking it from a
+golden snapshot** of an already-populated volume. Fly attaches an existing
+**unattached** `docker_data` volume before creating an empty one, so a
+snapshot-forked volume (which carries the images **and** the `.cr-images-loaded`
+marker) lets the entrypoint skip the populate step — dockerd is up in seconds.
+
+`deploy/fly/worker/provision-pool.sh` automates it:
+
+```bash
+# Build/refresh the golden snapshot from the current worker image (run when the
+# language images change):
+APP=code-runner-worker REGION=gru \
+IMAGE=ghcr.io/teovillanueva/code-runner-worker-fly:latest \
+  deploy/fly/worker/provision-pool.sh bake     # prints the golden snapshot id
+
+# Grow the pre-created pool to N fast-booting machines (pre-warm before an exam):
+GOLDEN_SNAPSHOT=vs_xxxx deploy/fly/worker/provision-pool.sh grow 6
+```
+
+The autoscaler only **start/stops** this pre-created pool (`FAS_STARTED_MACHINE_COUNT`),
+and a stopped→started machine reuses its already-populated volume (marker hit) — so on
+the hot path every boot is already near-instant. Machine *creation* (the only
+slow-without-a-snapshot step) happens in `provision-pool.sh grow`, a pre-warm action,
+never during a burst.
 
 ## Bursty & scheduled load (exams, batch windows)
 
