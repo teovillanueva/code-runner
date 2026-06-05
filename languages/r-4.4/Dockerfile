@@ -78,7 +78,11 @@ RUN set -eu; \
         \( -name help -o -name html -o -name doc -o -name man -o -name tests -o -name demo \) \
         -prune -exec rm -rf '{}' +; \
     done; \
-    rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache 2>/dev/null || true
+    rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache 2>/dev/null || true; \
+    # Build-time smoke test (LOCKED): every baked CRAN lib must load AFTER the
+    # slim, or the build fails — never ship an R image where library() crashes
+    # because the slim pruned something a package needs at load time.
+    Rscript -e "library(jsonlite); library(data.table); library(lpSolve); library(ggplot2); cat('cr: R baked-lib smoke ok\n')"
 
 # ── Auto-source the site profile: lazy png device + flush + finalizer ─────────
 # /etc/R/Rprofile.site is the ONLY auto-sourced R site profile (R_HOME's

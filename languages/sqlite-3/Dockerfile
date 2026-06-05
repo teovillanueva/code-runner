@@ -19,6 +19,11 @@ FROM alpine:3.20
 # --no-cache avoids saving the apk index layer, keeping the image small.
 RUN apk add --no-cache sqlite
 
+# ── Build-time smoke test (LOCKED) ────────────────────────────────────────────
+# Run a trivial query through the in-memory DB so a broken sqlite install fails
+# the build — never ship a sqlite image where sqlite3 doesn't execute.
+RUN printf "SELECT 'cr: sqlite smoke ok';\n" | sqlite3 -batch :memory:
+
 # ── Workspace directory ────────────────────────────────────────────────────────
 # The runner (internal/runner/docker.go) sets WorkingDir=/workspace and
 # tar-copies user files (main.sql) here before starting the process.

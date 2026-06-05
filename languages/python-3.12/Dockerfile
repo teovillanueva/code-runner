@@ -86,13 +86,18 @@ RUN set -eu; \
     #    leaves the bytes in this layer, bloating the pull AND the worker's baked
     #    store). Drop the package test suites, bytecode caches, and bundled
     #    Fortran/C/Cython sources — none are imported by user code at runtime.
-    #    `testing` modules (e.g. numpy.testing) are deliberately KEPT; only dirs
-    #    named exactly tests/test are pruned. --network=none at runtime is
-    #    unaffected (pip is still present for build-time only). ──
+    #    CRITICAL: numpy's tests/ dirs MUST be kept. `numpy.testing` imports
+    #    numpy/_core/tests/_natype, so pruning numpy's tests breaks scipy /
+    #    scikit-learn / statsmodels / seaborn at import (they transitively pull
+    #    numpy.testing). Excluding numpy from the dir-prune costs a few MB and
+    #    buys a working scientific stack. --network=none at runtime is unaffected. ──
     sp="$(python -c 'import site; print(site.getsitepackages()[0])')"; \
-    find "$sp" -depth -type d \( -name tests -o -name test -o -name __pycache__ \) -prune -exec rm -rf '{}' +; \
+    find "$sp" -depth -type d \( -name tests -o -name test -o -name __pycache__ \) -not -path '*/numpy/*' -prune -exec rm -rf '{}' +; \
     find "$sp" -type f \( -name '*.pyc' -o -name '*.pyx' -o -name '*.pxd' -o -name '*.c' -o -name '*.cpp' -o -name '*.f' -o -name '*.f90' \) -delete; \
-    rm -rf /root/.cache
+    rm -rf /root/.cache; \
+    # Build-time import smoke test (LOCKED): a broken prune MUST fail the build,
+    # never ship a sandbox image where the advertised sci stack crashes at import.
+    python -c "import numpy, numpy.testing, scipy, sklearn, statsmodels.api, seaborn, matplotlib; matplotlib.use('Agg'); from matplotlib import pyplot; print('cr: scientific-stack import smoke ok')"
 
 # ── Auto-capture matplotlib figures as /workspace artifacts ───────────────────
 # COPY (after the pip install so site-packages exists) the sitecustomize.py hook

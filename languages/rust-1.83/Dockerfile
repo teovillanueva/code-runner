@@ -29,6 +29,16 @@ FROM rust:1.83-slim
 # as-is; we shrink the Python/R images instead, where the heavy bits are in OUR
 # install layer and CAN be trimmed in the same RUN.
 
+# ── Build-time smoke test (LOCKED) ────────────────────────────────────────────
+# Compile + run a trivial program through the EXACT manifest path (rustc -O ...
+# then execute the binary). A broken toolchain or a missing linker (cc) fails the
+# build — never ship a rust image that can't compile+run user code.
+RUN set -eu; \
+    printf 'fn main(){ println!("cr: rust compile+run smoke ok"); }\n' > /tmp/smoke.rs; \
+    rustc -O /tmp/smoke.rs -o /tmp/smoke; \
+    /tmp/smoke; \
+    rm -f /tmp/smoke.rs /tmp/smoke
+
 # ── Workspace directory ────────────────────────────────────────────────────────
 # The runner (internal/runner/docker.go) sets WorkingDir=/workspace and
 # tar-copies user files here before starting the process.
