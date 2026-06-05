@@ -59,6 +59,14 @@ cmd="${1:-}"; shift || true
 
 case "$cmd" in
 bake)
+  # ⚠️ PAUSE THE AUTOSCALER FIRST. fly-autoscaler reconciles $APP to
+  # FAS_STARTED_MACHINE_COUNT and will STOP the bake machine (an "extra" started
+  # machine) within ~8s — before the language-image pull completes, so the bake
+  # silently produces an empty/incomplete snapshot. Stop it for the duration:
+  #   fly machine stop <autoscaler-machine-id> -a code-runner-autoscaler
+  #   ... bake + grow ...
+  #   fly machine start <autoscaler-machine-id> -a code-runner-autoscaler
+  # (Verified 2026-06-05: this, not flyctl attach, was why bake machines died.)
   log "baking golden snapshot for $APP from image: $IMAGE"
 
   log "creating a fresh bake volume ($GOLDEN_VOL, ${VOL_SIZE}GB, $REGION)..."
@@ -79,8 +87,13 @@ bake)
   # marker is already written — which is all we need.
   # NOTE: `flyctl machine run` has no --json (unlike `volumes create`), so parse
   # the "Machine ID: <id>" line from its human output.
+  # -d (detach): without it, newer flyctl keeps `machine run` attached and STOPS
+  # the machine when the command returns — killing it ~10s in, before the
+  # language-image pull completes (verified on flyctl v0.4.57). Detached, the
+  # machine runs the entrypoint to completion (pull + marker), then the worker
+  # fails its Redis ping and exits (restart=no) — exactly what we want to snapshot.
   m_out="$(flyctl machine run "$IMAGE" \
-    -a "$APP" -r "$REGION" \
+    -a "$APP" -r "$REGION" --detach \
     --vm-cpu-kind performance --vm-cpus 2 --vm-memory 4096 \
     --volume "${GOLDEN_VOL}:/var/lib/docker" \
     -e REDIS_URL=redis://127.0.0.1:1 \
