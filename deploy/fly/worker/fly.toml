@@ -26,12 +26,13 @@ primary_region = "gru"
 # jobs but lets in-flight sandboxes finish (worker Drain). Fly must wait at least
 # that long before SIGKILL or it would kill active sessions anyway. The invariant
 # is kill_timeout >= WORKER_DRAIN_TIMEOUT_MS >= maxWall (the longest session the
-# API allows). Worker is cpu_kind=performance so Fly permits kill_timeout far
-# above the old 130s. Set generous: drain 300s (WORKER_DRAIN_TIMEOUT_MS below),
-# kill_timeout 330s > drain — so a scale-down/deploy NEVER SIGKILLs a live exam
-# session. NOTE: also cap wallTimeMs server-side in the API at <= 300s (reject>cap)
+# API allows). Fly caps kill_timeout at 5 MINUTES (300s) regardless of CPU kind
+# (verified 2026-06-07: a 330s value is rejected "stop_config.timeout cannot
+# exceed 5 minutes"). So: kill_timeout 300s (the max), drain 270s below it (30s
+# SIGKILL buffer) — a scale-down/deploy never SIGKILLs a live session shorter
+# than 270s. NOTE: cap wallTimeMs server-side in the API at <= 270s (reject>cap)
 # so a session can never outlast the drain (DECISIONS-prod-launch D3).
-kill_timeout = "330s"
+kill_timeout = "300s"
 
 [env]
   REDIS_URL = "redis://code-runner-redis.internal:6379"
@@ -55,10 +56,11 @@ kill_timeout = "330s"
   # raise VM RAM + this together (≈50 on perf-2x/8GB).
   WORKER_MAX_SANDBOXES = "24"
   # Graceful-drain budget (DECISIONS-prod-launch D3). Must satisfy
-  # kill_timeout(330s) >= WORKER_DRAIN_TIMEOUT_MS(300s) >= maxWall. The worker
-  # drains in-flight sandboxes up to this long on SIGTERM before exiting, so a
-  # scale-down/deploy never cuts a live session short.
-  WORKER_DRAIN_TIMEOUT_MS = "300000"
+  # kill_timeout(300s, Fly's hard max) >= WORKER_DRAIN_TIMEOUT_MS(270s) >= maxWall.
+  # The worker drains in-flight sandboxes up to this long on SIGTERM before
+  # exiting, so a scale-down/deploy never cuts a live session short (30s buffer
+  # before Fly SIGKILLs at kill_timeout).
+  WORKER_DRAIN_TIMEOUT_MS = "270000"
   SANDBOX_IMAGE_REGISTRY = "ghcr.io/teovillanueva"
   # Prometheus scrape port (slots_used/_max + queue_depth) for in-flight autoscaling.
   WORKER_METRICS_PORT = "9091"
