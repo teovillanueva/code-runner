@@ -1,0 +1,36 @@
+[run 14:12:07] === SECTION A: layered hardened density ===
+[run 14:12:07] density LEVEL=0 starting (MemAvailable=3608056 kB)
+[run 14:15:12] LEVEL=0 => ZYGOTE_HARD level=0 ceiling=82 used_kb=3318820 marginal_per_child_kb=40473 base_kb=3523612 after_kb=204792 cg_ok=0
+[run 14:15:13] density LEVEL=1 starting (MemAvailable=3614416 kB)
+[run 14:18:15] LEVEL=1 => ZYGOTE_HARD level=1 ceiling=81 used_kb=3311708 marginal_per_child_kb=40885 base_kb=3528316 after_kb=216608 cg_ok=0
+[run 14:18:15] density LEVEL=2 starting (MemAvailable=3647176 kB)
+[run 14:21:19] LEVEL=2 => ZYGOTE_HARD level=2 ceiling=82 used_kb=3235432 marginal_per_child_kb=39456 base_kb=3431792 after_kb=196360 cg_ok=0
+[run 14:21:19] density LEVEL=3 starting (MemAvailable=3655504 kB)
+[run 14:24:21] LEVEL=3 => ZYGOTE_HARD level=3 ceiling=81 used_kb=3354752 marginal_per_child_kb=41416 base_kb=3566584 after_kb=211832 cg_ok=0
+[run 14:24:21] density LEVEL=4 starting (MemAvailable=3638996 kB)
+[run 14:27:24] LEVEL=4 => ZYGOTE_HARD level=4 ceiling=81 used_kb=3371292 marginal_per_child_kb=41620 base_kb=3574284 after_kb=202992 cg_ok=81
+[run 14:27:24] === SECTION B: isolation + FD-inheritance (rule #1) ===
+[run 14:27:25] isolation block written (46 lines)
+[run 14:27:25] === SECTION C: multi-language base cost ===
+[run 14:27:38] python base RSS: core(numpy/pandas/mpl)=106592kB  full(+scipy/sklearn/sm/seaborn)=203264kB
+[run 14:27:38] R solo fork ramp...
+[run 14:36:37] R => R_BASE_RSS_KB=109520 | ZYGOTE_R ceiling=260 used_kb=760152 marginal_per_child_kb=2923 base_rss_kb=109520 base_av_kb=3543884
+[run 14:36:38] combined python+R concurrent ramp (two bases resident on one node)...
+[run 14:39:13] combined python => ZYGOTE_HARD level=0 ceiling=75 used_kb=3273908 marginal_per_child_kb=43652 base_kb=3470120 after_kb=196212 cg_ok=0
+[run 14:39:13] combined R      => ZYGOTE_R ceiling=76 used_kb=3321600 marginal_per_child_kb=43705 base_rss_kb=109504 base_av_kb=3517812
+===CR_RESULTS6_BEGIN===
+section_A_layered_density:
+
+ZYGOTE_HARD level=0 ceiling=82 used_kb=3318820 marginal_per_child_kb=40473 base_kb=3523612 after_kb=204792 cg_ok=0
+ZYGOTE_HARD level=1 ceiling=81 used_kb=3311708 marginal_per_child_kb=40885 base_kb=3528316 after_kb=216608 cg_ok=0
+ZYGOTE_HARD level=2 ceiling=82 used_kb=3235432 marginal_per_child_kb=39456 base_kb=3431792 after_kb=196360 cg_ok=0
+ZYGOTE_HARD level=3 ceiling=81 used_kb=3354752 marginal_per_child_kb=41416 base_kb=3566584 after_kb=211832 cg_ok=0
+ZYGOTE_HARD level=4 ceiling=81 used_kb=3371292 marginal_per_child_kb=41620 base_kb=3574284 after_kb=202992 cg_ok=81
+section_C_python_base_core_kb: 106592
+section_C_python_base_full_kb: 203264
+section_C_R_solo_base: R_BASE_RSS_KB=109520
+section_C_R_solo: ZYGOTE_R ceiling=260 used_kb=760152 marginal_per_child_kb=2923 base_rss_kb=109520 base_av_kb=3543884
+section_C_combined_python: ZYGOTE_HARD level=0 ceiling=75 used_kb=3273908 marginal_per_child_kb=43652 base_kb=3470120 after_kb=196212 cg_ok=0
+section_C_combined_R: ZYGOTE_R ceiling=76 used_kb=3321600 marginal_per_child_kb=43705 base_rss_kb=109504 base_av_kb=3517812
+===CR_RESULTS6_END===
+[run 14:39:13] ALL_DONE

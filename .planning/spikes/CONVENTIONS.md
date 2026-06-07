@@ -32,6 +32,12 @@ question requires otherwise.
 - **Run long jobs detached** (`nohup … >log 2>&1 &`) and poll the remote log with
   a local `until grep -q <terminal-marker>` loop as a background Bash task — Fly
   SSH sessions are not durable enough to hold a 15–20 min foreground run.
+- **Use a SEPARATE throwaway app, not `code-runner-worker`** (spike 006): create a
+  dedicated app (e.g. `cr-spike-NNN` in edalef) + its own ext4 volume + a
+  `docker:27-dind` machine via `flyctl machine run docker:27-dind --vm-cpu-kind
+  performance --vm-cpus 2 --vm-memory 4096 --volume <vol>:/var/lib/docker --env
+  DOCKER_TLS_CERTDIR= --detach`. The `fly-autoscaler` reaps unmanaged machines in
+  the real worker app within ~8s, so never launch throwaways there.
 - **Always destroy the throwaway app when done** (`flyctl apps destroy <app>
   --yes`) — it takes the machine + volume with it. Stop the meter.
 - **Measure the honest case, then the best case.** Use unique per-sandbox data
@@ -46,5 +52,15 @@ question requires otherwise.
   the dind box; the **classic builder** (`DOCKER_BUILDKIT=0`) was reliable.
 - A 128 MB cap OOMs if the workload imports the *whole* baked stack at once; the
   faithful active workload (≈ prod's 110 MB) is numpy + pandas + matplotlib + a
-  ~40 MB buffer. scipy/sklearn/statsmodels/seaborn currently **crash** the prod
-  image anyway (see `FINDINGS-prod-image-numpy-testing.md`).
+  ~40 MB buffer. (scipy/sklearn/statsmodels/seaborn now import fine — the
+  `numpy.testing` prune bug was fixed in `bb02c29`; pre-006 spikes omitted them.)
+- **ctypes libc syscall wrappers MUST declare `argtypes`/`restype`** (spike 006):
+  without prototypes, ctypes mis-marshals large flag constants
+  (`CLONE_NEWPID=0x20000000`) and the syscall returns `EINVAL`. Declare
+  `unshare.argtypes=[c_int]`, `mount.argtypes=[c_char_p,c_char_p,c_char_p,c_ulong,c_char_p]`, etc.
+- **`unshare(CLONE_NEWPID)` works only ONCE per process** (2nd call → `EINVAL`).
+  For a per-child PID namespace from a forking pool, **double-fork**: an
+  intermediate unshares once then forks the real child as PID 1 of the fresh
+  pidns. Consequence: no `PR_SET_PDEATHSIG` on the grandchild (its parent, the
+  intermediate, exits). Building per-child namespaces/cgroups needs the pool to be
+  `--privileged --cgroupns=host`.

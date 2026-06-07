@@ -44,6 +44,19 @@ Piston-style in-container process isolation.
   every dir named `tests`, deleting `numpy/_core/tests/_natype` that
   `numpy.testing` imports → **any user code importing scipy / scikit-learn /
   statsmodels / seaborn crashes at import**. See `FINDINGS-prod-image-numpy-testing.md`.
+  (FIXED pre-launch, commit `bb02c29`.)
+- **Zygote hardening is FREE (spike 006):** per-child UID + PID-ns + cgroup-v2
+  sub-cgroup + private /tmp preserves the full 2.7× (L4 = 81 / 41.6 MB, identical
+  to 005's 81 / 41). `ZygoteRunner` is viable as a density tier. Implementation
+  non-negotiables proven by measurement: (1) **credential-free parent** — an
+  inherited Redis/soketi fd is usable by untrusted code even under a fresh netns,
+  and `CLOEXEC` does NOT help (the zygote forks without exec); (2) **double-fork**
+  for per-child PID-ns (a process can `unshare(CLONE_NEWPID)` only once → no
+  `PR_SET_PDEATHSIG` on the session); (3) the **pool runs privileged-ish**
+  (`CAP_SYS_ADMIN`+`SETUID/SETGID`+writable cgroupfs) — acceptable only because
+  Firecracker is the host boundary; (4) **language affinity** — one ~100–200 MB
+  import base per language per node (python core ~104 MB / full sci ~199 MB,
+  R ~107 MB).
 
 ## Spikes
 
@@ -54,6 +67,7 @@ Piston-style in-container process isolation.
 | 003 | runtime-footprint | standard | malloc/idle flags cut active or idle footprint | ✗ INVALIDATED — no measurable effect | density, memory, tuning |
 | 004 | dind-vs-containerd | standard | dropping dockerd reclaims meaningful RAM for slots | ⚠ INCONCLUSIVE (probe unreliable); density-neutral | density, daemon, containerd |
 | 005 | zygote-cow | frontier | fork-from-pre-imported-parent shares library pages, raising the ceiling | ✓ VALIDATED — 2.7× (30→81) | density, cow, fork, isolation |
+| 006 | zygote-hardening | standard | per-child UID + PID-ns + sub-cgroup + private /tmp preserves the 2.7× AND isolates children (no sibling /proc, no parent FDs, no inherited Redis/soketi) | ✓ VALIDATED — hardening is FREE (L4: 81/41.6MB = 005's 81/41); rule #1 proven | density, cow, fork, isolation, hardening, security, cgroup, namespaces |
 
 ## Environment (all measurements)
 

@@ -1,0 +1,46 @@
+===ISO_BEGIN===
+{
+  "cross_child_isolation": [
+    {
+      "child1": {
+        "my_pid_in_ns": 1,
+        "read_sibling_proc_mem": "blocked FileNotFoundError:2",
+        "list_parent_fds": "target pid 1 == our own ns-pid -> these 6 fds are OURS, not the parent's. parent NOT addressable across pid-ns. fd targets=['/dev/null', 'pipe:[17788]', 'pipe:[17789]', '?', 'pipe:[16854]', 'pipe:[16857]']",
+        "pids_visible_in_proc": [
+          "1"
+        ],
+        "own_tmp_secret": "child-1-secret"
+      }
+    },
+    {
+      "child0": {
+        "my_pid_in_ns": 1,
+        "read_sibling_proc_mem": "blocked FileNotFoundError:2",
+        "list_parent_fds": "target pid 1 == our own ns-pid -> these 6 fds are OURS, not the parent's. parent NOT addressable across pid-ns. fd targets=['/dev/null', 'pipe:[17788]', 'pipe:[17789]', '?', 'pipe:[16854]', 'pipe:[16856]']",
+        "pids_visible_in_proc": [
+          "1"
+        ],
+        "own_tmp_secret": "child-0-secret"
+      }
+    }
+  ],
+  "fd_inheritance": {
+    "A_credentialed_parent_netns_child": {
+      "leak": true,
+      "note": "child used inherited socket despite its own empty netns"
+    },
+    "B_cloexec_myth": {
+      "leak": true,
+      "note": "CLOEXEC acts only on execve(); zygote forks without exec -> no protection"
+    },
+    "C_credential_free_parent": {
+      "leak": false,
+      "note": "parent holds no connection -> nothing to inherit (DESIGN RULE #1)"
+    },
+    "D_fd_scrub_in_child": {
+      "leak": false,
+      "note": "child closes all fds>2 before user code -> safe even with credentialed parent"
+    }
+  }
+}
+===ISO_END===
