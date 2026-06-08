@@ -90,6 +90,7 @@ flowchart TD
 - **`apps/worker` — Go.** Claims jobs from Redis, launches hardened sandboxes via the
   host Docker daemon (behind a swappable `Runner` interface), enforces the three clocks,
   pumps stdin in and streams output out. The **unit of scale**.
+- **Density tier (optional).** A `ZygoteRunner` can run heavy interpreted languages (Python) on a warm copy-on-write pool for ~2.7× concurrency on Fly — off by default, falls back to per-job containers. See [`docs/zygote.md`](docs/zygote.md).
 - **`packages/contract` — JSON Schema → TS + Zod + Go.** The shared wire contract. One
   schema generates types for every language; a CI drift check guards the seam.
 - **Redis** — job queue (`jobs:queue`), stdin/control pub-sub (`stdin:<id>`, `ctrl:<id>`),

@@ -152,6 +152,36 @@ streamed output. `fly logs -a code-runner-worker` shows the sandbox lifecycle.
 
 ---
 
+## Zygote density tier
+
+The Fly worker runs the optional **zygote density tier** (`ZYGOTE_ENABLED=true` in
+`deploy/fly/worker/fly.toml`). Python jobs run on a long-lived, per-`(language,version)`
+warm "parent" pool container that forks one hardened child per job, sharing pre-imported
+library pages copy-on-write (~2.7× more concurrent Python sandboxes in the same RAM).
+R / Rust / SQLite still run as per-job hardened sandboxes on the Docker tier, unchanged;
+and any zygote failure transparently falls back to Docker, so the tier can't break Python.
+Full design, security posture, and operations: [`docs/zygote.md`](zygote.md).
+
+- **No extra Machine flag needed.** The pool container runs **privileged with host
+  cgroups** (it manages per-child namespaces + cgroup-v2 leaves itself). That's safe here
+  and only here because the worker runs its own dockerd **inside a Firecracker microVM** —
+  the microVM is the real host boundary (threat model = host-escape-only). The worker's
+  inner dockerd is already privileged (it *is* the dind daemon), so launching a privileged
+  pool container needs **no `[vm]` change and no extra cap**.
+- **Re-bake the golden snapshot after a language-image change.** The zygote agent is
+  baked into the language image (`/opt/zygote/zygote_agent.py`). After you rebuild a
+  language image (e.g. to change the `preimport` set or update the agent), the worker only
+  picks it up once the new image reaches its `docker_data` volume — so **re-bake the
+  golden snapshot** (the snapshot new worker Machines fork their volume from) or the new
+  agent won't be present on freshly-provisioned nodes.
+- **Verify it's actually engaged**, not silently falling back to Docker: watch the
+  `code_runner.zygote.pool.warm_parents` gauge (> 0), keep
+  `code_runner.zygote.fallback.count` flat, and confirm you do **not** see the worker
+  `WARN` `zygote Create failed; falling back to Docker tier`. See
+  [`docs/zygote.md`](zygote.md#verifying-zygote-is-actually-engaged-not-silently-falling-back).
+
+---
+
 ## Notes & hardening
 
 - **dockerd-in-Machine caveats:** if dockerd fails to start, check `fly logs`.
