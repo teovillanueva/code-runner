@@ -86,6 +86,12 @@ func defaultDialer(addr string) (net.Conn, error) {
 // zygoteSandbox bound to that connection. On any failure the connection and any
 // reserved pool resource are released so no worker slot leaks (POOL-04).
 func (r *ZygoteRunner) Create(ctx context.Context, spec wire.JobSpec) (Sandbox, error) {
+	// Record the wall time of the whole fork/spawn handshake (Create→STARTED):
+	// the dial + HELLO + agent fork+harden+cgroup-place until STARTED arrives.
+	// This is the zygote analogue of the Docker tier's sandbox.create.duration
+	// and only records on the success path (ZOBS-01).
+	forkStart := time.Now()
+
 	// Resolve (get-or-create) the warm parent for this language+version, then
 	// dial its agent. dead-parent detection + respawn lives in the pool manager.
 	rc, release, err := r.pool.dial(ctx, poolKey{
@@ -115,6 +121,13 @@ func (r *ZygoteRunner) Create(ctx context.Context, spec wire.JobSpec) (Sandbox, 
 	}
 	rc.startReader(dec)
 
+	// STARTED arrived: the child is forked, hardened and cgroup-placed. Record
+	// the fork latency tagged by (language, version).
+	zygoteForkDuration().Record(ctx,
+		time.Since(forkStart).Seconds(),
+		langVersionAttr(spec.Language, spec.Version),
+	)
+
 	sb := &zygoteSandbox{
 		rc:        rc,
 		release:   release,
@@ -130,6 +143,16 @@ func (r *ZygoteRunner) Create(ctx context.Context, spec wire.JobSpec) (Sandbox, 
 // Intended for worker shutdown. Safe to call once.
 func (r *ZygoteRunner) Close() error {
 	return r.pool.close()
+}
+
+// RegisterMetrics registers the per-language warm-parent observable gauge
+// (ZOBS-01) against the current global MeterProvider, observing this runner's
+// live pool. It returns an Unregister func so the worker can detach it on
+// shutdown (mirrors Worker.RegisterMetrics). The fork-latency histogram and the
+// reap/respawn/terminal counters are recorded inline on the hot path and need no
+// registration.
+func (r *ZygoteRunner) RegisterMetrics() (func() error, error) {
+	return registerWarmParentGauge(r.pool)
 }
 
 // buildHello assembles the HELLO payload from the resolved JobSpec and config.
@@ -219,6 +242,14 @@ func (s *zygoteSandbox) Wait(ctx context.Context) (Result, error) {
 			name := signalName(*e.signal)
 			result.Signal = &name
 		}
+		// Runner-agnostic terminal-outcome counter (ZOBS-02): mirrors the Docker
+		// tier so dashboards plot terminal states uniformly. A signal-terminated
+		// child is "killed" (OOM/cgroup.kill/supervisor); otherwise "exited".
+		outcome := "exited"
+		if result.Signal != nil {
+			outcome = "killed"
+		}
+		sandboxTerminal().Add(ctx, 1, terminalAttr(s.spec.Language, outcome))
 		if e.err != nil {
 			// A broken connection mid-job: surface the error so the worker fails
 			// the job cleanly. The slot is still released via Cleanup (POOL-04).
@@ -239,8 +270,16 @@ func (s *zygoteSandbox) Wait(ctx context.Context) (Result, error) {
 // subtree, not a single pid). Safe to call after Wait returns. A failed KILL
 // frame is tolerated (the conn may already be gone); Cleanup's conn-close also
 // signals an implicit KILL to the agent.
-func (s *zygoteSandbox) Kill(_ context.Context) error {
+func (s *zygoteSandbox) Kill(ctx context.Context) error {
+	// Record kill latency into the SAME runner-agnostic histogram the Docker
+	// tier uses (ZOBS-02): the agent does cgroup.kill on the child tree in
+	// response to the KILL frame.
+	killStart := time.Now()
 	_ = s.rc.sendKill()
+	sandboxKillDuration().Record(ctx,
+		time.Since(killStart).Seconds(),
+		langAttr(s.spec.Language),
+	)
 	return nil
 }
 

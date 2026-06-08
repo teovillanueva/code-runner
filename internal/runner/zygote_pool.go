@@ -29,6 +29,18 @@ import (
 	"github.com/teovillanueva/code-runner/internal/config"
 )
 
+// warmParentCounts returns the number of live warm parents per poolKey. Used by
+// the warm-parent observable gauge (ZOBS-01). Safe to call concurrently.
+func (pm *poolManager) warmParentCounts() map[poolKey]int64 {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	out := make(map[poolKey]int64, len(pm.parents))
+	for key := range pm.parents {
+		out[key]++
+	}
+	return out
+}
+
 // poolKey identifies one warm parent: CoW sharing only happens within the same
 // image, so a parent is per (language, version) (RULE #3).
 type poolKey struct {
@@ -134,6 +146,8 @@ func (pm *poolManager) dial(ctx context.Context, key poolKey, image string) (*re
 		// back so the slot is released cleanly.
 		rollback()
 		pm.dropParent(ctx, key, parent)
+		// Dead-parent detection on dial (POOL-04): the next request respawns it.
+		zygoteParentRespawnCount().Add(ctx, 1, langVersionAttr(key.language, key.version))
 		return nil, nil, fmt.Errorf("zygote pool %s: %w", key, derr)
 	}
 
@@ -155,8 +169,10 @@ func (pm *poolManager) getOrCreate(ctx context.Context, key poolKey, image strin
 		if pm.backend.healthy(ctx, parent) {
 			return parent, nil
 		}
-		// Dead parent: tear it down and fall through to respawn.
+		// Dead parent (POOL-04): tear it down and fall through to respawn. Count
+		// the respawn so dashboards can alert on flapping parents (ZOBS-01).
 		pm.dropParent(ctx, key, parent)
+		zygoteParentRespawnCount().Add(ctx, 1, langVersionAttr(key.language, key.version))
 	}
 
 	// Launch a fresh parent. Two concurrent first-jobs could both reach here;
@@ -245,6 +261,9 @@ func (pm *poolManager) reapIdle(idle time.Duration) {
 	for _, parent := range toReap {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		_ = pm.backend.removeParent(ctx, parent)
+		// Count the idle reap so dashboards can plot warm-pool churn (POOL-03 /
+		// ZOBS-01).
+		zygoteParentReapCount().Add(ctx, 1, langVersionAttr(parent.key.language, parent.key.version))
 		cancel()
 	}
 }
