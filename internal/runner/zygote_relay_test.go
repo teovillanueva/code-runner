@@ -231,7 +231,7 @@ func TestRelayHandshakeAndDemux(t *testing.T) {
 
 	// Worker: read STARTED, then start the demux reader.
 	dec := newFrameDecoder(rc.conn)
-	realpid, err := rc.readStarted(dec)
+	realpid, _, err := rc.readStarted(dec)
 	if err != nil || realpid != 4242 {
 		t.Fatalf("readStarted: pid=%d err=%v", realpid, err)
 	}
@@ -293,7 +293,7 @@ func TestRelayConnCloseBeforeExit(t *testing.T) {
 		_ = writeFrame(agent, &amu, frameStarted, startedBody)
 	}()
 	dec := newFrameDecoder(rc.conn)
-	if _, err := rc.readStarted(dec); err != nil {
+	if _, _, err := rc.readStarted(dec); err != nil {
 		t.Fatalf("readStarted: %v", err)
 	}
 	rc.startReader(dec)
@@ -357,7 +357,7 @@ func TestRelayReadStartedEarlyExit(t *testing.T) {
 		_ = writeFrame(agent, &amu, frameExit, body)
 	}()
 	dec := newFrameDecoder(rc.conn)
-	if _, err := rc.readStarted(dec); err == nil {
+	if _, _, err := rc.readStarted(dec); err == nil {
 		t.Errorf("readStarted after early EXIT: err = nil, want non-nil")
 	}
 }

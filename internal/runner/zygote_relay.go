@@ -70,9 +70,13 @@ type helloFile struct {
 	Content string `json:"content"`
 }
 
-// startedPayload is the JSON body of the STARTED frame ({realpid}).
+// startedPayload is the JSON body of the STARTED frame
+// ({realpid, cgroupEnforced}). cgroupEnforced reports whether the agent created
+// a per-child cgroup leaf (memory.max + pids.max) and placed the session pid in
+// it; it is absent on older agents (decodes to false → backward-compat).
 type startedPayload struct {
-	RealPID int `json:"realpid"`
+	RealPID        int  `json:"realpid"`
+	CgroupEnforced bool `json:"cgroupEnforced"`
 }
 
 // cpuPayload is the JSON body of a CPU frame ({cpuMs}).
@@ -210,30 +214,31 @@ func (rc *relayConn) sendHello(h helloPayload) error {
 }
 
 // readStarted reads frames until the STARTED frame is seen, returning the
-// session's real (root-ns) pid. Any STDOUT/STDERR/CPU before STARTED would be
-// out of protocol; an early EXIT means spawn failed. It uses a dedicated
-// decoder which is then handed to startReader so no frame is lost between the
-// handshake and the demux loop.
-func (rc *relayConn) readStarted(dec *frameDecoder) (int, error) {
+// session's real (root-ns) pid and whether per-child cgroup enforcement is
+// active. Any STDOUT/STDERR/CPU before STARTED would be out of protocol; an
+// early EXIT means spawn failed. It uses a dedicated decoder which is then
+// handed to startReader so no frame is lost between the handshake and the demux
+// loop.
+func (rc *relayConn) readStarted(dec *frameDecoder) (int, bool, error) {
 	for {
 		ftype, payload, err := dec.next()
 		if err != nil {
-			return 0, fmt.Errorf("zygote: read STARTED: %w", err)
+			return 0, false, fmt.Errorf("zygote: read STARTED: %w", err)
 		}
 		switch ftype {
 		case frameStarted:
 			var s startedPayload
 			if err := json.Unmarshal(payload, &s); err != nil {
-				return 0, fmt.Errorf("zygote: decode STARTED: %w", err)
+				return 0, false, fmt.Errorf("zygote: decode STARTED: %w", err)
 			}
-			return s.RealPID, nil
+			return s.RealPID, s.CgroupEnforced, nil
 		case frameExit:
 			var e exitPayload
 			_ = json.Unmarshal(payload, &e)
 			if e.Error != "" {
-				return 0, fmt.Errorf("zygote: job failed before start: %s", e.Error)
+				return 0, false, fmt.Errorf("zygote: job failed before start: %s", e.Error)
 			}
-			return 0, errors.New("zygote: agent exited before STARTED")
+			return 0, false, errors.New("zygote: agent exited before STARTED")
 		default:
 			// Ignore any stray pre-STARTED frame (defensive; agent does not send
 			// output before STARTED).

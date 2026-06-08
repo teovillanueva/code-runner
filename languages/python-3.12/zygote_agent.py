@@ -587,7 +587,14 @@ def handle_job(conn):
         leaf = make_cgroup_leaf(realpid, n, mem_bytes, pids_max)
 
         # ---- STARTED ----
-        send_json(conn, T_STARTED, {"realpid": realpid})
+        # cgroupEnforced is true ONLY when the per-child cgroup leaf with
+        # memory.max + pids.max was actually created AND the session pid placed
+        # in it (make_cgroup_leaf returns the leaf path only on full success).
+        # When false (e.g. Docker Desktop without delegated cgroups) the Go side
+        # SKIPs the cgroup-enforcement abuse tests; on Fly/Linux it is true.
+        cgroup_enforced = leaf is not None
+        send_json(conn, T_STARTED,
+                  {"realpid": realpid, "cgroupEnforced": cgroup_enforced})
         started = True
         log(f"job {job_id}: started realpid={realpid} cgroup={'yes' if leaf else 'no'}")
 

@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -113,13 +114,22 @@ func (r *ZygoteRunner) Create(ctx context.Context, spec wire.JobSpec) (Sandbox, 
 	// Single decoder shared across the handshake and the demux loop so no frame
 	// is dropped between STARTED and the reader goroutine.
 	dec := newFrameDecoder(rc.conn)
-	realpid, err := rc.readStarted(dec)
+	realpid, cgroupEnforced, err := rc.readStarted(dec)
 	if err != nil {
 		_ = rc.close()
 		release()
 		return nil, err
 	}
 	rc.startReader(dec)
+
+	// Signal: if the pool reports it could NOT create a per-child cgroup leaf
+	// (memory.max + pids.max), per-child OOM/pids/cpu containment is unavailable
+	// on this host (e.g. Docker Desktop without delegated cgroups). On Fly/Linux
+	// with --cgroupns=host delegation this is always true. One WARN is enough.
+	if !cgroupEnforced {
+		slog.Warn("zygote: per-child cgroup enforcement unavailable on this pool host; memory.max/pids.max/cpu.stat NOT enforced (expected on Docker Desktop; enforced on Fly/Linux)",
+			"language", spec.Language, "version", spec.Version, "jobId", spec.JobId)
+	}
 
 	// STARTED arrived: the child is forked, hardened and cgroup-placed. Record
 	// the fork latency tagged by (language, version).
@@ -129,12 +139,13 @@ func (r *ZygoteRunner) Create(ctx context.Context, spec wire.JobSpec) (Sandbox, 
 	)
 
 	sb := &zygoteSandbox{
-		rc:        rc,
-		release:   release,
-		spec:      spec,
-		startTime: time.Now(),
-		realPID:   realpid,
-		stdin:     &relayStdin{rc: rc},
+		rc:             rc,
+		release:        release,
+		spec:           spec,
+		startTime:      time.Now(),
+		realPID:        realpid,
+		cgroupEnforced: cgroupEnforced,
+		stdin:          &relayStdin{rc: rc},
 	}
 	return sb, nil
 }
@@ -209,10 +220,21 @@ type zygoteSandbox struct {
 	startTime time.Time
 	realPID   int
 
+	// cgroupEnforced reports whether the serving pool created a per-child cgroup
+	// leaf (memory.max + pids.max) for this job. False on hosts that do not
+	// delegate cgroups (Docker Desktop); true on Fly/Linux. Tests that assert
+	// per-child OOM/pids/cpu containment read this to SKIP when unavailable.
+	cgroupEnforced bool
+
 	stdin *relayStdin
 
 	cleanupOnce sync.Once
 }
+
+// CgroupEnforced reports whether per-child cgroup limits (memory.max + pids.max)
+// were actually applied to this job by the serving pool. Abuse tests gate
+// cgroup-dependent assertions on this (SKIP when false).
+func (s *zygoteSandbox) CgroupEnforced() bool { return s.cgroupEnforced }
 
 // Stdin returns the relay-backed stdin writer (emits STDIN frames; STDIN_CLOSE
 // on Close). The same writer instance is returned on every call.

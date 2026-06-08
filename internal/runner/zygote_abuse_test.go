@@ -31,6 +31,7 @@ package runner_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"runtime"
@@ -85,6 +86,10 @@ type zygoteOutcome struct {
 	stdout       string
 	stderr       string
 	cpuMs        int
+	// cgroupEnforced reflects whether the serving pool applied per-child cgroup
+	// limits (memory.max + pids.max) for this job. Tests that assert cgroup-based
+	// containment SKIP when this is false (Docker Desktop has no delegation).
+	cgroupEnforced bool
 }
 
 func (o zygoteOutcome) killed() bool {
@@ -127,6 +132,7 @@ func runZygoteJob(
 	defer func() { _ = sb.Cleanup() }()
 
 	cpuFn := extractZygoteCPUReader(sb)
+	cgEnforced := extractZygoteCgroupEnforced(sb)
 
 	if interact != nil {
 		go interact(sb.Stdin())
@@ -136,15 +142,39 @@ func runZygoteJob(
 
 	cpuMs, _ := cpuFn(context.Background())
 	return zygoteOutcome{
-		exitCode:     res.ExitCode,
-		signal:       res.Signal,
-		timedOut:     res.TimedOut,
-		idleTimedOut: res.IdleTimedOut,
-		truncated:    res.Truncated,
-		stdout:       out,
-		stderr:       errOut,
-		cpuMs:        cpuMs,
+		exitCode:       res.ExitCode,
+		signal:         res.Signal,
+		timedOut:       res.TimedOut,
+		idleTimedOut:   res.IdleTimedOut,
+		truncated:      res.Truncated,
+		stdout:         out,
+		stderr:         errOut,
+		cpuMs:          cpuMs,
+		cgroupEnforced: cgEnforced,
 	}, false
+}
+
+// extractZygoteCgroupEnforced type-asserts the CgroupEnforced() accessor on the
+// zygote sandbox. Returns false for any sandbox that does not implement it
+// (backward-compat / non-zygote runners).
+func extractZygoteCgroupEnforced(sb interface{}) bool {
+	type cgReader interface{ CgroupEnforced() bool }
+	if cg, ok := sb.(cgReader); ok {
+		return cg.CgroupEnforced()
+	}
+	return false
+}
+
+// skipIfNoCgroupEnforcement SKIPs (on the calling — MAIN — goroutine) when the
+// serving pool did not apply per-child cgroup limits. The forkbomb/OOM/cpu-
+// evasion tests depend on memory.max/pids.max/cpu.stat, which Docker Desktop
+// does not delegate; on Fly/Linux (--cgroupns=host) enforcement is present and
+// the tests run their containment assertions.
+func skipIfNoCgroupEnforcement(t *testing.T, enforced bool) {
+	t.Helper()
+	if !enforced {
+		t.Skip("cgroup delegation unavailable on this host (Docker Desktop); runs on Fly/Linux")
+	}
 }
 
 // skipIfUnroutable t.Skips (on the calling — MAIN — goroutine) when any job in
@@ -213,6 +243,7 @@ func TestZygoteAbuseForkBomb(t *testing.T) {
 		Pids: 24, WallTimeMs: 8000, IdleMs: 4000, CpuMs: 5000, MemoryMb: 128, OutputKb: 64,
 	}), nil)
 	skipIfUnroutable(t, skipped)
+	skipIfNoCgroupEnforcement(t, out.cgroupEnforced)
 
 	assert.True(t, out.killed(),
 		"ZTEST-01a fork bomb: child must be killed (exit=%v sig=%v timedOut=%v idle=%v)",
@@ -269,6 +300,7 @@ func TestZygoteAbuseOOM(t *testing.T) {
 	}()
 	wg.Wait()
 	skipIfUnroutable(t, oomSkip || sibSkip)
+	skipIfNoCgroupEnforcement(t, oomOut.cgroupEnforced)
 
 	assert.True(t, oomOut.killed(),
 		"ZTEST-01b OOM: offending child must be killed (exit=%v sig=%v)", oomOut.exitCode, oomOut.signal)
@@ -318,6 +350,7 @@ func TestZygoteAbuseCpuClockEvasion(t *testing.T) {
 		_, _ = io.WriteString(stdin, "x")
 	})
 	skipIfUnroutable(t, skipped)
+	skipIfNoCgroupEnforcement(t, out.cgroupEnforced)
 	assert.True(t, out.timedOut,
 		"ZTEST-01c' cpu evasion: cpu clock must fire as timedOut (timedOut=%v idle=%v exit=%v cpuMs=%d)",
 		out.timedOut, out.idleTimedOut, out.exitCode, out.cpuMs)
@@ -495,9 +528,25 @@ func TestZygoteCrossChildIsolation(t *testing.T) {
 	report := extractBetween(attackOut.stdout, "===ISO===", "===END===")
 	require.NotEmpty(t, report, "ZTEST-02: attacker report must be parseable: %q", attackOut.stdout)
 
-	assert.NotContains(t, report, `"tmp":"LEAK`, "ZTEST-02: attacker read sibling /tmp secret — ISOLATION BROKEN")
-	assert.Contains(t, report, `"proc":"blocked"`, "ZTEST-02: attacker read foreign /proc mem — ISOLATION BROKEN (report=%s)", report)
-	assert.Contains(t, report, `"fd":"clean"`, "ZTEST-02: attacker found an inherited credential fd — RULE #1 BROKEN (report=%s)", report)
+	// Parse the JSON report so the assertions are robust to whitespace (the agent
+	// emits `{"tmp": "own-only", ...}` with spaces after the colon, while a naive
+	// substring match for `"proc":"blocked"` would false-negative). The isolation
+	// mechanism (distinct UID + private pidns + private mountns + private /tmp)
+	// produces tmp=own-only, proc=blocked, fd=clean — assert those exactly.
+	var iso struct {
+		Tmp  string `json:"tmp"`
+		Proc string `json:"proc"`
+		FD   string `json:"fd"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(report), &iso),
+		"ZTEST-02: attacker report must be valid JSON: %q", report)
+
+	assert.NotContains(t, iso.Tmp, "LEAK",
+		"ZTEST-02: attacker read sibling /tmp secret — ISOLATION BROKEN (tmp=%q)", iso.Tmp)
+	assert.Equal(t, "blocked", iso.Proc,
+		"ZTEST-02: attacker read foreign /proc mem — ISOLATION BROKEN (report=%s)", report)
+	assert.Equal(t, "clean", iso.FD,
+		"ZTEST-02: attacker found an inherited credential fd — RULE #1 BROKEN (report=%s)", report)
 }
 
 // extractBetween returns the substring strictly between the first start and the
