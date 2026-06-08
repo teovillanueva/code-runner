@@ -12,6 +12,25 @@ It is a **polyglot monorepo by design** — each component uses the right tool: 
 
 Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible (add a language = add a folder + an image).
 
+## Current Milestone: v1.1 Density / ZygoteRunner
+
+**Goal:** Make the `ZygoteRunner` production-ready on main — all 4 languages work end-to-end, with Python + R gaining ~2.7× sandbox density via copy-on-write of pre-imported libraries.
+
+**Target features:**
+- `preimport` manifest field + contract regen (`pnpm contract`) + Python/R manifest updates
+- Per-language zygote agents (Python, R): pre-import → spawn protocol → double-fork + per-child hardening → stdio wiring
+- Go `ZygoteRunner` behind the existing `Runner`/`Sandbox` interface (Create/Stdin/Stdout/Stderr/Wait/Kill/Cleanup/Compile, CPUReader, `sync.Once` cleanup, full-tree kill, three-clock contract)
+- Warm per-language parent pool + idle-parent reaping (credential-free parent over a minimal pipe)
+- `TieredRunner`: routes Python/R → zygote, Rust/SQLite → `DockerSocketRunner`
+- Abuse + isolation test coverage for the zygote path (Phase 4 parity)
+- Fly deploy config for privileged pools + Fly-only runtime gating
+
+**Locked decisions:**
+- **Tiered coverage** — CoW (2.7×) only benefits interpreted heavy-import languages; Python + R run on `ZygoteRunner`, Rust (compiles a static binary) + SQLite (no imports) stay on `DockerSocketRunner`. A `TieredRunner` routes per-manifest. All 4 languages must still work end-to-end.
+- **Fly-only security posture** — the zygote pool runs privileged (`CAP_SYS_ADMIN` + `CAP_SETUID` + host cgroups) to rebuild per-child isolation inside it; gated to the Fly/production runtime where Firecracker is the real host boundary. Local dev + CI keep `DockerSocketRunner`.
+
+**Foundation:** Builds on validated spikes 005 (measured 2.7×: Python 30→81 concurrent on 4GB, marginal RAM 110MB→41MB) and 006 (full L4 hardening is free — 81/41.6MB holds). Four spike-proven design rules: (1) credential-free parent (fork inherits FDs; CLOEXEC doesn't help without `exec()`); (2) per-child hardening (distinct UID, PID-ns via double-fork, `no_new_privs`, private `/tmp`, per-child cgroup-v2 sub-cgroup; child scrubs fds>2); (3) per-language pools (CoW shares only within the same parent/image); (4) manifest pre-import of the common set. See `.planning/decisions/FAST-FOLLOW-zygote-runner.md`.
+
 ## Requirements
 
 ### Validated
@@ -100,4 +119,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets) and deployment-model refinement (internal-launch worker nodes + queue-depth scaling; FlyMachinesRunner → v2)*
+*Last updated: 2026-06-08 — started milestone v1.1 (Density / ZygoteRunner): tiered Python+R zygote with CoW density, Fly-only privileged pools, building on validated spikes 005/006.*

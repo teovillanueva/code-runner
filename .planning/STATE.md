@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: complete
-stopped_at: Milestone v1.0 complete — all 9 phases shipped & released
-last_updated: "2026-06-03T18:30:00.000Z"
-last_activity: 2026-06-03 -- Milestone v1.0 complete (Phases 1-9 shipped); planning for Phases 8 & 9 recovered from orphaned git history
+milestone: v1.1
+milestone_name: Density / ZygoteRunner
+status: planning
+last_updated: "2026-06-08T20:22:48.639Z"
+last_activity: 2026-06-08
 progress:
-  total_phases: 9
-  completed_phases: 9
-  total_plans: 36
-  completed_plans: 36
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 
 ## Current Position
 
-Phase: 9 of 9 (Artifacts & Pullable Run Output) — COMPLETE
-Plan: 7 of 7 — COMPLETE
-Status: Milestone v1.0 complete — all 9 phases shipped, tested, and released (npm packages + GHCR images)
-Last activity: 2026-06-03 -- Completed quick task 260603-u2w: scientific stack + plot auto-capture for python-3.12 & r-4.4 images
-
-Progress: [██████████] 100% (9/9 phases)
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-08 — Milestone v1.1 started
 
 ## Performance Metrics
 
