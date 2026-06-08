@@ -71,6 +71,40 @@ kill_timeout = "300s"
   RUN_RESULT_TTL = "600"
   PRESIGNED_URL_TTL = "86400"
   ARTIFACT_S3_OBJECT_TTL = "3"
+  # ── Zygote warm-pool tier (Phase 13, ZDEP-01..03) ──
+  # ON only on Fly. The worker wraps DockerSocketRunner + ZygoteRunner in a
+  # TieredRunner: zygote-eligible languages (Python — declares a preimport set)
+  # run on a long-lived, per-(language,version) warm "parent" pool container that
+  # double-forks one hardened child per job, sharing pre-imported pages
+  # copy-on-write (~2.7x density). Everything else (R/Rust/SQLite) still runs as a
+  # per-job hardened sandbox on the Docker tier — unchanged. Dev/CI leave this
+  # UNSET → DockerSocketRunner for all 4 languages (safe default).
+  #
+  # PRIVILEGED-POOL REQUIREMENT: the warm parent pool container runs PRIVILEGED
+  # with host cgroups (it manages per-child cgroup-v2 leaves + namespaces itself).
+  # This is acceptable here and ONLY here because the worker runs its own dockerd
+  # INSIDE this Fly Machine, and the Machine is a Firecracker microVM — the
+  # microVM boundary is the real host boundary (threat model = host-escape-only).
+  # A privileged pool container can at worst escape into the worker's inner
+  # dockerd/Machine, never onto the Fly host. The worker's inner dockerd already
+  # runs privileged (it IS the dind daemon), so launching a privileged pool
+  # container needs NO extra Fly/Machine flag — no [vm] change, no extra cap.
+  # The PER-JOB sandbox hardening on the Docker tier is UNCHANGED (cap-drop ALL,
+  # no-new-privileges, read-only root, network=none, seccomp); only the warm-pool
+  # parent is privileged, and the per-CHILD it forks is re-hardened by the agent.
+  ZYGOTE_ENABLED = "true"
+  # TCP port the in-container zygote agent listens on (worker dials the pool
+  # container's Docker-network IP on this port). Must match the agent build.
+  ZYGOTE_RELAY_PORT = "7000"
+  # Idle window: a warm parent with no in-flight jobs for this long is reaped to
+  # reclaim RAM (POOL-03). 5 min balances cold-start cost vs. idle RAM.
+  ZYGOTE_POOL_IDLE_MS = "300000"
+  # Base UID for per-child UID assignment inside the pool container (child uid =
+  # base + n) — keeps each forked child on a distinct, unprivileged UID.
+  ZYGOTE_UID_BASE = "100000"
+  # Memory cap (MiB) for each warm parent pool container itself. Per-child
+  # memory.max is derived independently from each job's own Limits.MemoryMb.
+  ZYGOTE_POOL_MEMORY_MB = "1024"
   # Secrets (fly secrets set -a code-runner-worker):
   #   SOKETI_APP_SECRET
   #   GHCR_TOKEN  — only needed if the ghcr.io/teovillanueva/executor-* packages are PRIVATE
