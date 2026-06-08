@@ -16,6 +16,9 @@ export function registerJobsRoutes(app: Hono): void {
   // client reconcile to the real state (late-join).
   const respondStatus = async (c: Context) => {
     const jobId = c.req.param("id");
+    if (!jobId) {
+      return c.json({ error: "Missing job id" }, 400);
+    }
     const redis = getRedis();
 
     const statusJson = await redis.get(keys.jobStatus(jobId));
@@ -44,6 +47,9 @@ export function registerJobsRoutes(app: Hono): void {
   // R9 401), so no per-handler auth lives here.
   app.get("/v1/jobs/:id/output", async (c) => {
     const jobId = c.req.param("id");
+    if (!jobId) {
+      return c.json({ error: "Missing job id" }, 400);
+    }
     const redis = getRedis();
 
     const outputJson = await redis.get(keys.jobOutput(jobId));
