@@ -154,6 +154,40 @@ func run(ctx context.Context) error {
 	}
 	slog.Info("docker runner initialized", "seccomp_profile", seccompPath)
 
+	// ── Runner selection: Docker tier always; Zygote tier behind ZYGOTE_ENABLED ─
+	// Default (ZYGOTE_ENABLED unset/false): the worker uses DockerSocketRunner for
+	// every job — zero behavior change (TIER-04). When ZYGOTE_ENABLED is set (only
+	// on the Fly worker, where the Firecracker microVM is the host boundary and the
+	// privileged warm-pool container is safe), build the ZygoteRunner and wrap both
+	// behind a TieredRunner. Routing is manifest-driven (manifest.ZygoteEligible via
+	// the already-loaded registry) — NO language-name branching. The zygote runner
+	// gets a deferred Close (pool reaper + warm-container teardown) on shutdown.
+	var jobRunner runner.Runner = dockerRunner
+	if cfg.ZygoteEnabled {
+		zygoteRunner, zErr := runner.NewZygoteRunner(cfg)
+		if zErr != nil {
+			return fmt.Errorf("zygote: create runner: %w", zErr)
+		}
+		defer func() {
+			if cErr := zygoteRunner.Close(); cErr != nil {
+				slog.Warn("zygote: runner close error", "err", cErr)
+			}
+		}()
+		jobRunner = runner.NewTieredRunner(
+			dockerRunner,
+			zygoteRunner,
+			runner.ZygoteEligibleFromRegistry(reg),
+		)
+		slog.Info("zygote tier enabled — tiered runner active (eligible languages route to warm pool)",
+			"relay_port", cfg.ZygoteRelayPort,
+			"pool_idle_ms", cfg.ZygotePoolIdleMs,
+			"uid_base", cfg.ZygoteUIDBase,
+			"pool_memory_mb", cfg.ZygotePoolMemoryMb,
+		)
+	} else {
+		slog.Info("zygote tier disabled — DockerSocketRunner for all languages (safe default)")
+	}
+
 	// ── Publisher ─────────────────────────────────────────────────────────────
 	pub, err := publisher.New(cfg)
 	if err != nil {
@@ -209,7 +243,7 @@ func run(ctx context.Context) error {
 		RunResultTTL:        cfg.RunResultTTL,
 	}
 
-	w := worker.New(store, transport, dockerRunner, pub, workerCfg)
+	w := worker.New(store, transport, jobRunner, pub, workerCfg)
 
 	// ── Prometheus scrape endpoint (autoscaling) ───────────────────────────────
 	// When WORKER_METRICS_PORT is set, serve /metrics with slots_used/_max +
@@ -414,6 +448,13 @@ func configFromEnv() config.Config {
 			cfg.S3ObjectTTL = time.Duration(n) * 24 * time.Hour
 		}
 	}
+
+	// ── Zygote runner (Phase 13, ZDEP-01..03) ────────────────────────────────
+	// Overlay the ZYGOTE_* knobs (ZYGOTE_ENABLED + relay port / idle / uid base /
+	// pool memory). Default = OFF, so a vanilla worker is unaffected; only the Fly
+	// worker sets ZYGOTE_ENABLED=true (its fly.toml). The parse/overlay lives in
+	// config.ApplyZygoteEnv so it stays unit-testable in the config package.
+	cfg = cfg.ApplyZygoteEnv(os.Getenv)
 
 	return cfg
 }

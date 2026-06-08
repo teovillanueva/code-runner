@@ -192,9 +192,11 @@ func TestZygoteEligibleAndPreimports(t *testing.T) {
 }
 
 // TestRealManifestsTiering pins the routing decision for the four shipped
-// languages: Python + R are zygote-eligible (declare a preimport set), Rust +
-// SQLite are not (route to Docker). This guards the locked tiered-coverage
-// decision against accidental manifest edits.
+// languages: only Python is zygote-eligible (declares a preimport set). R, Rust
+// and SQLite all route to the Docker tier. R is deliberately Docker-tier in v1.1
+// — embedded-R eval after the double-fork is unvalidated, so its preimport was
+// removed; see .planning/decisions/ZYGOTE-R-STATUS.md. This guards the locked
+// tiered-coverage decision against accidental manifest edits.
 func TestRealManifestsTiering(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	langRoot := filepath.Join(filepath.Dir(file), "..", "..", "languages")
@@ -202,7 +204,8 @@ func TestRealManifestsTiering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(%s): %v", langRoot, err)
 	}
-	want := map[string]bool{"python": true, "r": true, "rust": false, "sqlite": false}
+	// r: false — Docker tier (ZYGOTE-R-STATUS.md); python stays zygote-eligible.
+	want := map[string]bool{"python": true, "r": false, "rust": false, "sqlite": false}
 	for lang, wantEligible := range want {
 		m, err := reg.Resolve(lang, "")
 		if err != nil {
