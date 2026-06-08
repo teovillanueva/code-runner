@@ -49,6 +49,10 @@ abuse: ## Run the adversarial abuse/safety suite (requires Docker cgroup v2 + re
 test-docker: ## Run guarded Docker integration tests (requires Docker daemon)
 	go test -tags=docker -timeout 300s ./internal/runner/... -run Integration -v
 
+.PHONY: zygote-suite
+zygote-suite: ## Run the Phase 14 zygote safety/abuse/isolation/density/no-leak suite (Linux/dind; ZTEST-01..04 + ZOBS-01..02)
+	bash scripts/zygote-suite.sh
+
 .PHONY: up
 up: ## Bring up the local dev stack
 	docker compose up --build
