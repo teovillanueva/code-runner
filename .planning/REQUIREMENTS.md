@@ -149,6 +149,74 @@ Requirements for the initial release. Each maps to roadmap phases.
 - [ ] **OBS-07**: Both services emit structured JSON logs with `trace_id`/`span_id`/`job_id` correlation fields; the API is migrated off `console.log` to a structured logger matching the worker's `slog`
 - [ ] **OBS-08**: Sampling is configurable (`parentbased_traceidratio`); a commented example OTel Collector service is provided in `docker-compose.yml` and every new `OTEL_*` var is documented in `.env.example`
 
+## v1.1 Requirements — Density / ZygoteRunner
+
+Make the `ZygoteRunner` production-ready on main. Tiered coverage (Python + R on zygote for ~2.7× density; Rust + SQLite stay on Docker), Fly-only privileged pools. Builds on validated spikes 005/006 and `.planning/decisions/FAST-FOLLOW-zygote-runner.md`.
+
+### ZygoteRunner Core (Go)
+
+- [ ] **ZYG-01**: `ZygoteRunner` implements `Runner.Create`, returning a hardened forked-child `Sandbox` from a warm per-language parent
+- [ ] **ZYG-02**: `zygoteSandbox` implements every `Sandbox` method (Stdin/Stdout/Stderr/Wait/Kill/Cleanup/Compile) with semantics identical to `dockerSandbox`
+- [ ] **ZYG-03**: `Kill` terminates the entire child process tree (the child's PID-ns init), not just one PID
+- [ ] **ZYG-04**: `Cleanup` is idempotent (`sync.Once`) and leaks no pipe, fd, cgroup leaf, parent, or slot on any exit path (normal, error, panic)
+- [ ] **ZYG-05**: `CPUReader` reads the child's cgroup-v2 `cpu.stat` so the session CPU clock works for zygote children
+- [ ] **ZYG-06**: the wall / idle / CPU clocks govern zygote children exactly as they do docker sandboxes
+
+### Per-Child Hardening
+
+- [ ] **ZHARD-01**: each child runs under a distinct UID
+- [ ] **ZHARD-02**: each child gets its own PID namespace (double-fork) and sees only itself in `/proc`
+- [ ] **ZHARD-03**: `no_new_privs` is set; a child cannot gain privileges
+- [ ] **ZHARD-04**: each child gets a private `/tmp` tmpfs and cannot read a sibling's `/tmp`
+- [ ] **ZHARD-05**: each child is placed in its own cgroup-v2 sub-cgroup with `memory.max` + `pids.max`
+- [ ] **ZHARD-06**: each child scrubs inherited fds > 2 before executing user code (defense in depth)
+
+### Per-Language Zygote Agents
+
+- [ ] **AGENT-01**: a Python zygote agent pre-imports the manifest set, listens for spawn requests, and forks hardened children running user code
+- [ ] **AGENT-02**: an R zygote agent provides the same behavior for R
+- [ ] **AGENT-03**: agents are credential-free — they hold no Redis/soketi/queue FDs and talk to the worker over a minimal pipe/socket only
+- [ ] **AGENT-04**: a spawn request carries the user's files + run argv + limits; the child runs them with stdin/stdout/stderr wired back to the worker
+
+### Warm Parent Pool
+
+- [ ] **POOL-01**: the worker maintains a warm parent pool, one parent per `(language, version)`
+- [ ] **POOL-02**: parents are pre-warmed so `Create` is fork-fast (no cold image start per job)
+- [ ] **POOL-03**: idle parents are reaped after a configurable idle window to reclaim RAM
+- [ ] **POOL-04**: a dead/crashed parent is detected and respawned; in-flight jobs fail cleanly without leaking slots
+
+### Tiered Routing
+
+- [ ] **TIER-01**: a `TieredRunner` selects `ZygoteRunner` for zygote-opted manifests and `DockerSocketRunner` otherwise
+- [ ] **TIER-02**: routing is manifest-driven — no language-name branching in worker logic
+- [ ] **TIER-03**: all four languages (Python, R, Rust, SQLite) run end-to-end through the `TieredRunner`
+- [ ] **TIER-04**: `DockerSocketRunner` remains the fallback when zygote is disabled or unavailable
+
+### Pre-Import Contract
+
+- [ ] **PRE-01**: a `preimport` field is added to the manifest JSON schema (single source of truth); the contract is regenerated (TS + zod + Go) and the drift gate passes
+- [ ] **PRE-02**: the Python 3.12 manifest declares its `preimport` set
+- [ ] **PRE-03**: the R 4.4 manifest declares its `preimport` set
+- [ ] **PRE-04**: a manifest without `preimport` (Rust, SQLite) remains valid and routes to Docker
+
+### Zygote Safety Tests
+
+- [ ] **ZTEST-01**: the abuse suite (fork bomb, OOM, infinite loop, idle, EOF, giant output) passes for the zygote path with Phase 4 parity
+- [ ] **ZTEST-02**: isolation tests prove a child cannot read a sibling's memory, `/proc`, `/tmp`, or inherited FDs
+- [ ] **ZTEST-03**: density is verified — Python reaches materially higher concurrency than Docker on the same node
+- [ ] **ZTEST-04**: no slot/parent/child leaks across many sequential and concurrent jobs
+
+### Deploy & Gating
+
+- [ ] **ZDEP-01**: `ZygoteRunner` is gated to the Fly/production runtime; dev + CI use `DockerSocketRunner` (config switch)
+- [ ] **ZDEP-02**: the Fly deploy config grants the pool the required privilege (`CAP_SYS_ADMIN`, `CAP_SETUID`, host cgroups)
+- [ ] **ZDEP-03**: enabling/disabling zygote is a config flag with a safe default (off → Docker)
+
+### Pool Observability
+
+- [ ] **ZOBS-01**: pool metrics are emitted via the existing OpenTelemetry instrumentation — per-language parent occupancy, warm/idle parent counts, fork (spawn) latency, parent reap/respawn counts
+- [ ] **ZOBS-02**: each terminal/error path on the zygote runner increments the same domain counters as the docker path (terminal-state, kill latency) so dashboards stay runner-agnostic
+
 ## v2 Requirements
 
 Deferred to a future release. Tracked but not in the current roadmap.
@@ -160,6 +228,11 @@ Deferred to a future release. Tracked but not in the current roadmap.
 - **V2-03**: Redis Streams + `XREAD BLOCK` for guaranteed stdin delivery (replacing pub/sub) — also the path if a serverless Redis without TCP pub/sub must be supported
 - **V2-04**: Offline crate/CRAN vendoring so Rust/R can use third-party packages without violating `--network=none`
 - **V2-05**: `fly-autoscaler` (or equivalent) scaling workers by `LLEN` queue depth, with scale-to-zero where the platform allows
+
+### Density (deferred from v1.1)
+
+- **V2-06**: a density regression gate in CI — an automated test that fails if Python sandbox density drops below a threshold (requires a Linux CI runner with cgroup-v2 access)
+- **V2-07**: language-affinity autoscaling — route jobs to workers already warm for that language and emit per-language scale metrics so the autoscaler pays one parent base per node, not N (ties to SCALE / Phase 5 D5)
 
 ## Out of Scope
 
