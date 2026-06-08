@@ -3,3 +3,5 @@
 *
 !Dockerfile
 !sitecustomize.py
+!zygote_agent.py
+# zygote_selftest.py is a HOST-side test client — intentionally NOT baked in.

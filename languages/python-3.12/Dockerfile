@@ -108,6 +108,23 @@ RUN set -eu; \
 # figures (the saver only registers on the first matplotlib import).
 COPY sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
 
+# ── Zygote agent (Phase 11) ───────────────────────────────────────────────────
+# The agent is the warm pre-imported runtime used by the ZygoteRunner tier. It is
+# ONLY invoked when the worker launches this image as a long-lived, PRIVILEGED
+# pool container with an explicit command, e.g.:
+#   docker run -d --privileged --cgroupns=host -p 7000:7000 \
+#       executor/python:3.12 python /opt/zygote/zygote_agent.py
+# The image's normal run path (DockerSocketRunner -> `python main.py`) is
+# UNCHANGED: there is still no CMD/ENTRYPOINT, so the agent never runs unless the
+# worker explicitly asks for it. Pure stdlib + the baked sci stack -> no extra
+# deps. COPY preserves 0644 so any UID can read it.
+RUN mkdir -p /opt/zygote
+COPY zygote_agent.py /opt/zygote/zygote_agent.py
+# Sanity: the agent must at least byte-compile inside the image (a broken agent
+# must fail the build, never ship). This does NOT run it (no privileged ns/cgroup
+# ops happen at import time).
+RUN python -m py_compile /opt/zygote/zygote_agent.py && echo "cr: zygote agent compile ok"
+
 # ── Workspace directory ────────────────────────────────────────────────────────
 # The runner (internal/runner/docker.go) sets WorkingDir=/workspace and
 # tar-copies user files here before starting the process.
