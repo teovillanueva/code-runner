@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Density / ZygoteRunner
-status: ready
-last_updated: "2026-06-08T21:00:00.000Z"
-last_activity: 2026-06-08
+status: shipped
+last_updated: "2026-06-09T00:00:00.000Z"
+last_activity: 2026-06-09
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 5
   total_plans: 0
   completed_plans: 0
-  percent: 0
+  percent: 100
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-02)
 
 **Core value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible.
-**Current focus:** Milestone v1.1 (Density / ZygoteRunner) — roadmap created (Phases 10–14). Ready to plan Phase 10 (Pre-Import Contract).
+**Current focus:** Milestone v1.1 (Density / ZygoteRunner) — SHIPPED. All 5 phases (10–14) implemented, tested, documented, on `main`; new worker image (sha-2ddd3b2) deployed to Fly prod with the zygote tier enabled. See `.planning/decisions/ZYGOTE-SHIPPED.md` for the full status + the one remaining ops follow-up (golden-snapshot re-bake).
 
 ## Current Position
 
-Phase: Phase 10 — Pre-Import Contract (not started)
+Phase: v1.1 SHIPPED (Phases 10–14 complete, executed directly with gsd-executor subagents per phase, not the per-phase PLAN.md flow)
 Plan: —
-Status: Roadmap created — awaiting `/gsd:plan-phase 10`
-Last activity: 2026-06-08 — v1.1 roadmap created: 5 phases (10–14), 37 requirements mapped 100%
+Status: On main + deployed to Fly prod (worker sha-2ddd3b2, zygote enabled). Python = zygote tier; R/Rust/SQLite = Docker tier; Docker fallback guarantees all 4 work even if a pool fails.
+Last activity: 2026-06-09 — deployed worker to prod, refreshed agent-baked python image on all 3 pool nodes, confirmed cgroup delegation works on Fly; restored scale-to-zero
 
 Milestone v1.1 phase map:
 - Phase 10: Pre-Import Contract — `preimport` manifest field + contract regen + Python/R sets (PRE-01..04)
