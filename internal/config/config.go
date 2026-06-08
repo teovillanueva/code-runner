@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -131,6 +132,40 @@ type Config struct {
 	// so a live presigned URL never points at an already-expired object.
 	// Env: ARTIFACT_S3_OBJECT_TTL (days).
 	S3ObjectTTL time.Duration
+
+	// ── Zygote runner (Phase 12, ZDEP-01..03) ────────────────────────────────
+	// These knobs configure the ZygoteRunner + warm parent pool. They are parsed
+	// and validated here but DO NOT change which runner the worker builds — the
+	// worker's runner selection (TieredRunner wiring behind ZygoteEnabled) lands
+	// in Phase 13. Default = OFF, so a vanilla worker is unaffected.
+
+	// ZygoteEnabled gates the ZygoteRunner on. When false (the default) the
+	// worker uses DockerSocketRunner for everything. Only set true on the Fly
+	// worker where the Firecracker microVM is the real host boundary (the pool
+	// container runs privileged). Env: ZYGOTE_ENABLED (default false).
+	ZygoteEnabled bool
+
+	// ZygoteRelayPort is the TCP port the zygote agent listens on inside each
+	// pool container; the worker dials the pool container's Docker-network IP on
+	// this port. Must match the agent's ZYGOTE_RELAY_PORT. Env: ZYGOTE_RELAY_PORT
+	// (default 7000).
+	ZygoteRelayPort int
+
+	// ZygotePoolIdleMs is the idle window (in ms): after no jobs for this long a
+	// warm pool container is torn down to reclaim RAM (POOL-03). Env:
+	// ZYGOTE_POOL_IDLE_MS (default 300000 = 5 min).
+	ZygotePoolIdleMs int
+
+	// ZygoteUIDBase is the base UID for per-child UID assignment inside the pool
+	// container (child uid = base + n). Must match the agent's ZYGOTE_UID_BASE.
+	// Env: ZYGOTE_UID_BASE (default 100000).
+	ZygoteUIDBase int
+
+	// ZygotePoolMemoryMb is the memory cap (MiB) applied to each warm pool
+	// container itself (the shared parent). Per-child memory.max is derived from
+	// each job's Limits.MemoryMb independently. Env: ZYGOTE_POOL_MEMORY_MB
+	// (default 1024).
+	ZygotePoolMemoryMb int
 }
 
 // Validate enforces the cross-field config invariants and fails fast at boot.
@@ -150,7 +185,59 @@ func (c Config) Validate() error {
 			c.S3ObjectTTL, c.PresignedURLTTL,
 		)
 	}
+
+	// Zygote knobs are only meaningful when the runner is enabled; validate them
+	// then so a vanilla (Docker-only) worker never trips on zygote settings.
+	if c.ZygoteEnabled {
+		if c.ZygoteRelayPort <= 0 || c.ZygoteRelayPort > 65535 {
+			return fmt.Errorf("ZygoteRelayPort (%d) must be in 1..65535 when ZygoteEnabled", c.ZygoteRelayPort)
+		}
+		if c.ZygotePoolIdleMs <= 0 {
+			return fmt.Errorf("ZygotePoolIdleMs (%d) must be > 0 when ZygoteEnabled", c.ZygotePoolIdleMs)
+		}
+		if c.ZygoteUIDBase <= 0 {
+			return fmt.Errorf("ZygoteUIDBase (%d) must be > 0 when ZygoteEnabled", c.ZygoteUIDBase)
+		}
+		if c.ZygotePoolMemoryMb <= 0 {
+			return fmt.Errorf("ZygotePoolMemoryMb (%d) must be > 0 when ZygoteEnabled", c.ZygotePoolMemoryMb)
+		}
+	}
 	return nil
+}
+
+// ApplyZygoteEnv overlays the zygote knobs from environment variables onto c,
+// leaving Default() values in place when a var is unset or unparsable. It is a
+// standalone overlay (the worker's configFromEnv calls it in Phase 13) so the
+// parsing is unit-testable here without importing apps/worker. It does NOT
+// change which runner the worker builds; runner selection is Phase 13.
+//
+// Env: ZYGOTE_ENABLED, ZYGOTE_RELAY_PORT, ZYGOTE_POOL_IDLE_MS, ZYGOTE_UID_BASE,
+// ZYGOTE_POOL_MEMORY_MB.
+func (c Config) ApplyZygoteEnv(getenv func(string) string) Config {
+	if v := getenv("ZYGOTE_ENABLED"); v == "true" || v == "1" {
+		c.ZygoteEnabled = true
+	}
+	if v := getenv("ZYGOTE_RELAY_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.ZygoteRelayPort = n
+		}
+	}
+	if v := getenv("ZYGOTE_POOL_IDLE_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.ZygotePoolIdleMs = n
+		}
+	}
+	if v := getenv("ZYGOTE_UID_BASE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.ZygoteUIDBase = n
+		}
+	}
+	if v := getenv("ZYGOTE_POOL_MEMORY_MB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.ZygotePoolMemoryMb = n
+		}
+	}
+	return c
 }
 
 // RequiresNativeRedis returns true unconditionally, encoding the CFG-04
@@ -190,5 +277,13 @@ func Default() Config {
 		RunResultTTL:    600 * time.Second,
 		PresignedURLTTL: 24 * time.Hour,
 		S3ObjectTTL:     72 * time.Hour,
+		// Zygote runner (Phase 12) — OFF by default; safe default = Docker for
+		// everything. The knobs carry sane values so an operator only has to flip
+		// ZYGOTE_ENABLED=true on the Fly worker.
+		ZygoteEnabled:      false,
+		ZygoteRelayPort:    7000,
+		ZygotePoolIdleMs:   300000,
+		ZygoteUIDBase:      100000,
+		ZygotePoolMemoryMb: 1024,
 	}
 }
