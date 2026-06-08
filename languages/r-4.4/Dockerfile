@@ -92,6 +92,26 @@ RUN set -eu; \
 # frame on normal AND error exit.
 COPY Rprofile.site /etc/R/Rprofile.site
 
+# ── Zygote agent (Phase 11, P1 — WIP / Docker-tier fallback) ──────────────────
+# The R zygote agent + its native helper. ONLY invoked when the worker launches
+# this image as a long-lived, PRIVILEGED pool container with an explicit command:
+#   docker run -d --privileged --cgroupns=host -p 7000:7000 \
+#       executor/r:4.4 Rscript /opt/zygote/zygote_agent.R
+# The image's normal run path (DockerSocketRunner -> `Rscript main.R`) is
+# UNCHANGED (still no CMD/ENTRYPOINT). The .so is compiled at build time via
+# `R CMD SHLIB`. NOTE: the embedded-R fork callback is WIP and NOT yet validated;
+# the recommendation is to ship R on the Docker tier (see
+# .planning/decisions/ZYGOTE-R-STATUS.md). The compile below proves the helper
+# builds; it does NOT run it.
+RUN mkdir -p /opt/zygote
+COPY zygote_hard.c /opt/zygote/zygote_hard.c
+COPY zygote_agent.R /opt/zygote/zygote_agent.R
+RUN set -eu; \
+    cd /opt/zygote; \
+    R CMD SHLIB zygote_hard.c -o libzygote_hard.so; \
+    test -f /opt/zygote/libzygote_hard.so; \
+    echo "cr: zygote R native helper compiled ok"
+
 # R_DEFAULT_PACKAGES: restrict default package loading to a reconciled list.
 # Must be set AFTER the install.packages step above (which requires the utils
 # package to be available during the build).

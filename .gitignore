@@ -17,6 +17,10 @@ coverage.out
 # A committed template lives at docker-compose.override.yml.example.
 docker-compose.override.yml
 
+# Python (zygote agent dev: py_compile artifacts)
+__pycache__/
+*.pyc
+
 # OS / editors
 .DS_Store
 *.swp
