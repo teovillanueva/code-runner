@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Density / ZygoteRunner
-status: planning
-last_updated: "2026-06-08T20:22:48.639Z"
+status: ready
+last_updated: "2026-06-08T21:00:00.000Z"
 last_activity: 2026-06-08
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-02)
 
 **Core value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible.
-**Current focus:** Milestone v1.0 complete — no active phase. Ready for the next milestone or new phases.
+**Current focus:** Milestone v1.1 (Density / ZygoteRunner) — roadmap created (Phases 10–14). Ready to plan Phase 10 (Pre-Import Contract).
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Phase 10 — Pre-Import Contract (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-08 — Milestone v1.1 started
+Status: Roadmap created — awaiting `/gsd:plan-phase 10`
+Last activity: 2026-06-08 — v1.1 roadmap created: 5 phases (10–14), 37 requirements mapped 100%
+
+Milestone v1.1 phase map:
+- Phase 10: Pre-Import Contract — `preimport` manifest field + contract regen + Python/R sets (PRE-01..04)
+- Phase 11: Zygote Agents & Per-Child Hardening — credential-free Python/R agents + double-fork hardening (AGENT-*, ZHARD-*)
+- Phase 12: Go ZygoteRunner & Warm Pool — Runner-interface ZygoteRunner + warm parent pool (ZYG-*, POOL-*)
+- Phase 13: Tiered Routing, Deploy & Gating — TieredRunner, all 4 langs E2E, Fly privileged pool, off→Docker default (TIER-*, ZDEP-*)
+- Phase 14: Zygote Safety, Density & Pool Observability — abuse parity + isolation + density + no-leak gate + pool metrics (ZTEST-*, ZOBS-*)
 
 ## Performance Metrics
 
@@ -125,6 +132,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-03
-Stopped at: Milestone v1.0 complete — all 9 phases shipped & released. Phase 8 & 9 planning recovered from orphaned git history (commit 6a39966) and committed to main.
-Resume file: None
+Last session: 2026-06-08
+Stopped at: v1.1 roadmap created — Phases 10–14 appended to ROADMAP.md, 37 v1.1 requirements mapped 100% in REQUIREMENTS.md (V2-06/V2-07 deferred). v1.0 phases 1–9 untouched.
+Resume file: Next — `/gsd:plan-phase 10`

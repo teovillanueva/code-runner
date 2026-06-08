@@ -350,6 +350,50 @@ Each v1 requirement maps to exactly one phase.
 | OBS-07 | Phase 8 | Planned |
 | OBS-08 | Phase 8 | Planned |
 
+### v1.1 — Density / ZygoteRunner
+
+Each v1.1 requirement maps to exactly one phase. v1.0 rows above are unchanged (Complete/Planned).
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| PRE-01 | Phase 10 | Planned |
+| PRE-02 | Phase 10 | Planned |
+| PRE-03 | Phase 10 | Planned |
+| PRE-04 | Phase 10 | Planned |
+| AGENT-01 | Phase 11 | Planned |
+| AGENT-02 | Phase 11 | Planned |
+| AGENT-03 | Phase 11 | Planned |
+| AGENT-04 | Phase 11 | Planned |
+| ZHARD-01 | Phase 11 | Planned |
+| ZHARD-02 | Phase 11 | Planned |
+| ZHARD-03 | Phase 11 | Planned |
+| ZHARD-04 | Phase 11 | Planned |
+| ZHARD-05 | Phase 11 | Planned |
+| ZHARD-06 | Phase 11 | Planned |
+| ZYG-01 | Phase 12 | Planned |
+| ZYG-02 | Phase 12 | Planned |
+| ZYG-03 | Phase 12 | Planned |
+| ZYG-04 | Phase 12 | Planned |
+| ZYG-05 | Phase 12 | Planned |
+| ZYG-06 | Phase 12 | Planned |
+| POOL-01 | Phase 12 | Planned |
+| POOL-02 | Phase 12 | Planned |
+| POOL-03 | Phase 12 | Planned |
+| POOL-04 | Phase 12 | Planned |
+| TIER-01 | Phase 13 | Planned |
+| TIER-02 | Phase 13 | Planned |
+| TIER-03 | Phase 13 | Planned |
+| TIER-04 | Phase 13 | Planned |
+| ZDEP-01 | Phase 13 | Planned |
+| ZDEP-02 | Phase 13 | Planned |
+| ZDEP-03 | Phase 13 | Planned |
+| ZTEST-01 | Phase 14 | Planned |
+| ZTEST-02 | Phase 14 | Planned |
+| ZTEST-03 | Phase 14 | Planned |
+| ZTEST-04 | Phase 14 | Planned |
+| ZOBS-01 | Phase 14 | Planned |
+| ZOBS-02 | Phase 14 | Planned |
+
 **Coverage:**
 - v1 requirements: 83 total (the prior "68" header figure was stale from the pre-revision spec; the revised set has 83 REQ-IDs)
 - Mapped to phases: 83 ✓
@@ -363,7 +407,21 @@ Each v1 requirement maps to exactly one phase.
 - Phase 5 (Statelessness & Scale): 5 — SCALE-01..05
 - Phase 6 (Language Fan-out): 3 — LANG-06, LANG-07, LANG-08
 - Phase 7 (OSS Release & Deployment): 5 — DOCS-01..04, CHAN-01
+- Phase 8 (Distributed Observability): 8 — OBS-01..08
+
+**v1.1 coverage:**
+- v1.1 requirements: 37 total (ZYG x6, ZHARD x6, AGENT x4, POOL x4, TIER x4, PRE x4, ZTEST x4, ZDEP x3, ZOBS x2)
+- Mapped to phases: 37 ✓
+- Unmapped: 0
+- Deferred (not mapped): V2-06 (density regression CI gate), V2-07 (language-affinity autoscaling)
+
+**v1.1 per-phase counts:**
+- Phase 10 (Pre-Import Contract): 4 — PRE-01..04
+- Phase 11 (Zygote Agents & Per-Child Hardening): 10 — AGENT-01..04, ZHARD-01..06
+- Phase 12 (Go ZygoteRunner & Warm Pool): 10 — ZYG-01..06, POOL-01..04
+- Phase 13 (Tiered Routing, Deploy & Gating): 7 — TIER-01..04, ZDEP-01..03
+- Phase 14 (Zygote Safety, Density & Pool Observability): 6 — ZTEST-01..04, ZOBS-01..02
 
 ---
 *Requirements defined: 2026-06-02*
-*Last updated: 2026-06-02 after spec revision (Hono API, polyglot monorepo, shared contract, OSS + deployment targets) — traceability rewritten for the 7-phase revised roadmap; deployment-model refinement (internal-launch worker nodes, scaling unit = node, FlyMachinesRunner → v2)*
+*Last updated: 2026-06-08 — added v1.1 (Density / ZygoteRunner) traceability: 37 requirements mapped to Phases 10–14; v1.0 rows unchanged; V2-06/V2-07 deferred (not mapped).*

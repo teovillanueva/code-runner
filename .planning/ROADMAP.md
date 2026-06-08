@@ -23,6 +23,14 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 8: Distributed Observability** - OpenTelemetry across API + worker (env-gated, no-op when unset), W3C trace-context propagation across the Redis seam via the wire contract, phase-level spans, domain metrics via OTLP push + opt-in Prometheus `/metrics`, unified structured logs with trace correlation, example OTel Collector (completed 2026-06-03)
 - [x] **Phase 9: Artifacts & Pullable Run Output** - Capture sandbox-generated artifacts (matplotlib/R plots, files) by workspace diff into env-configured S3-compatible object storage, persist a pullable `RunResult` in Redis, and expose `GET /v1/jobs/:id/output` so the API can pull full output server-side (no soketi); URL-only contract `Artifact`/`RunResult`, worker workspace-diff capture + Redis persistence, Python/R plot parity (no shims), `ArtifactStore`/`S3Store` seam, SDK helpers â enables the edalef migration. Defers blocking `/v1/run` + webhooks (completed 2026-06-03)
 
+## Milestone v1.1 — Density / ZygoteRunner
+
+- [ ] **Phase 10: Pre-Import Contract** - Add a `preimport` manifest field to the JSON-Schema single source of truth, regenerate the contract (TS + zod + Go) with the drift gate green, and declare Python/R pre-import sets while Rust/SQLite stay valid and Docker-routed
+- [ ] **Phase 11: Zygote Agents & Per-Child Hardening** - Per-language credential-free zygote agents (Python, R) that pre-import the manifest set, accept spawn requests over a minimal pipe, and double-fork hardened children (distinct UID, PID-ns, `no_new_privs`, private `/tmp`, per-child cgroup-v2, fd scrub) with stdio wired back
+- [ ] **Phase 12: Go ZygoteRunner & Warm Pool** - A Go `ZygoteRunner` satisfying the existing `Runner`/`Sandbox` interface exactly as `DockerSocketRunner` does (Create/Stdin/Stdout/Stderr/Wait/Kill/Cleanup/Compile, cgroup CPUReader, `sync.Once` cleanup, full-tree kill, three clocks), fed by a warm per-language parent pool with idle reaping and crash respawn
+- [ ] **Phase 13: Tiered Routing, Deploy & Gating** - A manifest-driven `TieredRunner` routing Python/R to zygote and Rust/SQLite to Docker, all four languages working end-to-end, Fly deploy config granting the privileged pool its caps, and a safe-default config flag gating zygote to Fly/prod (off -> Docker in dev + CI)
+- [ ] **Phase 14: Zygote Safety, Density & Pool Observability** - The Phase-4-parity abuse suite + sibling-isolation + density + no-leak tests passing on the zygote path (the milestone gate), plus pool metrics emitted through the existing OpenTelemetry instrumentation so dashboards stay runner-agnostic
+
 ## Phase Details
 
 ### Phase 1: Foundation & Wire Contract
@@ -241,10 +249,91 @@ Plans:
 - [x] 09-06-PLAN.md â Node SDK getOutput + React hook artifacts[] from soketi artifact events (R12, R13) [Wave 4]
 - [x] 09-07-PLAN.md â MinIO dev compose + .env.example docs + Fly/Tigris worker wiring + deploy-fly.md (R14, R16) [Wave 4]
 
+## Phase Details — Milestone v1.1
+
+### Phase 10: Pre-Import Contract
+
+**Goal**: Add the `preimport` manifest field to the JSON-Schema single source of truth and regenerate the polyglot contract so every downstream reader (TS, zod, Go) agrees on the pre-import seam — then declare the Python and R pre-import sets while keeping Rust/SQLite valid and Docker-routed. This is the schema seam everything else in the milestone reads, so it ships first and low-risk.
+**Mode:** mvp
+**Depends on**: Phase 9 (v1.0 complete)
+**Requirements**: PRE-01, PRE-02, PRE-03, PRE-04
+**Success Criteria** (what must be TRUE):
+
+  1. The manifest JSON Schema gains an optional `preimport` field (a list of modules/packages); the contract is regenerated via `pnpm contract` (TS types + zod validators + Go structs) and `make contract-check` stays green with no hand-edits to `packages/contract/gen/**`.
+  2. The Python 3.12 manifest declares its `preimport` set (the science stack the spike pre-imported) and loads cleanly through both the Go and TS manifest loaders at boot.
+  3. The R 4.4 manifest declares its `preimport` set and loads cleanly through both loaders.
+  4. A manifest with no `preimport` field (Rust, SQLite) still validates and is treated as zygote-ineligible — the absence of the field is the routing signal, with no language-name branching.
+
+**Plans**: TBD
+
+### Phase 11: Zygote Agents & Per-Child Hardening
+
+**Goal**: Build the language-side mechanism, liftable from the validated spike scripts (005/006): a per-language zygote agent that *is* the language runtime with the manifest set pre-imported, listens for spawn requests over a minimal pipe, and double-forks a hardened child per session that runs user code with full per-child isolation and stdio wired back. The agent holds no worker credentials (design rule #1, proven necessary in spike 006).
+**Mode:** mvp
+**Depends on**: Phase 10
+**Requirements**: AGENT-01, AGENT-02, AGENT-03, AGENT-04, ZHARD-01, ZHARD-02, ZHARD-03, ZHARD-04, ZHARD-05, ZHARD-06
+**Success Criteria** (what must be TRUE):
+
+  1. A Python zygote agent pre-imports the manifest `preimport` set once, then on each spawn request forks a child that runs the supplied user files + run argv + limits; an R zygote agent provides the identical behavior for R.
+  2. The agent is credential-free — it holds no Redis/soketi/queue FDs and communicates with the worker only over a minimal pipe/socket — and each spawned child scrubs inherited fds > 2 before executing user code (defense in depth, since `fork()` inherits FDs and `CLOEXEC` does not help without `exec()`).
+  3. Each child runs under a distinct UID with `no_new_privs` set, in its own PID namespace (created via double-fork so it sees only itself in `/proc`), and with a private `/tmp` tmpfs it cannot escape to read a sibling's `/tmp`.
+  4. Each child is placed in its own cgroup-v2 sub-cgroup with `memory.max` + `pids.max` so one child's OOM or fork-bomb cannot starve siblings.
+  5. A spawn request carries the user's files + run argv + limits and the child runs them with stdin/stdout/stderr wired back through the agent to the worker, behaving like a normal interactive sandbox process.
+
+**Plans**: TBD
+
+### Phase 12: Go ZygoteRunner & Warm Pool
+
+**Goal**: Build the Go side behind the existing `Runner`/`Sandbox` interface — a `ZygoteRunner` that forks a hardened child sandbox from a warm per-language parent and satisfies every interface method with semantics identical to `DockerSocketRunner`, fed by a warm parent pool (one per language/version) with idle reaping and crash respawn so `Create` is fork-fast and the three clocks govern zygote children exactly as they govern docker sandboxes.
+**Mode:** mvp
+**Depends on**: Phase 11
+**Requirements**: ZYG-01, ZYG-02, ZYG-03, ZYG-04, ZYG-05, ZYG-06, POOL-01, POOL-02, POOL-03, POOL-04
+**Success Criteria** (what must be TRUE):
+
+  1. `ZygoteRunner.Create` returns a hardened forked-child `zygoteSandbox` from a warm per-language parent, and `zygoteSandbox` implements every `Sandbox` method (Stdin/Stdout/Stderr/Wait/Kill/Cleanup/Compile) with semantics identical to `dockerSandbox`.
+  2. `Kill` terminates the entire child process tree (the child's PID-ns init), never just one PID, and `CPUReader` reads the child's cgroup-v2 `cpu.stat` so the session CPU clock works for zygote children.
+  3. The wall, idle, and CPU clocks govern zygote children exactly as they do docker sandboxes (a CPU-bound child hidden behind stdin reads is still caught), enforced by the existing `internal/session` contract unchanged.
+  4. `Cleanup` is idempotent (`sync.Once`) and leaks no pipe, fd, cgroup leaf, parent, or slot on any exit path (normal, error, panic).
+  5. The worker maintains a warm parent pool (one parent per `(language, version)`) that is pre-warmed so `Create` is fork-fast with no cold image start per job; idle parents are reaped after a configurable window to reclaim RAM; a dead/crashed parent is detected and respawned, and in-flight jobs on a dead parent fail cleanly without leaking slots.
+
+**Plans**: TBD
+
+### Phase 13: Tiered Routing, Deploy & Gating
+
+**Goal**: Wire the zygote path into the worker as a tier — a manifest-driven `TieredRunner` that routes Python/R to the `ZygoteRunner` and Rust/SQLite to `DockerSocketRunner`, with all four languages working end-to-end — then make it deployable and safe: a Fly deploy config granting the privileged pool its required capabilities (gated to the Fly/prod runtime where Firecracker is the host boundary) and a config flag that keeps dev + CI on Docker by default.
+**Mode:** mvp
+**Depends on**: Phase 12
+**Requirements**: TIER-01, TIER-02, TIER-03, TIER-04, ZDEP-01, ZDEP-02, ZDEP-03
+**Success Criteria** (what must be TRUE):
+
+  1. A `TieredRunner` selects `ZygoteRunner` for zygote-opted manifests (those declaring `preimport`) and `DockerSocketRunner` otherwise, with routing driven entirely by the manifest — no language-name branching in worker logic.
+  2. All four languages (Python, R, Rust, SQLite) run end-to-end through the `TieredRunner`: Python and R via the zygote path, Rust and SQLite via Docker, each passing its existing interactive/compile path.
+  3. `DockerSocketRunner` remains the fallback whenever zygote is disabled or unavailable, so Python/R still execute correctly with the zygote flag off.
+  4. `ZygoteRunner` is gated to the Fly/production runtime via a config flag with a safe default (off → Docker); dev and CI run `DockerSocketRunner`, and enabling/disabling zygote requires no code change.
+  5. The Fly deploy config grants the zygote pool the privilege it needs to rebuild per-child isolation (`CAP_SYS_ADMIN`, `CAP_SETUID`, writable host cgroups), documented as acceptable only because Firecracker — not container caps — is the host boundary on Fly.
+
+**Plans**: TBD
+
+### Phase 14: Zygote Safety, Density & Pool Observability
+
+**Goal**: Prove the zygote path is production-ready and operable before the milestone closes — the verification backbone that mirrors how Phase 4 gated v1.0. The full abuse suite passes on the zygote path at Phase-4 parity, isolation tests prove a child cannot reach a sibling's memory/`/proc`/`/tmp`/FDs, density is measured as materially higher than Docker on the same node, no leaks occur across many sequential and concurrent jobs, and pool metrics flow through the existing OpenTelemetry instrumentation so dashboards stay runner-agnostic.
+**Mode:** mvp
+**Depends on**: Phase 13
+**Requirements**: ZTEST-01, ZTEST-02, ZTEST-03, ZTEST-04, ZOBS-01, ZOBS-02
+**Success Criteria** (what must be TRUE):
+
+  1. The abuse suite (fork bomb, OOM, infinite loop, idle timeout, EOF, giant-output truncation) passes for the zygote path with Phase 4 parity — each adversarial case is contained without harming the parent, the pool, or sibling sessions.
+  2. Isolation tests prove a zygote child cannot read a sibling's memory, `/proc`, or `/tmp`, nor use an inherited Redis/soketi/queue FD (rule #1 + per-child hardening verified end-to-end through the real runner, not just the spike).
+  3. Density is verified — Python reaches materially higher concurrency on the zygote path than on Docker on the same node — and no slot, parent, or child leaks occur across many sequential and concurrent jobs.
+  4. Pool metrics are emitted via the existing OpenTelemetry instrumentation: per-language parent occupancy, warm/idle parent counts, fork (spawn) latency, and parent reap/respawn counts.
+  5. Every terminal/error path on the zygote runner increments the same domain counters as the docker path (terminal-state, kill latency) so observability dashboards remain runner-agnostic.
+
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 â 2 â 3 â 4 â 5 â 6 â 7 â 8 â 9
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 13 -> 14
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -257,3 +346,8 @@ Phases execute in numeric order: 1 â 2 â 3 â 4 â 5 â 6 â 7 â 8 â 9
 | 7. OSS Release & Deployment | 2/2 | Complete   | 2026-06-03 |
 | 8. Distributed Observability | 6/6 | Complete   | 2026-06-03 |
 | 9. Artifacts & Pullable Run Output | 7/7 | Complete   | 2026-06-03 |
+| 10. Pre-Import Contract | 0/? | Not started | - |
+| 11. Zygote Agents & Per-Child Hardening | 0/? | Not started | - |
+| 12. Go ZygoteRunner & Warm Pool | 0/? | Not started | - |
+| 13. Tiered Routing, Deploy & Gating | 0/? | Not started | - |
+| 14. Zygote Safety, Density & Pool Observability | 0/? | Not started | - |
