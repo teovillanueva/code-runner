@@ -68,6 +68,20 @@ func zygoteParentRespawnCount() metric.Int64Counter {
 	return c
 }
 
+// zygoteFallbackCount resolves the resilience counter: jobs that were routed to
+// the zygote tier but fell back to the Docker tier because zygote Create failed
+// (pool wouldn't start, dial failed, agent missing, etc.). A non-zero rate means
+// the zygote tier is degraded and silently serving via Docker — surface it on a
+// dashboard/alert so "zygote is on" never hides "zygote is actually all Docker".
+func zygoteFallbackCount() metric.Int64Counter {
+	c, _ := otel.Meter(instrumentationName).Int64Counter(
+		"code_runner.zygote.fallback.count",
+		metric.WithUnit("{job}"),
+		metric.WithDescription("Zygote-eligible jobs that fell back to the Docker tier after a zygote Create error."),
+	)
+	return c
+}
+
 // sandboxTerminal resolves the runner-agnostic terminal-outcome counter shared
 // by BOTH tiers. It carries `language` and a low-cardinality `outcome`
 // (exited|killed|timed_out) so dashboards plot terminal states uniformly across

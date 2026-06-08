@@ -93,6 +93,52 @@ func TestTieredRunner_NilPredicateAlwaysDocker(t *testing.T) {
 	}
 }
 
+// errRunner always fails Create with a fixed error — stands in for a degraded
+// zygote tier (pool won't start / agent dial fails).
+type errRunner struct {
+	created int
+	err     error
+}
+
+func (e *errRunner) Create(_ context.Context, _ wire.JobSpec) (Sandbox, error) {
+	e.created++
+	return nil, e.err
+}
+
+func TestTieredRunner_FallsBackToDockerOnZygoteError(t *testing.T) {
+	docker := &fakeRunner{name: "docker"}
+	zygote := &errRunner{err: context.DeadlineExceeded} // any non-nil error; ctx itself is live
+	tr := NewTieredRunner(docker, zygote, eligibleLangs("python"))
+
+	// Eligible job whose zygote Create fails must transparently land on docker.
+	_, err := tr.Create(context.Background(), wire.JobSpec{Language: "python", JobId: "j1"})
+	if err != nil {
+		t.Fatalf("fallback should succeed via docker, got error: %v", err)
+	}
+	if zygote.created != 1 {
+		t.Errorf("zygote should have been attempted once; got %d", zygote.created)
+	}
+	if docker.created != 1 || docker.lastJob != "j1" {
+		t.Errorf("docker should have served the fallback (created=%d lastJob=%q)", docker.created, docker.lastJob)
+	}
+}
+
+func TestTieredRunner_NoFallbackWhenContextCancelled(t *testing.T) {
+	docker := &fakeRunner{name: "docker"}
+	zygote := &errRunner{err: context.Canceled}
+	tr := NewTieredRunner(docker, zygote, eligibleLangs("python"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // job is being torn down — a zygote error here is not a zygote fault
+	_, err := tr.Create(ctx, wire.JobSpec{Language: "python", JobId: "j2"})
+	if err == nil {
+		t.Fatal("cancelled context should propagate the error, not fall back")
+	}
+	if docker.created != 0 {
+		t.Errorf("cancelled context must NOT fall back to docker; docker created=%d", docker.created)
+	}
+}
+
 // closableFake is a fakeRunner whose Close is recorded, to prove TieredRunner.Close
 // forwards to a zygote runner exposing Close (the real ZygoteRunner does).
 type closableFake struct {
