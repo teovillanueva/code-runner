@@ -290,6 +290,15 @@ type Manifest struct {
 	// Language corresponds to the JSON schema field "language".
 	Language string `json:"language"`
 
+	// Optional zygote pre-import set: importable module/package names the zygote
+	// parent loads once at warm time so forked children share their pages
+	// copy-on-write. A NON-EMPTY array opts the language into the ZygoteRunner tier
+	// (interpreted, heavy-import languages like Python/R); absent or empty routes the
+	// language to the DockerSocketRunner tier (compiled or no-import languages like
+	// Rust/SQLite). Names are passed verbatim to the language agent (Python:
+	// importlib.import_module; R: library()).
+	Preimport *ManifestPreimport `json:"preimport,omitempty,omitzero"`
+
 	// Run command (argv).
 	Run []string `json:"run"`
 
@@ -299,6 +308,15 @@ type Manifest struct {
 
 // Optional compile command (argv). null for interpreted languages.
 type ManifestCompile []string
+
+// Optional zygote pre-import set: importable module/package names the zygote
+// parent loads once at warm time so forked children share their pages
+// copy-on-write. A NON-EMPTY array opts the language into the ZygoteRunner tier
+// (interpreted, heavy-import languages like Python/R); absent or empty routes the
+// language to the DockerSocketRunner tier (compiled or no-import languages like
+// Rust/SQLite). Names are passed verbatim to the language agent (Python:
+// importlib.import_module; R: library()).
+type ManifestPreimport []string
 
 // soketi events 'stdout' and 'stderr' on private-run-<jobId>.
 type OutputChunkEvent struct {

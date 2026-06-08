@@ -208,6 +208,25 @@ func (r *Registry) List() []wire.LanguageInfo {
 	return infos
 }
 
+// Preimports returns the manifest's zygote pre-import set as a plain slice.
+// It is nil/empty for languages that do not opt into the zygote tier.
+func Preimports(m wire.Manifest) []string {
+	if m.Preimport == nil {
+		return nil
+	}
+	return []string(*m.Preimport)
+}
+
+// ZygoteEligible reports whether a language opts into the ZygoteRunner tier.
+// The signal is a NON-EMPTY preimport array in the manifest: interpreted,
+// heavy-import languages (Python, R) declare one and gain copy-on-write
+// density; compiled or no-import languages (Rust, SQLite) omit it and route to
+// the DockerSocketRunner tier. This is the single routing predicate consumed by
+// the TieredRunner — there is no language-name branching anywhere.
+func ZygoteEligible(m wire.Manifest) bool {
+	return len(Preimports(m)) > 0
+}
+
 // MergeLimits returns a new Limits value with only the non-nil fields from ov
 // overriding base.  The base Limits value is never mutated.
 func MergeLimits(base wire.Limits, ov *wire.LimitsOverride) wire.Limits {

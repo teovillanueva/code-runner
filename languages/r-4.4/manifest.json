@@ -7,6 +7,7 @@
   "compile": null,
   "run": ["Rscript", "main.R"],
   "interactive": true,
+  "preimport": ["jsonlite", "data.table", "lpSolve", "ggplot2"],
   "defaultLimits": {
     "wallTimeMs": 30000,
     "idleMs": 10000,

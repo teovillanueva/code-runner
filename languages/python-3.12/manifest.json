@@ -7,6 +7,7 @@
   "compile": null,
   "run": ["python", "main.py"],
   "interactive": true,
+  "preimport": ["numpy", "pandas", "scipy", "sklearn", "matplotlib.pyplot"],
   "defaultLimits": {
     "wallTimeMs": 30000,
     "idleMs": 10000,

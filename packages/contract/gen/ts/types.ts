@@ -99,6 +99,10 @@ export interface Manifest {
    * Whether the language supports a live interactive stdin session.
    */
   interactive: boolean;
+  /**
+   * Optional zygote pre-import set: importable module/package names the zygote parent loads once at warm time so forked children share their pages copy-on-write. A NON-EMPTY array opts the language into the ZygoteRunner tier (interpreted, heavy-import languages like Python/R); absent or empty routes the language to the DockerSocketRunner tier (compiled or no-import languages like Rust/SQLite). Names are passed verbatim to the language agent (Python: importlib.import_module; R: library()).
+   */
+  preimport?: string[] | null;
   defaultLimits: Limits;
 }
 /**

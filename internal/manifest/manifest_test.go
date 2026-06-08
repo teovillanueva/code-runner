@@ -159,6 +159,61 @@ func TestMergeLimitsPartialOverride(t *testing.T) {
 	}
 }
 
+func ptrPreimport(v wire.ManifestPreimport) *wire.ManifestPreimport { return &v }
+
+func TestZygoteEligibleAndPreimports(t *testing.T) {
+	cases := []struct {
+		name      string
+		preimport *wire.ManifestPreimport
+		eligible  bool
+		want      []string
+	}{
+		{"nil_preimport_routes_to_docker", nil, false, nil},
+		{"empty_preimport_routes_to_docker", ptrPreimport(wire.ManifestPreimport{}), false, []string{}},
+		{"nonempty_preimport_is_zygote", ptrPreimport(wire.ManifestPreimport{"numpy", "pandas"}), true, []string{"numpy", "pandas"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := wire.Manifest{Language: "x", Preimport: tc.preimport}
+			if got := manifest.ZygoteEligible(m); got != tc.eligible {
+				t.Errorf("ZygoteEligible = %v; want %v", got, tc.eligible)
+			}
+			got := manifest.Preimports(m)
+			if len(got) != len(tc.want) {
+				t.Fatalf("Preimports len = %d (%v); want %d (%v)", len(got), got, len(tc.want), tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("Preimports[%d] = %q; want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestRealManifestsTiering pins the routing decision for the four shipped
+// languages: Python + R are zygote-eligible (declare a preimport set), Rust +
+// SQLite are not (route to Docker). This guards the locked tiered-coverage
+// decision against accidental manifest edits.
+func TestRealManifestsTiering(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	langRoot := filepath.Join(filepath.Dir(file), "..", "..", "languages")
+	reg, err := manifest.Load(langRoot)
+	if err != nil {
+		t.Fatalf("Load(%s): %v", langRoot, err)
+	}
+	want := map[string]bool{"python": true, "r": true, "rust": false, "sqlite": false}
+	for lang, wantEligible := range want {
+		m, err := reg.Resolve(lang, "")
+		if err != nil {
+			t.Fatalf("Resolve(%s): %v", lang, err)
+		}
+		if got := manifest.ZygoteEligible(m); got != wantEligible {
+			t.Errorf("%s: ZygoteEligible = %v; want %v (preimport=%v)", lang, got, wantEligible, manifest.Preimports(m))
+		}
+	}
+}
+
 func TestMergeLimitsDoesNotMutateBase(t *testing.T) {
 	base := wire.Limits{
 		WallTimeMs: 30000,
