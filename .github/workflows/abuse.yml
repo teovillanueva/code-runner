@@ -56,3 +56,31 @@ jobs:
 
       - name: Run abuse suite
         run: make abuse
+
+  # zygote — Phase 14 ZygoteRunner safety/isolation/density/no-leak gate
+  # (ZTEST-01..04 + ZOBS-01..02). Runs on ubuntu-latest (NATIVE Linux: the host
+  # can reach the pool container's docker-bridge IP, unlike macOS Docker Desktop,
+  # and cgroup v2 delegation via --cgroupns=host lets the agent enforce per-child
+  # memory.max/pids.max/cpu.stat) so the cgroup-enforced cases (fork bomb, OOM,
+  # CPU-clock) actually RUN here rather than skipping. This is the Fly-free gate
+  # proving the zygote tier before it is trusted in production.
+  zygote:
+    name: zygote
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build executor/python:3.12 image (zygote agent baked at /opt/zygote)
+        run: make python-image
+
+      - name: Run zygote suite (ZTEST-01..04 + ZOBS-01..02)
+        run: make zygote-suite
