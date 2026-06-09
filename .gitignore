@@ -31,4 +31,5 @@ __pycache__/
 /tmp/
 *.log
 .claude/scheduled_tasks.lock
+.claude/skills/impeccable/
 .gstack/
