@@ -28,6 +28,7 @@
     "hono": "4.12.23",
     "hono-rate-limiter": "0.5.3",
     "ioredis": "5.11.0",
+    "minio": "8.0.7",
     "pino": "10.3.1",
     "pusher": "5.3.3",
     "zod": "^3.24.1"

@@ -10,7 +10,8 @@ import type { FileInput } from "@teovilla/code-runner-contract";
 
 export type FileValidationError =
   | { kind: "path"; name: string; message: string }
-  | { kind: "base64"; name: string; message: string };
+  | { kind: "base64"; name: string; message: string }
+  | { kind: "ref"; name: string; message: string };
 
 export interface FileValidationResult {
   totalBytes: number;
@@ -58,6 +59,10 @@ export function sanitizeWorkspacePath(
 // so we validate the shape explicitly before trusting a decode.
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 
+// A content-addressed blob ref: "sha256:" + 64 lowercase hex. Mirrors the wire
+// schema's FileInput.ref pattern and the worker's validateFileInput.
+const REF_RE = /^sha256:[a-f0-9]{64}$/;
+
 /**
  * Validate every input file and sum the DECODED byte size. Returns the first
  * error encountered (path or base64). For utf8 files the decoded size is the
@@ -70,6 +75,49 @@ export function validateFiles(files: FileInput[]): FileValidationResult {
     if (!path.ok) {
       return { totalBytes, error: { kind: "path", name: f.name, message: path.message } };
     }
+
+    // content/ref XOR (BLOB, Phase 16). The generated FileInputSchema can't
+    // express XOR (both fields are optional), so enforce it here AND in the
+    // worker (never trust one side). A ref file carries no inline bytes — skip
+    // base64/size accounting for it; the worker streams + sha256-verifies it.
+    const hasContent = f.content !== undefined;
+    const hasRef = f.ref !== undefined;
+    if (hasContent && hasRef) {
+      return {
+        totalBytes,
+        error: {
+          kind: "ref",
+          name: f.name,
+          message: `file "${f.name}": exactly one of "content" or "ref" is allowed, not both`,
+        },
+      };
+    }
+    if (!hasContent && !hasRef) {
+      return {
+        totalBytes,
+        error: {
+          kind: "ref",
+          name: f.name,
+          message: `file "${f.name}": exactly one of "content" or "ref" is required`,
+        },
+      };
+    }
+    if (hasRef) {
+      if (!REF_RE.test(f.ref!)) {
+        return {
+          totalBytes,
+          error: {
+            kind: "ref",
+            name: f.name,
+            message: `file "${f.name}": ref must be "sha256:<64 hex>", got "${f.ref}"`,
+          },
+        };
+      }
+      // Ref bytes are not counted toward MAX_FILES_BYTES (the inline-input cap):
+      // CAS is exactly the path for large/shared files that exceed it.
+      continue;
+    }
+
     const encoding = f.encoding ?? "utf8";
     if (encoding === "base64") {
       const content = f.content ?? "";

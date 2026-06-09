@@ -10,6 +10,7 @@ import { registerExecuteRoutes } from "./routes/execute.ts";
 import { registerJobsRoutes } from "./routes/jobs.ts";
 import { registerLanguagesRoutes } from "./routes/languages.ts";
 import { registerControlRoutes } from "./routes/control.ts";
+import { registerBlobsRoutes } from "./routes/blobs.ts";
 import { registerMetricsRoutes } from "./routes/metrics.ts";
 import { registerChannelAuthRoutes } from "./channelAuth.ts";
 import { config } from "./config.ts";
@@ -37,6 +38,7 @@ export function makeApp(): Hono {
   registerJobsRoutes(app);
   registerLanguagesRoutes(app);
   registerControlRoutes(app);
+  registerBlobsRoutes(app);
 
   // Optional channel-auth helper (CHAN-02) — guarded by ENABLE_CHANNEL_AUTH
   if (config.enableChannelAuth) {

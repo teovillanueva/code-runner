@@ -109,15 +109,13 @@ export function registerExecuteRoutes(app: Hono): void {
       const fileCheck = validateFiles(req.files);
       if (fileCheck.error) {
         const { kind, message } = fileCheck.error;
-        return c.json(
-          {
-            error:
-              kind === "base64"
-                ? `Invalid file content: ${message}`
-                : `Invalid file path: ${message}`,
-          },
-          400,
-        );
+        const prefix =
+          kind === "base64"
+            ? "Invalid file content"
+            : kind === "ref"
+              ? "Invalid file ref"
+              : "Invalid file path";
+        return c.json({ error: `${prefix}: ${message}` }, 400);
       }
       if (fileCheck.totalBytes > config.maxFilesBytes) {
         return c.json(

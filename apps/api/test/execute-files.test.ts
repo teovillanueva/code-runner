@@ -84,6 +84,29 @@ describe("validateFiles", () => {
     const r = validateFiles([{ name: "../escape", content: "x" }]);
     expect(r.error?.kind).toBe("path");
   });
+
+  // ── content/ref XOR (Phase 16, BLOB) ───────────────────────────────────────
+  it("accepts a valid ref file and does NOT count its bytes", () => {
+    const r = validateFiles([
+      { name: "data.csv", ref: "sha256:" + "a".repeat(64) },
+    ] as never);
+    expect(r.error).toBeUndefined();
+    expect(r.totalBytes).toBe(0);
+  });
+  it("flags a file with BOTH content and ref", () => {
+    const r = validateFiles([
+      { name: "x", content: "hi", ref: "sha256:" + "a".repeat(64) },
+    ] as never);
+    expect(r.error?.kind).toBe("ref");
+  });
+  it("flags a file with NEITHER content nor ref", () => {
+    const r = validateFiles([{ name: "x" }] as never);
+    expect(r.error?.kind).toBe("ref");
+  });
+  it("flags a malformed ref", () => {
+    const r = validateFiles([{ name: "x", ref: "sha256:zzz" }] as never);
+    expect(r.error?.kind).toBe("ref");
+  });
 });
 
 // ── HTTP integration (needs the app; some assertions need Redis) ───────────────
