@@ -105,12 +105,24 @@ type ExecuteResponse struct {
 
 // A single source file submitted by the caller.
 type FileInput struct {
-	// UTF-8 file content.
+	// File content. Interpreted per `encoding`: utf8 text by default, or
+	// base64-encoded arbitrary bytes when encoding=base64.
 	Content string `json:"content"`
 
-	// Relative file name written into the sandbox workspace.
+	// How content is encoded. utf8=text (default, back-compat); base64=arbitrary
+	// bytes.
+	Encoding FileInputEncoding `json:"encoding,omitempty,omitzero"`
+
+	// Relative path written into the sandbox workspace; may contain '/'
+	// subdirectories (e.g. data/input.csv). Must not escape the workspace; absolute
+	// paths and traversal are rejected.
 	Name string `json:"name"`
 }
+
+type FileInputEncoding string
+
+const FileInputEncodingBase64 FileInputEncoding = "base64"
+const FileInputEncodingUtf8 FileInputEncoding = "utf8"
 
 // The fully-resolved job the API enqueues for the worker. The API resolves the
 // manifest so the worker stays language-agnostic at runtime.

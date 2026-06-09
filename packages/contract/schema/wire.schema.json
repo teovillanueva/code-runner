@@ -44,8 +44,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Relative file name written into the sandbox workspace." },
-        "content": { "type": "string", "description": "UTF-8 file content." }
+        "name": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Relative path written into the sandbox workspace; may contain '/' subdirectories (e.g. data/input.csv). Must not escape the workspace; absolute paths and traversal are rejected." },
+        "content": { "type": "string", "description": "File content. Interpreted per `encoding`: utf8 text by default, or base64-encoded arbitrary bytes when encoding=base64." },
+        "encoding": { "type": "string", "enum": ["utf8", "base64"], "default": "utf8", "description": "How content is encoded. utf8=text (default, back-compat); base64=arbitrary bytes." }
       },
       "required": ["name", "content"]
     },

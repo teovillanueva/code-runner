@@ -62,13 +62,17 @@ export interface LimitsOverride {
  */
 export interface FileInput {
   /**
-   * Relative file name written into the sandbox workspace.
+   * Relative path written into the sandbox workspace; may contain '/' subdirectories (e.g. data/input.csv). Must not escape the workspace; absolute paths and traversal are rejected.
    */
   name: string;
   /**
-   * UTF-8 file content.
+   * File content. Interpreted per `encoding`: utf8 text by default, or base64-encoded arbitrary bytes when encoding=base64.
    */
   content: string;
+  /**
+   * How content is encoded. utf8=text (default, back-compat); base64=arbitrary bytes.
+   */
+  encoding?: "utf8" | "base64";
 }
 /**
  * A language package manifest (languages/<lang-version>/manifest.json).
