@@ -50,16 +50,34 @@ job ID and the soketi channel to subscribe to.
 | --- | --- | --- |
 | `language` | yes | Name or alias (`"python"`, `"py"`, `"rust"`, `"rs"`, `"sqlite"`, `"sql"`). |
 | `version` | no | Omit to use the only/most-recent match. |
-| `files` | yes | Array of `{ name, content }`; at least one. File names 1–255 chars. |
+| `files` | yes | Array of `FileInput`; at least one. File names 1–255 chars. See [file inputs](#file-inputs). |
 | `limits` | no | Per-request overrides; absent fields use manifest defaults. |
 | `collectOutput` | no | `true` to persist a pullable `RunResult`. Defaults to `false`. |
+
+#### File inputs
+
+Each entry in `files` is a `FileInput`. Every file is materialized under the sandbox
+workspace (`/workspace`) before the entrypoint runs.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `name` | yes | Relative path under `/workspace`. May contain `/` for **subdirectories** (e.g. `data/input.csv`). Absolute paths (`/etc/passwd`) and `..` traversal are **rejected** with `400`. |
+| `content` | conditional | Inline file body. UTF-8 text by default; base64-encoded bytes when `encoding:"base64"`. Mutually exclusive with `ref`. |
+| `encoding` | no | `"utf8"` (default, back-compatible) or `"base64"` for arbitrary bytes (xlsx, images, zip, …). Ignored when `ref` is set. |
+| `ref` | conditional | `"sha256:<64-hex>"` — a pre-uploaded [content-addressed blob](#blobs). Mutually exclusive with `content`. |
+
+A `FileInput` carries **exactly one** of `content` or `ref`. The content/ref XOR is
+enforced in both the API and the worker; the worker re-sanitizes every path regardless
+of the API (host-escape-only threat model). See [Multi-file input](/docs/guides/input-files)
+and [Large & shared files](/docs/guides/blobs).
 
 **Responses**
 
 | Code | Body | When |
 | --- | --- | --- |
 | `202` | `{"jobId","channel":"private-run-<jobId>","status":"queued"}` | Accepted; job enqueued. |
-| `400` | `{"error","details":[...]}` | Invalid body, unknown language, or unknown version. |
+| `400` | `{"error","details":[...]}` | Invalid body, unknown language/version, invalid base64 `content`, absolute or `..`-traversing `name`, or a file with **both** / **neither** `content` and `ref` / a malformed `ref`. |
+| `413` | `{"error":...}` | Total **decoded** size of all files exceeds `MAX_FILES_BYTES` (default 8 MiB). For `base64` files the decoded byte length counts, not the larger base64 string. |
 | `429` | `{"error":"Executor at capacity...","retryAfterMs":1000}` | `LLEN(jobs:queue) >= MAX_QUEUE_DEPTH`. Checked after manifest resolution, so invalid bodies get `400`, not `429`. |
 
 ---
@@ -236,6 +254,74 @@ identifiers are hardcoded.
   { "language": "sqlite", "version": "3",    "aliases": ["sql"],                "interactive": true }
 ]
 ```
+
+---
+
+## Blobs
+
+Content-addressed storage for **large** or **reused** input files. A file is identified
+by the `sha256` of its bytes, uploaded **once** to the configured object store, and then
+referenced from any job by `ref: "sha256:<hex>"` instead of being inlined. This sidesteps
+the `MAX_FILES_BYTES` cap and re-uploading the same bytes on every run. See the
+[Blobs guide](/docs/guides/blobs) for the full flow, dedup, and TTL/GC behaviour.
+
+The handshake is **check → presigned PUT → finalize → execute(ref)**. The API only
+**presigns** upload URLs (pure local crypto — no S3 call, no byte proxying) and records
+liveness in Redis; the **bytes go client → store directly**. The worker is the only party
+that reads blob bytes, and verifies `sha256 == ref` authoritatively on pull.
+
+<Callout type="info">
+  Both blob routes require the object store to be **configured server-side** (the same
+  S3 endpoint/bucket/creds as artifacts). If it is unconfigured, `/v1/blobs/*` returns
+  **501** and you should keep using inline files. See
+  [Configuration](/docs/self-hosting/configuration#object-storage--artifacts).
+</Callout>
+
+### POST /v1/blobs/check
+
+Ask which of a set of blobs the store already has. Missing blobs come back with a
+presigned PUT URL; present blobs have their idle TTL refreshed.
+
+**Request body**
+
+```json
+{ "hashes": ["sha256:9f86d0…<64 hex>", "sha256:2c26b4…<64 hex>"] }
+```
+
+**Responses**
+
+| Code | Body | When |
+| --- | --- | --- |
+| `200` | `{"missing":[{"hash","uploadUrl"}],"present":["sha256:…"]}` | Existence checked. `uploadUrl` is a presigned PUT (default 15-min window). |
+| `400` | `{"error","details":[...]}` | Malformed hash (not `sha256:<64-hex>`). |
+| `501` | `{"error":...}` | Blob store unconfigured. |
+
+After receiving `missing`, `PUT` the raw bytes of each missing blob to its `uploadUrl`
+(client → store direct).
+
+### POST /v1/blobs/finalize
+
+Record liveness for blobs whose bytes you just uploaded. The API sets `blob:meta:<hash>`
+(idle TTL) and adds membership in `blobs:index`. It does **not** read the bytes —
+integrity is verified by the worker on pull.
+
+**Request body**
+
+```json
+{ "hashes": ["sha256:9f86d0…<64 hex>"] }
+```
+
+**Responses**
+
+| Code | Body | When |
+| --- | --- | --- |
+| `200` | `{"finalized":["sha256:…"]}` | Liveness recorded/refreshed. |
+| `400` | `{"error","details":[...]}` | Malformed hash. |
+| `501` | `{"error":...}` | Blob store unconfigured. |
+
+Then submit the job with `POST /v1/execute` using `files: [{ name, ref: "sha256:<hex>" }]`.
+The `client.blobs.upload(buffer)` SDK method wraps this entire handshake (and skips the
+PUT when the blob is already present).
 
 ---
 

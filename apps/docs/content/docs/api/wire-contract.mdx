@@ -49,13 +49,40 @@ These are exported from `@teovilla/code-runner-contract` and re-exported by the 
 | --- | --- |
 | `ExecuteRequest` | `{ language, version?, files: FileInput[], limits?: LimitsOverride, collectOutput? }` |
 | `ExecuteResponse` | `{ jobId, channel, status: "queued" }` |
-| `FileInput` | `{ name: string, content: string }` |
+| `FileInput` | `{ name: string, content?: string, encoding?: "utf8" \| "base64", ref?: string }` — exactly one of `content` or `ref` |
 | `JobStatus` | `{ jobId, channel, language, version, state: JobState, updatedAtMs }` |
 | `JobState` | `"queued" \| "starting" \| "running" \| "done" \| "killed" \| "error"` |
 | `Limits` | `{ wallTimeMs, idleMs, cpuMs, memoryMb, pids, outputKb, maxArtifacts, maxArtifactBytes }` |
 | `LimitsOverride` | all `Limits` fields optional |
 | `LanguageInfo` | `{ language, version, aliases, interactive }` |
 | `Manifest` | `{ language, version, aliases, image, entrypoint, compile?, run, interactive, defaultLimits }` |
+
+<Callout type="info">
+  A `FileInput` carries **exactly one** of `content` (inline bytes, interpreted per
+  `encoding` — `"utf8"` text by default or `"base64"` for arbitrary bytes) or `ref`
+  (`"sha256:<64-hex>"`, a pre-uploaded [content-addressed blob](/docs/guides/blobs)).
+  The XOR is not expressible in JSON Schema in a way that survives codegen — both
+  fields generate as optional — so it is enforced at runtime in **both** the API (zod
+  refinement) **and** the worker (`validateFileInput`); never trust one side. `ref` and
+  `encoding` are purely additive: existing inline `{ name, content }` callers are
+  unaffected. See [Multi-file input](/docs/guides/input-files).
+</Callout>
+
+## Blob message types
+
+The content-addressed blob store (CAS) is driven by two request/response pairs. See
+[Large & shared files](/docs/guides/blobs).
+
+| Type | Shape | Endpoint |
+| --- | --- | --- |
+| `BlobCheckRequest` | `{ hashes: string[] }` | `POST /v1/blobs/check` request |
+| `BlobUpload` | `{ hash: string, uploadUrl: string }` | one missing-blob entry |
+| `BlobCheckResponse` | `{ missing: BlobUpload[], present: string[] }` | `POST /v1/blobs/check` response |
+| `BlobFinalizeRequest` | `{ hashes: string[] }` | `POST /v1/blobs/finalize` request |
+| `BlobFinalizeResponse` | `{ finalized: string[] }` | `POST /v1/blobs/finalize` response |
+
+All hashes are `"sha256:<64 lowercase hex>"`. `uploadUrl` is a presigned PUT URL the
+SDK uploads bytes to **directly** (client → store); the bytes never transit the API.
 
 ## Event & message types
 
