@@ -1,6 +1,6 @@
 {
   "name": "@teovilla/code-runner-sdk-node",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Server-side SDK for the code-runner service: a typed CodeRunnerClient over the Hono gateway plus zero-dependency soketi channel-auth signing.",
   "license": "MIT",
   "homepage": "https://github.com/teovillanueva/code-runner/tree/main/packages/code-runner-sdk-node",
