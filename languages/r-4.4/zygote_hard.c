@@ -352,7 +352,16 @@ static void materialize_and_run(const char *entrypoint, const char *files_json_u
     /* Files were already written by the parent into a private staging dir and
      * the child re-creates them under /tmp/work. For simplicity in this WIP, the
      * parent passes only the main entrypoint content via an env-free shared
-     * approach: see serve(). Here we just chdir + source. */
+     * approach: see serve(). Here we just chdir + source.
+     *
+     * Phase 15 (multi-file input: base64 + subdirs) note: this WIP native R path
+     * does NOT stage HELLO files[] (the design's known gap — see
+     * .planning/decisions/ZYGOTE-R-STATUS.md). R ships on the DockerSocketRunner
+     * tier, whose copyFilesToContainer already decodes per-file `encoding`
+     * (utf8|base64) and preserves subdirectories with full path sanitization.
+     * When this file-staging path is implemented, it MUST mirror the Python
+     * agent's _materialize_files: per-file `encoding` (base64 -> raw bytes),
+     * subdir creation, and a traversal guard anchored at CHILD_WORKDIR. */
     mkdir(CHILD_WORKDIR, 0700);
     if (chdir(CHILD_WORKDIR) != 0) { /* fall through; source path may be absolute */ }
 

@@ -34,6 +34,7 @@ unaffected; this agent is only invoked when the worker launches the image as a
 pool container with an explicit command:
     python /opt/zygote/zygote_agent.py
 """
+import base64
 import ctypes
 import errno
 import json
@@ -374,7 +375,15 @@ def _materialize_files(files, entrypoint):
             continue
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         content = f.get("content", "")
-        if isinstance(content, str):
+        encoding = f.get("encoding") or "utf8"
+        if encoding == "base64":
+            # Arbitrary bytes travelled as a JSON base64 string; decode and
+            # write binary. base64.b64decode raises on malformed input, which
+            # surfaces as a job error rather than silently writing garbage.
+            raw = base64.b64decode(content) if isinstance(content, str) else content
+            with open(dest, "wb") as fh:
+                fh.write(raw)
+        elif isinstance(content, str):
             with open(dest, "w") as fh:
                 fh.write(content)
         else:

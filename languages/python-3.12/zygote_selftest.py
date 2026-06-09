@@ -262,10 +262,36 @@ def test_isolation():
            text.strip().splitlines()[-1] if text.strip() else "no output")
 
 
+# --- Test 7: base64 binary + subdir materialization (Phase 15, FILES-02/03) --
+def test_base64_subdir():
+    # main.py reads a base64-materialized binary blob in a subdir and a utf8
+    # file in another subdir, asserting both bytes round-tripped exactly.
+    code = (
+        "raw = open('data/blob.bin','rb').read()\n"
+        "txt = open('cfg/in.txt','r').read()\n"
+        "print('BLOB', raw == bytes([0,1,2,255]))\n"
+        "print('TXT', txt == 'hello')\n"
+    )
+    files = [
+        {"name": "main.py", "content": code},  # no encoding -> utf8 back-compat
+        {"name": "data/blob.bin", "content": "AAEC/w==", "encoding": "base64"},
+        {"name": "cfg/in.txt", "content": "hello", "encoding": "utf8"},
+    ]
+    c = Conn(HOST, PORT)
+    hello(c, "t7", "main.py", files, uid=100070)
+    _, out, err, cpu, ex = collect_until_exit(c)
+    c.close()
+    text = out.decode(errors="replace")
+    record("base64 subdir blob round-trips exactly", "BLOB True" in text,
+           repr(text[:80]) + " err=" + repr(err[:80]))
+    record("utf8 subdir file round-trips", "TXT True" in text, repr(text[:80]))
+    record("base64/subdir job EXIT 0", bool(ex and ex.get("exitCode") == 0), str(ex))
+
+
 def main():
     print(f"== zygote agent self-test against {HOST}:{PORT} ==")
     for fn in (test_stdout_exit, test_nonzero_exit, test_stdin_echo,
-               test_cpu_frames, test_kill, test_isolation):
+               test_cpu_frames, test_kill, test_isolation, test_base64_subdir):
         print(f"\n-- {fn.__name__} --")
         try:
             fn()

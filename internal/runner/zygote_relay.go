@@ -64,10 +64,13 @@ type helloPayload struct {
 	TmpfsBytes  int64       `json:"tmpfsBytes"`
 }
 
-// helloFile mirrors the agent's {name, content} file shape.
+// helloFile mirrors the agent's {name, content, encoding} file shape. Encoding
+// is omitted when "" (back-compat: older relays/agents treat absent as utf8),
+// and carries "base64" so the agent can decode arbitrary bytes before writing.
 type helloFile struct {
-	Name    string `json:"name"`
-	Content string `json:"content"`
+	Name     string `json:"name"`
+	Content  string `json:"content"`
+	Encoding string `json:"encoding,omitempty"`
 }
 
 // startedPayload is the JSON body of the STARTED frame

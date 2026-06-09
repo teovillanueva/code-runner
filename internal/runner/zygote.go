@@ -190,7 +190,15 @@ func buildHello(spec wire.JobSpec, cfg config.Config) helloPayload {
 
 	files := make([]helloFile, 0, len(spec.Files))
 	for _, f := range spec.Files {
-		files = append(files, helloFile{Name: f.Name, Content: f.Content})
+		// Encoding is threaded through verbatim (absent → utf8). Binary content
+		// travels over the relay as a JSON base64 string; the agent decodes it
+		// before writing the file. The agent owns path sanitization + traversal
+		// guard for this tier (the worker never trusts the path either way).
+		files = append(files, helloFile{
+			Name:     f.Name,
+			Content:  f.Content,
+			Encoding: string(f.Encoding),
+		})
 	}
 
 	entry := spec.Entrypoint

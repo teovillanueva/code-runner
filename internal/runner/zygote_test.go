@@ -56,6 +56,39 @@ func TestBuildHelloFromSpec(t *testing.T) {
 	}
 }
 
+// TestBuildHelloThreadsEncodingAndSubdirs asserts the HELLO files carry the
+// per-file encoding verbatim (absent → "", which the agent treats as utf8) and
+// preserve subdir names, so binary (base64) + subdir input reaches the agent.
+func TestBuildHelloThreadsEncoding(t *testing.T) {
+	cfg := config.Default()
+	spec := wire.JobSpec{
+		JobId:      "j",
+		Entrypoint: "main.py",
+		Files: []wire.FileInput{
+			{Name: "main.py", Content: "print(1)"}, // no encoding → utf8
+			{Name: "data/in.csv", Content: "a,b", Encoding: wire.FileInputEncodingUtf8},
+			{Name: "blob.bin", Content: "AAEC", Encoding: wire.FileInputEncodingBase64},
+		},
+		Limits: wire.Limits{MemoryMb: 128, Pids: 16, OutputKb: 1024},
+	}
+	h := buildHello(spec, cfg)
+	if len(h.Files) != 3 {
+		t.Fatalf("want 3 files, got %d", len(h.Files))
+	}
+	if h.Files[0].Encoding != "" {
+		t.Errorf("absent encoding should stay empty (utf8 back-compat), got %q", h.Files[0].Encoding)
+	}
+	if h.Files[1].Name != "data/in.csv" {
+		t.Errorf("subdir name not preserved: %q", h.Files[1].Name)
+	}
+	if h.Files[1].Encoding != "utf8" {
+		t.Errorf("utf8 encoding not threaded: %q", h.Files[1].Encoding)
+	}
+	if h.Files[2].Encoding != "base64" || h.Files[2].Content != "AAEC" {
+		t.Errorf("base64 encoding/content not threaded: %+v", h.Files[2])
+	}
+}
+
 // TestBuildHelloDefaults asserts sane defaults when limits/entrypoint are zero.
 func TestBuildHelloDefaults(t *testing.T) {
 	cfg := config.Default()
