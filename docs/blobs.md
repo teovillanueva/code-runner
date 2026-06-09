@@ -121,6 +121,46 @@ PUT — re-running the same upload is cheap.
 > server-side** (see below). When it is not, `/v1/blobs/*` returns **501** and you
 > should keep using inline files.
 
+## Seed a SQLite database via blob
+
+The `sqlite` language opens **`database.db`** in the run cwd (`/workspace`). That
+makes the CAS a perfect fit for an exam-style workload: upload a pre-built SQLite
+`.db` **once** as a blob, then reference it as `{ name: "database.db", ref }` in
+every run alongside the student's SQL. Each run executes in a **fresh, ephemeral
+sandbox**, so every student gets their own copy of the seed db — no cross-run
+state, no corruption from concurrent writers.
+
+```ts
+import { CodeRunnerClient } from "@teovilla/code-runner-sdk-node";
+import { readFileSync } from "node:fs";
+
+const client = new CodeRunnerClient({
+  baseUrl: process.env.EXECUTOR_URL!,
+  token: process.env.EXECUTOR_API_TOKEN!,
+});
+
+// Upload the exam database ONCE — deduped across every student run.
+const dbBuffer = readFileSync("exam.db");
+const { ref } = await client.blobs.upload(dbBuffer);
+
+// Each student's SQL runs against a fresh copy of the seeded db.
+await client.executeFiles({
+  language: "sqlite",
+  files: [
+    { name: "database.db", ref },                  // ← the seeded blob
+    { name: "main.sql", content: "SELECT * FROM exam;" },
+  ],
+});
+```
+
+The run argv is `sqlite3 -batch database.db -init main.sql`: sqlite opens the
+provided `database.db`, runs `main.sql`, then accepts interactive SQL over stdin.
+
+> If **no** `database.db` is provided, sqlite creates an empty file-backed db —
+> functionally equivalent to the old in-memory default for query workloads. One
+> minor note: with `collectOutput`, that auto-created empty `database.db` may show
+> up as a run artifact when no db was supplied.
+
 ## Liveness, TTL, leases & GC
 
 Bytes live in S3; **liveness lives in Redis**.
