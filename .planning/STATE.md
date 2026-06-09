@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 
 ## Current Position
 
-Phase: 16 — Content-Addressed Blob Store (CAS) — IN PROGRESS (2/2 plans executed)
-Plan: 16-01 (CAS core) + 16-02 (CAS edge) shipped
-Status: Phase 16 Plan 02 executed — CAS edge (API presign + Node SDK + infra + docs); BLOB-02/03/04/10/11/12 satisfied; all gates green
-Last activity: 2026-06-09 — executed Phase 16 Plan 02 (CAS edge: API presign + SDK + infra + docs)
+Phase: v1.2 CODE-COMPLETE on `main` (Phases 15 + 16 done) — NOT yet deployed to prod
+Plan: 15-01, 16-01, 16-02 all shipped
+Status: v1.2 code-complete + all test gates green on main (go test ./..., pnpm -r test, make contract-check). Phase 15 (inline binary+subdir files) is prod-ready zero-infra. Phase 16 (CAS) is inert-by-default (blob routes → 501, no GC goroutine) until BLOB_S3_* env is set + a bucket provisioned. Deploy + prod blob provisioning left as a documented morning follow-up (autonomous prod-storage provisioning was explicitly out of scope).
+Last activity: 2026-06-09 — v1.2 shipped to main; full verification green; throwaway test redis cleaned up; no Fly deploy performed (no test machines leaked)
 
 ## Performance Metrics
 
