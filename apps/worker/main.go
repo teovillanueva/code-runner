@@ -339,6 +339,20 @@ func run(ctx context.Context) error {
 		slog.Info("reaper started", "interval", reaperInterval)
 	}
 
+	// ── Blob GC (Phase 16, BLOB-08) ────────────────────────────────────────────
+	// When a blob store is configured, start the lock-guarded GC sweep goroutine.
+	// It reclaims blobs whose liveness expired AND that are unleased, after the
+	// grace window. Only one replica sweeps at a time (blobs:gc:lock). Skipped
+	// entirely when CAS is unconfigured (no blob store).
+	if blobStore != nil {
+		// Lock TTL ≈ one sweep interval + buffer so a crashed sweep's lock
+		// reliably expires before the next sweep, without ever blocking forever.
+		lockTTL := cfg.BlobGCInterval + 1*time.Minute
+		gc := blobindex.NewGC(redisClient, blobStore, cfg.BlobGCGrace, lockTTL)
+		go gc.Run(ctx, cfg.BlobGCInterval)
+		slog.Info("blob GC started", "interval", cfg.BlobGCInterval, "grace", cfg.BlobGCGrace)
+	}
+
 	slog.Info("worker loop starting",
 		"max_sandboxes", cfg.MaxSandboxes,
 		"warmup_ms", cfg.WarmupMs,
