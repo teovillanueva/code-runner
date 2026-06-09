@@ -45,6 +45,12 @@ export function toFileInput(f: SdkFileInput): FileInput {
     const buf = Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data);
     return { name: f.name, content: buf.toString("base64"), encoding: "base64" };
   }
+  // A raw wire FileInput carrying a content-addressed `ref` (Phase 16): pass it
+  // through unchanged — it has no inline content/encoding (content/ref are XOR).
+  const ref = (f as FileInput).ref;
+  if (ref !== undefined) {
+    return { name: f.name, ref };
+  }
   // Already a wire FileInput or a TextFileInput — both have { name, content }.
   const out: FileInput = { name: f.name, content: (f as FileInput).content };
   const enc = (f as FileInput).encoding;

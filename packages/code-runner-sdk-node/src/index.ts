@@ -1,9 +1,11 @@
 // Public surface of @teovilla/code-runner-sdk-node.
 
-export { CodeRunnerClient } from "./client.ts";
+export { CodeRunnerClient, DEFAULT_INLINE_THRESHOLD_BYTES } from "./client.ts";
 export type {
   CodeRunnerClientOptions,
   FetchLike,
+  BlobsApi,
+  BlobUploadOptions,
 } from "./client.ts";
 
 export {
@@ -48,4 +50,9 @@ export type {
   StageEvent,
   OutputChunkEvent,
   ResultEvent,
+  BlobCheckRequest,
+  BlobCheckResponse,
+  BlobUpload,
+  BlobFinalizeRequest,
+  BlobFinalizeResponse,
 } from "@teovilla/code-runner-contract";

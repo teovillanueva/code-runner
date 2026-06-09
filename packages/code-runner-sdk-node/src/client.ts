@@ -4,9 +4,15 @@
 // and must never run in a browser. All routes (except /health) require the
 // bearer.
 
+import { createHash } from "node:crypto";
 import type {
+  BlobCheckRequest,
+  BlobCheckResponse,
+  BlobFinalizeRequest,
+  BlobFinalizeResponse,
   ExecuteRequest,
   ExecuteResponse,
+  FileInput,
   JobStatus,
   LanguageInfo,
   RunResult,
@@ -19,7 +25,37 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "./errors.ts";
-import { toFileInputs, type SdkFileInput } from "./files.ts";
+import {
+  toFileInputs,
+  type SdkFileInput,
+  type BinaryFileInput,
+} from "./files.ts";
+
+/** Default per-file inline threshold: binary buffers larger than this are routed
+ *  to the content-addressed blob store instead of inline base64. 256 KiB. */
+export const DEFAULT_INLINE_THRESHOLD_BYTES = 256 * 1024;
+
+/** Options for {@link CodeRunnerClient.blobs}.upload. */
+export interface BlobUploadOptions {
+  /** Idle-TTL hint (seconds) — informational; the server owns the actual TTL. */
+  ttlSeconds?: number;
+}
+
+/** The blobs sub-namespace surface (content-addressed uploads). */
+export interface BlobsApi {
+  /**
+   * Upload a buffer to the content-addressed blob store and return its ref.
+   * Computes sha256 locally, asks the API which bytes are missing, PUTs only the
+   * missing bytes to the presigned URL (client→store direct), finalizes, and
+   * returns `{ ref: "sha256:<hex>" }`. An already-present blob skips the PUT.
+   */
+  upload(
+    buffer: Buffer | Uint8Array,
+    opts?: BlobUploadOptions,
+  ): Promise<{ ref: string }>;
+  /** Low-level passthrough: POST /v1/blobs/check. */
+  check(hashes: readonly string[]): Promise<BlobCheckResponse>;
+}
 
 export type FetchLike = (
   input: string,
@@ -33,6 +69,14 @@ export interface CodeRunnerClientOptions {
   token: string;
   /** Optional fetch implementation; defaults to globalThis.fetch. */
   fetch?: FetchLike;
+  /**
+   * Per-file size threshold (bytes) above which a binary file is transparently
+   * routed to the content-addressed blob store instead of inline base64 in
+   * {@link CodeRunnerClient.executeFiles}. Defaults to
+   * {@link DEFAULT_INLINE_THRESHOLD_BYTES} (256 KiB). Transparent CAS routing
+   * requires the blob store to be configured server-side.
+   */
+  inlineThresholdBytes?: number;
 }
 
 interface RateLimitBody {
@@ -45,6 +89,10 @@ export class CodeRunnerClient {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly fetchImpl: FetchLike;
+  private readonly inlineThresholdBytes: number;
+
+  /** Content-addressed blob store sub-namespace (upload + low-level check). */
+  public readonly blobs: BlobsApi;
 
   constructor(options: CodeRunnerClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -56,6 +104,12 @@ export class CodeRunnerClient {
       );
     }
     this.fetchImpl = f;
+    this.inlineThresholdBytes =
+      options.inlineThresholdBytes ?? DEFAULT_INLINE_THRESHOLD_BYTES;
+    this.blobs = {
+      upload: (buffer, opts) => this.uploadBlob(buffer, opts),
+      check: (hashes) => this.blobsCheck(hashes),
+    };
   }
 
   /** GET /v1/languages — list available languages. */
@@ -75,14 +129,93 @@ export class CodeRunnerClient {
    * tagged encoding:"base64" transparently. Identical to {@link execute} once
    * the files are normalized.
    */
-  executeFiles(
+  async executeFiles(
     req: Omit<ExecuteRequest, "files"> & { files: readonly SdkFileInput[] },
   ): Promise<ExecuteResponse> {
+    const files = await this.normalizeFilesWithCas(req.files);
     const normalized: ExecuteRequest = {
       ...req,
-      files: toFileInputs(req.files) as ExecuteRequest["files"],
+      files: files as ExecuteRequest["files"],
     };
     return this.execute(normalized);
+  }
+
+  // ── Content-addressed blobs (Phase 16, BLOB-10/11) ─────────────────────────
+
+  /** POST /v1/blobs/check — low-level existence/presign passthrough. */
+  private blobsCheck(hashes: readonly string[]): Promise<BlobCheckResponse> {
+    const body: BlobCheckRequest = { hashes: [...hashes] };
+    return this.request<BlobCheckResponse>("POST", "/v1/blobs/check", body);
+  }
+
+  /** POST /v1/blobs/finalize — record liveness for just-uploaded blobs. */
+  private blobsFinalize(
+    hashes: readonly string[],
+  ): Promise<BlobFinalizeResponse> {
+    const body: BlobFinalizeRequest = { hashes: [...hashes] };
+    return this.request<BlobFinalizeResponse>(
+      "POST",
+      "/v1/blobs/finalize",
+      body,
+    );
+  }
+
+  /**
+   * Upload a buffer to the CAS store and return its ref. sha256 -> check -> PUT
+   * missing bytes to the presigned URL -> finalize -> { ref }. Skips the PUT
+   * when the blob is already present. Bytes go client→store direct (the
+   * presigned URL points at the store, not the gateway).
+   */
+  private async uploadBlob(
+    buffer: Buffer | Uint8Array,
+    _opts?: BlobUploadOptions,
+  ): Promise<{ ref: string }> {
+    const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+    const ref = sha256Ref(buf);
+    const checked = await this.blobsCheck([ref]);
+
+    const missing = checked.missing.find((m) => m.hash === ref);
+    if (missing) {
+      // PUT the raw bytes to the presigned URL (client→store direct).
+      const res = await this.fetchImpl(missing.uploadUrl, {
+        method: "PUT",
+        // RequestInit.body accepts a Uint8Array view; Buffer is one.
+        body: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
+      } as RequestInit);
+      if (!res.ok) {
+        throw new CodeRunnerError(
+          `Blob upload failed for ${ref}: PUT returned ${res.status}`,
+          res.status,
+        );
+      }
+      // Record liveness so the worker can resolve the ref.
+      await this.blobsFinalize([ref]);
+    }
+    // Already present (checked.present includes ref) -> skip PUT/finalize: its
+    // liveness TTL was already refreshed by the /check touch.
+    return { ref };
+  }
+
+  /**
+   * Normalize SDK file inputs, transparently routing oversized binary files to
+   * CAS. A `{ name, data: Buffer }` file whose size exceeds inlineThresholdBytes
+   * is uploaded and replaced with `{ name, ref }`; smaller binaries and text
+   * files take the Phase-15 inline path. Raw `{ name, ref }` and raw FileInputs
+   * pass through unchanged.
+   */
+  private async normalizeFilesWithCas(
+    files: readonly SdkFileInput[],
+  ): Promise<FileInput[]> {
+    const out: FileInput[] = [];
+    for (const f of files) {
+      if (isLargeBinary(f, this.inlineThresholdBytes)) {
+        const { ref } = await this.uploadBlob((f as BinaryFileInput).data);
+        out.push({ name: f.name, ref });
+      } else {
+        out.push(toFileInputs([f])[0]!);
+      }
+    }
+    return out;
   }
 
   /** GET /v1/jobs/:id — fetch job status. 404 -> NotFoundError. */
@@ -227,6 +360,24 @@ export class CodeRunnerClient {
         throw new CodeRunnerError(errMessage, res.status, parsed);
     }
   }
+}
+
+/** Compute the content-addressed ref ("sha256:<64hex>") of a buffer. */
+function sha256Ref(buf: Buffer): string {
+  return "sha256:" + createHash("sha256").update(buf).digest("hex");
+}
+
+/**
+ * Is this SDK file input a binary buffer larger than `threshold`? Only
+ * `{ name, data: Buffer|Uint8Array }` shapes qualify for CAS routing; text files
+ * and raw FileInputs (incl. those already carrying `ref`) are left untouched.
+ */
+function isLargeBinary(f: SdkFileInput, threshold: number): boolean {
+  const data = (f as BinaryFileInput).data;
+  const isBin =
+    "data" in f && (Buffer.isBuffer(data) || data instanceof Uint8Array);
+  if (!isBin) return false;
+  return data.byteLength > threshold;
 }
 
 /**

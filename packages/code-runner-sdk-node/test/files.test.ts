@@ -29,7 +29,7 @@ test("toFileInput: a Buffer becomes base64 with encoding:base64", () => {
 test("toFileInput: a Uint8Array becomes base64", () => {
   const out = toFileInput({ name: "u.bin", data: new Uint8Array([104, 105]) });
   assert.equal(out.encoding, "base64");
-  assert.equal(Buffer.from(out.content, "base64").toString(), "hi");
+  assert.equal(Buffer.from(out.content!, "base64").toString(), "hi");
 });
 
 test("toFileInput: a text file passes through as utf8 (no encoding)", () => {
@@ -43,6 +43,14 @@ test("toFileInput: a raw wire FileInput is preserved as-is", () => {
   assert.deepEqual(toFileInput(raw), raw);
 });
 
+test("toFileInput: a ref FileInput passes through (no inline content)", () => {
+  const raw: FileInput = { name: "data.csv", ref: "sha256:" + "a".repeat(64) };
+  const out = toFileInput(raw);
+  assert.equal(out.ref, raw.ref);
+  assert.equal(out.content, undefined);
+  assert.equal(out.encoding, undefined);
+});
+
 test("toFileInputs: mixed text + binary + raw", () => {
   const out = toFileInputs([
     { name: "main.py", content: "x" },
@@ -51,7 +59,7 @@ test("toFileInputs: mixed text + binary + raw", () => {
   ]);
   assert.equal(out.length, 3);
   assert.equal(out[1]?.encoding, "base64");
-  assert.equal(Buffer.from(out[1]!.content, "base64").toString(), "hi");
+  assert.equal(Buffer.from(out[1]!.content!, "base64").toString(), "hi");
 });
 
 test("executeFiles: Buffer input serializes to encoding:base64 over the wire", async () => {
