@@ -217,6 +217,36 @@ Make the `ZygoteRunner` production-ready on main. Tiered coverage (Python + R on
 - [ ] **ZOBS-01**: pool metrics are emitted via the existing OpenTelemetry instrumentation — per-language parent occupancy, warm/idle parent counts, fork (spawn) latency, parent reap/respawn counts
 - [ ] **ZOBS-02**: each terminal/error path on the zygote runner increments the same domain counters as the docker path (terminal-state, kill latency) so dashboards stay runner-agnostic
 
+## v1.2 Requirements — Input Files & Content-Addressed Blobs
+
+Let callers ship arbitrary input files (text + binary, in subdirectories) alongside the code, and dedupe large/shared files across runs via a content-addressed (sha256) blob store — without breaking the thin-gateway or host-escape-only security posture. Two layers: **Phase 15** (inline multi-file, zero new infra) and **Phase 16** (CAS blob store). Design locked in PROJECT.md "Current Milestone: v1.2".
+
+### Multi-file Input — Inline (Phase 15)
+
+- [ ] **FILES-01**: A caller can submit multiple input files in a single `/v1/execute` request and they all materialize in the sandbox workspace before the run starts
+- [ ] **FILES-02**: `FileInput` gains an `encoding` field (`utf8` default | `base64`); `base64` lets binary files (xlsx, parquet, images, zip) be sent inline, and omitting the field is fully backward-compatible with existing text callers
+- [ ] **FILES-03**: A caller can place a file in a subdirectory via a relative path in `name` (e.g. `data/input.csv`); the worker creates the parent directories under `/workspace`
+- [ ] **FILES-04**: The worker sanitizes every file path so it cannot escape `/workspace` (rejects absolute paths; collapses `..` traversal), enforced in the worker regardless of any API-side validation
+- [ ] **FILES-05**: Captured artifacts (`collectOutput`) exclude every input file by its full relative path, not just its basename, so a subdir input is never echoed back as an artifact
+- [ ] **FILES-06**: The API rejects an over-large request (sum of decoded input bytes) with HTTP 413, governed by a configurable `MAX_FILES_BYTES`
+- [ ] **FILES-07**: The API rejects invalid base64 content and escaping/absolute paths with HTTP 400 before the job is enqueued
+- [ ] **FILES-08**: The Node SDK accepts both text and binary (`Buffer`) input files and sets the correct `encoding` transparently
+
+### Content-Addressed Blob Store — CAS (Phase 16)
+
+- [ ] **BLOB-01**: A `Blob` store interface backs large/shared input files, with an S3-compatible implementation (reusing the existing artifact-store plumbing where it fits); minio ships in docker-compose under an inert profile so `docker compose up` stays a no-op
+- [ ] **BLOB-02**: `POST /v1/blobs/check` accepts a list of sha256 hashes and returns which are missing, each with a presigned PUT URL pointing at code-runner's own store
+- [ ] **BLOB-03**: Uploaded blob bytes travel client→store directly via the presigned URL and never pass through the Hono gateway (keeps the gateway thin)
+- [ ] **BLOB-04**: The store verifies `sha256(bytes) == hash` when an upload finalizes and rejects a mismatch
+- [ ] **BLOB-05**: `FileInput` supports a `ref` variant (`{ name, ref: "sha256:…" }`) referencing an already-uploaded blob, usable alongside inline files in the same request
+- [ ] **BLOB-06**: The worker streams a referenced blob from the store into the sandbox workspace without buffering the whole file in worker RAM, and re-verifies its sha256 before the run uses it
+- [ ] **BLOB-07**: Blob liveness is tracked in Redis as an idle TTL that is bumped on use (touch-on-use) and only ever extended (monotonic), so a frequently-referenced blob never expires mid-use
+- [ ] **BLOB-08**: A run leases/pins every blob it references for its duration so GC never deletes an in-use blob; GC applies a grace window before reclaiming an expired blob
+- [ ] **BLOB-09**: The worker pulls blobs ONLY from code-runner's own store at a known host — never from an arbitrary consumer-supplied URL — eliminating the SSRF surface
+- [ ] **BLOB-10**: The Node SDK exposes `client.blobs.upload(buffer, { ttlSeconds })` that hashes the buffer, runs the existence check, and uploads only the missing bytes
+- [ ] **BLOB-11**: The Node SDK `execute()` transparently routes each file inline-vs-CAS by a size threshold so callers don't have to manage blobs manually
+- [ ] **BLOB-12**: Operators can point code-runner at their own S3 bucket (BYO-bucket via env) while code-runner still owns the CAS key layout + the Redis liveness index
+
 ## v2 Requirements
 
 Deferred to a future release. Tracked but not in the current roadmap.
