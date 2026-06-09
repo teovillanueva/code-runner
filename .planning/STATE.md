@@ -6,7 +6,7 @@ status: planning
 last_updated: "2026-06-09T08:51:24.383Z"
 last_activity: 2026-06-09
 progress:
-  total_phases: 0
+  total_phases: 2
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-02)
 
 **Core value:** Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible.
-**Current focus:** Milestone v1.1 (Density / ZygoteRunner) — SHIPPED. All 5 phases (10–14) implemented, tested, documented, on `main`; new worker image (sha-2ddd3b2) deployed to Fly prod with the zygote tier enabled. See `.planning/decisions/ZYGOTE-SHIPPED.md` for the full status + the one remaining ops follow-up (golden-snapshot re-bake).
+**Current focus:** Milestone v1.2 (Input Files & Content-Addressed Blobs) — roadmap created. Two phases: **Phase 15 Multi-file Input (inline)** (FILES-01..08, zero new infra, independently shippable) → **Phase 16 Content-Addressed Blob Store (CAS)** (BLOB-01..12, needs a bucket). Phase 15 ships inline binary (base64) + subdir input under `/workspace` with worker-side path sanitization; Phase 16 adds a code-runner-owned sha256 CAS with presigned uploads (bytes client→store, no SSRF), `FileInput.ref`, Redis monotonic idle-TTL + per-run lease + grace-window GC, and transparent SDK inline-vs-CAS routing. v1.1 (Density / ZygoteRunner) SHIPPED.
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 15 — Multi-file Input (inline) (next: `/gsd:plan-phase 15`)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-09 — Milestone v1.2 started
+Status: Roadmap created — awaiting phase planning
+Last activity: 2026-06-09 — v1.2 roadmap created (Phases 15–16)
 
 ## Performance Metrics
 
@@ -91,6 +91,7 @@ Recent decisions affecting current work:
 
 ### Roadmap Evolution
 
+- v1.2 added (2026-06-09): **Input Files & Content-Addressed Blobs** — Phase 15 (inline multi-file input: binary via base64 + subdirs under `/workspace`, worker-side path sanitization, `MAX_FILES_BYTES` cap; zero new infra, independently shippable) and Phase 16 (content-addressed sha256 blob store code-runner owns: `/v1/blobs/check` presigned uploads with bytes going client→store directly, `FileInput.ref`, Redis monotonic idle-TTL + per-run lease + grace-window GC, worker streaming pull with sha256 re-verify, no-SSRF, BYO-bucket, minio inert in compose). FILES-01..08 → Phase 15, BLOB-01..12 → Phase 16; 20 requirements, 100% mapped.
 - Phase 9 added (2026-06-03): Artifacts & Pullable Run Output — capture sandbox artifacts (images/files) into a persisted `RunResult` + `GET /v1/jobs/:id/output` pull endpoint, Python/R plot image parity, SDK helpers. Motivated by the edalef migration (server-side grading needs full output + plots without subscribing to soketi). Blocking `POST /v1/run` and env-gated webhooks explicitly deferred. Independent of Phase 8.
 
 ### Pending Todos
@@ -125,6 +126,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-08
-Stopped at: v1.1 roadmap created — Phases 10–14 appended to ROADMAP.md, 37 v1.1 requirements mapped 100% in REQUIREMENTS.md (V2-06/V2-07 deferred). v1.0 phases 1–9 untouched.
-Resume file: Next — `/gsd:plan-phase 10`
+Last session: 2026-06-09
+Stopped at: v1.2 roadmap created — Phases 15–16 appended to ROADMAP.md (summary checklist + Phase Details — Milestone v1.2 + progress table + execution order), 20 v1.2 requirements (FILES-01..08, BLOB-01..12) mapped 100% in REQUIREMENTS.md. v1.0 phases 1–9 and v1.1 phases 10–14 untouched.
+Resume file: Next — `/gsd:plan-phase 15`

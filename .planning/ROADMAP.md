@@ -31,6 +31,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 13: Tiered Routing, Deploy & Gating** - A manifest-driven `TieredRunner` routing Python/R to zygote and Rust/SQLite to Docker, all four languages working end-to-end, Fly deploy config granting the privileged pool its caps, and a safe-default config flag gating zygote to Fly/prod (off -> Docker in dev + CI)
 - [ ] **Phase 14: Zygote Safety, Density & Pool Observability** - The Phase-4-parity abuse suite + sibling-isolation + density + no-leak tests passing on the zygote path (the milestone gate), plus pool metrics emitted through the existing OpenTelemetry instrumentation so dashboards stay runner-agnostic
 
+## Milestone v1.2 — Input Files & Content-Addressed Blobs
+
+- [ ] **Phase 15: Multi-file Input (inline)** - Multiple input files per `/v1/execute` (text + binary via `FileInput.encoding` base64, subdir paths under `/workspace`), worker-side path sanitization (host-escape-only), `MAX_FILES_BYTES` 413 cap, base64/path 400 validation, artifact-exclude by full relative path, Node SDK Buffer/text passthrough — zero new infra, independently shippable
+- [ ] **Phase 16: Content-Addressed Blob Store (CAS)** - A `Blob` interface over an S3-compatible store (reusing Phase-9 artifact-store plumbing), `POST /v1/blobs/check` issuing presigned PUTs to OUR store (bytes go client->store, never through the gateway), sha256 verify on finalize + worker pull, a `FileInput.ref` variant, Redis monotonic idle-TTL + per-run lease + grace-window GC, worker streaming blob->tar->sandbox, Node SDK `blobs.upload` + transparent inline-vs-CAS routing, BYO-bucket via env, minio inert in compose
+
 ## Phase Details
 
 ### Phase 1: Foundation & Wire Contract
@@ -330,10 +335,48 @@ Plans:
 
 **Plans**: TBD
 
+## Phase Details — Milestone v1.2
+
+### Phase 15: Multi-file Input (inline)
+
+**Goal**: Let a trusted caller ship multiple input files — text *and* binary, in subdirectories — inline in a single `/v1/execute` request, materialized safely under `/workspace` before the run starts, with zero new infrastructure. This is the additive, backward-compatible, independently-shippable layer: existing text-`content` callers are unchanged, `base64` unlocks binary, and the host-escape-only threat model is enforced in the worker regardless of API validation.
+**Mode:** mvp
+**Depends on**: Phase 14 (v1.1 complete)
+**Requirements**: FILES-01, FILES-02, FILES-03, FILES-04, FILES-05, FILES-06, FILES-07, FILES-08
+**Success Criteria** (what must be TRUE):
+
+  1. A caller submits several input files in one `/v1/execute` and they all materialize in the sandbox workspace before the run starts; omitting `encoding` is fully backward-compatible with existing text-`content` callers.
+  2. A caller sends a `.xlsx` (or parquet/zip/image) as `FileInput.encoding: "base64"` and the Python run reads it from `/workspace`; a file named `data/input.csv` lands at `/workspace/data/input.csv` with the parent directory created.
+  3. A path that tries to escape (`/etc/passwd`, `../../x`) never writes outside `/workspace` — the worker sanitizes every path (`path.Clean` anchored at `/` so traversal collapses inside the workspace) independently of any API validation (host-escape-only posture).
+  4. The API rejects an over-large request (sum of decoded input bytes) with HTTP 413 governed by a configurable `MAX_FILES_BYTES`, and rejects invalid base64 or escaping/absolute paths with HTTP 400 before the job is enqueued.
+  5. A subdirectory input is never echoed back as a captured artifact — `collectOutput` excludes every input file by its full relative path (not just basename); the Node SDK accepts both text and `Buffer` inputs and sets `encoding` transparently.
+
+**Plans**: TBD
+
+> Constraints: The contract is the fragile seam — `FileInput.encoding` + subdir paths are added by editing `packages/contract/schema/wire.schema.json`, then `pnpm contract` regenerates TS+zod+Go and `make contract-check` must stay green (never hand-edit `packages/contract/gen/**`). Path sanitization is enforced **in the worker** (anchored `path.Clean`), not just the API. Worker changes: base64 decode, parent-dir tar entries, and fixing `buildArtifactExcludeSet` to key on the full relative path. Zero new infrastructure — this phase is independently shippable.
+
+### Phase 16: Content-Addressed Blob Store (CAS)
+
+**Goal**: Dedupe large/shared input files across runs via a content-addressed (sha256) blob store that code-runner OWNS, so a caller uploads a big file once and references it by hash thereafter — without breaking the thin gateway (bytes go client→store directly, never through Hono) or the host-escape-only / no-SSRF posture (the worker pulls only from our own known store). Liveness is the blob's, not the job's: a reference can only *extend* the TTL (monotonic, touch-on-use), a live run *leases* its blobs so GC skips them, and GC uses a grace window — mirroring the existing Lua-guarded slot-accounting pattern.
+**Mode:** mvp
+**Depends on**: Phase 15 (extends the `FileInput` shape established there with a `ref` variant)
+**Requirements**: BLOB-01, BLOB-02, BLOB-03, BLOB-04, BLOB-05, BLOB-06, BLOB-07, BLOB-08, BLOB-09, BLOB-10, BLOB-11, BLOB-12
+**Success Criteria** (what must be TRUE):
+
+  1. A caller `POST`s a list of sha256 hashes to `/v1/blobs/check` and gets back which are missing, each with a presigned PUT URL pointing at code-runner's own store; the bytes travel client→store directly via that URL and never pass through the Hono gateway.
+  2. The store verifies `sha256(bytes) == hash` when the upload finalizes (rejecting a mismatch), and the worker re-verifies the sha256 of a referenced blob before the run uses it — pulling ONLY from code-runner's own store at a known host, never an arbitrary consumer-supplied URL (no SSRF).
+  3. A caller references an already-uploaded blob via `FileInput.ref` (`{ name, ref: "sha256:…" }`) alongside inline files in the same request, and the worker streams that blob from the store into the sandbox workspace without buffering the whole file in worker RAM.
+  4. Blob liveness is tracked in Redis as a monotonic, touch-on-use idle TTL (a reference only ever extends it); a live run leases every blob it references so GC never deletes an in-use blob, and GC applies a grace window before reclaiming an expired one.
+  5. The Node SDK exposes `client.blobs.upload(buffer, { ttlSeconds })` (hash → existence check → upload only missing bytes) and `execute()` transparently routes each file inline-vs-CAS by a size threshold; operators can point code-runner at their own S3 bucket via env while code-runner still owns the CAS key layout + the Redis liveness index, with minio shipped inert in docker-compose.
+
+**Plans**: TBD
+
+> Constraints: The contract is the fragile seam — the `FileInput.ref` variant and `/v1/blobs/check` request/response are added in `packages/contract/schema/wire.schema.json` → `pnpm contract` → `make contract-check` green (never hand-edit `gen/**`). No-SSRF is non-negotiable: the worker pulls only from our own store at a known host; the presigned URL is issued by code-runner. The gateway stays thin — blob bytes never transit Hono. Reuse the Phase-9 `internal/artifactstore` (`S3Store`/minio-go) plumbing where it fits; the Redis TTL/lease mirrors the existing Lua-guarded slot-accounting pattern. This phase needs an object-store bucket (minio locally; BYO-bucket in prod) — it is NOT zero-infra like Phase 15.
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 13 -> 14
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 13 -> 14 -> 15 -> 16
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -351,3 +394,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 12. Go ZygoteRunner & Warm Pool | 0/? | Not started | - |
 | 13. Tiered Routing, Deploy & Gating | 0/? | Not started | - |
 | 14. Zygote Safety, Density & Pool Observability | 0/? | Not started | - |
+| 15. Multi-file Input (inline) | 0/? | Not started | - |
+| 16. Content-Addressed Blob Store (CAS) | 0/? | Not started | - |

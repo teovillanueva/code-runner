@@ -452,6 +452,42 @@ Each v1.1 requirement maps to exactly one phase. v1.0 rows above are unchanged (
 - Phase 13 (Tiered Routing, Deploy & Gating): 7 — TIER-01..04, ZDEP-01..03
 - Phase 14 (Zygote Safety, Density & Pool Observability): 6 — ZTEST-01..04, ZOBS-01..02
 
+### v1.2 — Input Files & Content-Addressed Blobs
+
+Each v1.2 requirement maps to exactly one phase. v1.0 and v1.1 rows above are unchanged.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| FILES-01 | Phase 15 | Planned |
+| FILES-02 | Phase 15 | Planned |
+| FILES-03 | Phase 15 | Planned |
+| FILES-04 | Phase 15 | Planned |
+| FILES-05 | Phase 15 | Planned |
+| FILES-06 | Phase 15 | Planned |
+| FILES-07 | Phase 15 | Planned |
+| FILES-08 | Phase 15 | Planned |
+| BLOB-01 | Phase 16 | Planned |
+| BLOB-02 | Phase 16 | Planned |
+| BLOB-03 | Phase 16 | Planned |
+| BLOB-04 | Phase 16 | Planned |
+| BLOB-05 | Phase 16 | Planned |
+| BLOB-06 | Phase 16 | Planned |
+| BLOB-07 | Phase 16 | Planned |
+| BLOB-08 | Phase 16 | Planned |
+| BLOB-09 | Phase 16 | Planned |
+| BLOB-10 | Phase 16 | Planned |
+| BLOB-11 | Phase 16 | Planned |
+| BLOB-12 | Phase 16 | Planned |
+
+**v1.2 coverage:**
+- v1.2 requirements: 20 total (FILES x8, BLOB x12)
+- Mapped to phases: 20 ✓
+- Unmapped: 0
+
+**v1.2 per-phase counts:**
+- Phase 15 (Multi-file Input (inline)): 8 — FILES-01..08
+- Phase 16 (Content-Addressed Blob Store (CAS)): 12 — BLOB-01..12
+
 ---
 *Requirements defined: 2026-06-02*
-*Last updated: 2026-06-08 — added v1.1 (Density / ZygoteRunner) traceability: 37 requirements mapped to Phases 10–14; v1.0 rows unchanged; V2-06/V2-07 deferred (not mapped).*
+*Last updated: 2026-06-09 — added v1.2 (Input Files & Content-Addressed Blobs) traceability: 20 requirements mapped to Phases 15–16 (FILES-01..08 → Phase 15, BLOB-01..12 → Phase 16); v1.0 + v1.1 rows unchanged.*
