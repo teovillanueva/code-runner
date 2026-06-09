@@ -138,10 +138,10 @@ func (g *GC) Sweep(ctx context.Context) (reclaimed int, bytesFreed int64, err er
 					continue // leave it as a candidate; retry next sweep
 				}
 				// Scrub all Redis state for the hash (idempotent).
-				g.client.SRem(ctx, keys.BlobIndex, hash)         //nolint:errcheck
-				g.client.ZRem(ctx, keys.BlobGCCandidates, hash)  //nolint:errcheck
-				g.client.Del(ctx, keys.BlobLeaseKey(hash))       //nolint:errcheck
-				g.client.Del(ctx, keys.BlobMetaKey(hash))        //nolint:errcheck
+				g.client.SRem(ctx, keys.BlobIndex, hash)        //nolint:errcheck
+				g.client.ZRem(ctx, keys.BlobGCCandidates, hash) //nolint:errcheck
+				g.client.Del(ctx, keys.BlobLeaseKey(hash))      //nolint:errcheck
+				g.client.Del(ctx, keys.BlobMetaKey(hash))       //nolint:errcheck
 				reclaimed++
 				bytesFreed += freed
 			}

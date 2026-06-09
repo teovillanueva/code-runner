@@ -59,8 +59,8 @@ func (f *fakeRemover) wasRemoved(hash string) bool {
 // score (unix ms) and NO meta key (expired) and NO lease (unleased) — i.e. it is
 // collectable, first-seen at scoreMs.
 func seedCandidate(ctx context.Context, cli *redis.Client, hash string, scoreMs int64) {
-	cli.SAdd(ctx, keys.BlobIndex, hash)                                                            //nolint:errcheck
-	cli.ZAdd(ctx, keys.BlobGCCandidates, redis.Z{Score: float64(scoreMs), Member: hash})          //nolint:errcheck
+	cli.SAdd(ctx, keys.BlobIndex, hash)                                                  //nolint:errcheck
+	cli.ZAdd(ctx, keys.BlobGCCandidates, redis.Z{Score: float64(scoreMs), Member: hash}) //nolint:errcheck
 }
 
 func cleanGC(ctx context.Context, cli *redis.Client, hashes ...string) {
@@ -81,8 +81,8 @@ func TestGCGraceWindow(t *testing.T) {
 	grace := 30 * time.Minute
 	gc := NewGC(cli, rem, grace, time.Minute)
 
-	within := testHash("c111")  // first-seen 5 min ago → within 30m grace
-	past := testHash("c222")    // first-seen 60 min ago → past 30m grace
+	within := testHash("c111") // first-seen 5 min ago → within 30m grace
+	past := testHash("c222")   // first-seen 60 min ago → past 30m grace
 	cleanGC(ctx, cli, within, past)
 	defer cleanGC(ctx, cli, within, past)
 

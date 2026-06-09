@@ -256,8 +256,8 @@ func TestRefToHexHash(t *testing.T) {
 	}
 	bad := []string{
 		"",
-		"deadbeef",                       // no prefix
-		"sha256:zzz",                     // too short + non-hex
+		"deadbeef",   // no prefix
+		"sha256:zzz", // too short + non-hex
 		"sha256:" + "g" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde", // non-hex
 		"md5:" + hex.EncodeToString(make([]byte, 32)),                                       // wrong algo prefix
 	}
