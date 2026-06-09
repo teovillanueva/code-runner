@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Input Files & Content-Addressed Blobs
-status: executing
-stopped_at: Completed 15-01-PLAN.md — multi-file input (inline base64 + subdirs) shipped. FILES-01..08 all satisfied; go build/test, pnpm -r test, make contract-check all green. Next: Phase 16 (CAS).
-last_updated: "2026-06-09T11:25:00.000Z"
-last_activity: 2026-06-09 — executed Phase 15 Plan 01 (multi-file input inline)
+status: Phase 16 Plan 02 executed — CAS edge (API presign + Node SDK + infra + docs); BLOB-02/03/04/10/11/12 satisfied; all gates green
+stopped_at: Phase 16 Plan 02 complete — /v1/blobs/check+finalize (API presigns PUT URLs, local crypto, Redis liveness via verbatim monotonic-touch Lua), SDK blobs.upload + transparent inline-vs-CAS routing, compose/.env blob wiring (BYO-bucket, unconfigured=>501), CAS docs. pnpm -r test / make contract-check / go build ./... all green. Prod blob bucket+env documented (NOT provisioned).
+last_updated: "2026-06-09T12:10:00.000Z"
+last_activity: 2026-06-09 — executed Phase 16 Plan 02 (CAS edge: API presign + SDK + infra + docs)
 progress:
   total_phases: 16
   completed_phases: 11
-  total_plans: 38
-  completed_plans: 38
-  percent: 66
+  total_plans: 39
+  completed_plans: 39
+  percent: 69
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 
 ## Current Position
 
-Phase: 15 — Multi-file Input (inline) — COMPLETE (1/1 plans)
-Plan: 15-01 shipped (next: `/gsd:plan-phase 16`)
-Status: Phase 15 executed — FILES-01..08 satisfied; all gates green
-Last activity: 2026-06-09 — executed Phase 15 Plan 01 (inline base64 + subdirs)
+Phase: 16 — Content-Addressed Blob Store (CAS) — IN PROGRESS (2/2 plans executed)
+Plan: 16-01 (CAS core) + 16-02 (CAS edge) shipped
+Status: Phase 16 Plan 02 executed — CAS edge (API presign + Node SDK + infra + docs); BLOB-02/03/04/10/11/12 satisfied; all gates green
+Last activity: 2026-06-09 — executed Phase 16 Plan 02 (CAS edge: API presign + SDK + infra + docs)
 
 ## Performance Metrics
 

@@ -234,18 +234,18 @@ Let callers ship arbitrary input files (text + binary, in subdirectories) alongs
 
 ### Content-Addressed Blob Store — CAS (Phase 16)
 
-- [ ] **BLOB-01**: A `Blob` store interface backs large/shared input files, with an S3-compatible implementation (reusing the existing artifact-store plumbing where it fits); minio ships in docker-compose under an inert profile so `docker compose up` stays a no-op
-- [ ] **BLOB-02**: `POST /v1/blobs/check` accepts a list of sha256 hashes and returns which are missing, each with a presigned PUT URL pointing at code-runner's own store
-- [ ] **BLOB-03**: Uploaded blob bytes travel client→store directly via the presigned URL and never pass through the Hono gateway (keeps the gateway thin)
-- [ ] **BLOB-04**: The store verifies `sha256(bytes) == hash` when an upload finalizes and rejects a mismatch
-- [ ] **BLOB-05**: `FileInput` supports a `ref` variant (`{ name, ref: "sha256:…" }`) referencing an already-uploaded blob, usable alongside inline files in the same request
-- [ ] **BLOB-06**: The worker streams a referenced blob from the store into the sandbox workspace without buffering the whole file in worker RAM, and re-verifies its sha256 before the run uses it
-- [ ] **BLOB-07**: Blob liveness is tracked in Redis as an idle TTL that is bumped on use (touch-on-use) and only ever extended (monotonic), so a frequently-referenced blob never expires mid-use
-- [ ] **BLOB-08**: A run leases/pins every blob it references for its duration so GC never deletes an in-use blob; GC applies a grace window before reclaiming an expired blob
-- [ ] **BLOB-09**: The worker pulls blobs ONLY from code-runner's own store at a known host — never from an arbitrary consumer-supplied URL — eliminating the SSRF surface
-- [ ] **BLOB-10**: The Node SDK exposes `client.blobs.upload(buffer, { ttlSeconds })` that hashes the buffer, runs the existence check, and uploads only the missing bytes
-- [ ] **BLOB-11**: The Node SDK `execute()` transparently routes each file inline-vs-CAS by a size threshold so callers don't have to manage blobs manually
-- [ ] **BLOB-12**: Operators can point code-runner at their own S3 bucket (BYO-bucket via env) while code-runner still owns the CAS key layout + the Redis liveness index
+- [x] **BLOB-01**: A `Blob` store interface backs large/shared input files, with an S3-compatible implementation (reusing the existing artifact-store plumbing where it fits); minio ships in docker-compose under an inert profile so `docker compose up` stays a no-op _(16-01)_
+- [x] **BLOB-02**: `POST /v1/blobs/check` accepts a list of sha256 hashes and returns which are missing, each with a presigned PUT URL pointing at code-runner's own store _(16-02)_
+- [x] **BLOB-03**: Uploaded blob bytes travel client→store directly via the presigned URL and never pass through the Hono gateway (keeps the gateway thin) _(16-02)_
+- [x] **BLOB-04**: sha256 is verified before a referenced blob is used — verification is authoritative at the **worker on pull** (locked architecture, 16-CONTEXT moved it off finalize); `/v1/blobs/finalize` records liveness only. A mismatch fails the job cleanly with no run _(16-01 worker verify + 16-02 finalize)_
+- [x] **BLOB-05**: `FileInput` supports a `ref` variant (`{ name, ref: "sha256:…" }`) referencing an already-uploaded blob, usable alongside inline files in the same request _(16-01 contract + 16-02 API XOR)_
+- [x] **BLOB-06**: The worker streams a referenced blob from the store into the sandbox workspace without buffering the whole file in worker RAM, and re-verifies its sha256 before the run uses it _(16-01)_
+- [x] **BLOB-07**: Blob liveness is tracked in Redis as an idle TTL that is bumped on use (touch-on-use) and only ever extended (monotonic), so a frequently-referenced blob never expires mid-use _(16-01 worker + 16-02 API touch)_
+- [x] **BLOB-08**: A run leases/pins every blob it references for its duration so GC never deletes an in-use blob; GC applies a grace window before reclaiming an expired blob _(16-01)_
+- [x] **BLOB-09**: The worker pulls blobs ONLY from code-runner's own store at a known host — never from an arbitrary consumer-supplied URL — eliminating the SSRF surface _(16-01)_
+- [x] **BLOB-10**: The Node SDK exposes `client.blobs.upload(buffer, { ttlSeconds })` that hashes the buffer, runs the existence check, and uploads only the missing bytes _(16-02)_
+- [x] **BLOB-11**: The Node SDK `execute()` transparently routes each file inline-vs-CAS by a size threshold so callers don't have to manage blobs manually _(16-02)_
+- [x] **BLOB-12**: Operators can point code-runner at their own S3 bucket (BYO-bucket via env) while code-runner still owns the CAS key layout + the Redis liveness index _(16-01 config + 16-02 infra)_
 
 ## v2 Requirements
 
@@ -466,18 +466,18 @@ Each v1.2 requirement maps to exactly one phase. v1.0 and v1.1 rows above are un
 | FILES-06 | Phase 15 | Planned |
 | FILES-07 | Phase 15 | Planned |
 | FILES-08 | Phase 15 | Planned |
-| BLOB-01 | Phase 16 | Planned |
-| BLOB-02 | Phase 16 | Planned |
-| BLOB-03 | Phase 16 | Planned |
-| BLOB-04 | Phase 16 | Planned |
-| BLOB-05 | Phase 16 | Planned |
-| BLOB-06 | Phase 16 | Planned |
-| BLOB-07 | Phase 16 | Planned |
-| BLOB-08 | Phase 16 | Planned |
-| BLOB-09 | Phase 16 | Planned |
-| BLOB-10 | Phase 16 | Planned |
-| BLOB-11 | Phase 16 | Planned |
-| BLOB-12 | Phase 16 | Planned |
+| BLOB-01 | Phase 16 | Done |
+| BLOB-02 | Phase 16 | Done |
+| BLOB-03 | Phase 16 | Done |
+| BLOB-04 | Phase 16 | Done |
+| BLOB-05 | Phase 16 | Done |
+| BLOB-06 | Phase 16 | Done |
+| BLOB-07 | Phase 16 | Done |
+| BLOB-08 | Phase 16 | Done |
+| BLOB-09 | Phase 16 | Done |
+| BLOB-10 | Phase 16 | Done |
+| BLOB-11 | Phase 16 | Done |
+| BLOB-12 | Phase 16 | Done |
 
 **v1.2 coverage:**
 - v1.2 requirements: 20 total (FILES x8, BLOB x12)
