@@ -95,7 +95,11 @@ services:
   # ── API ───────────────────────────────────────────────────────────────────────
   # Hono gateway. Validates requests, enqueues jobs, relays stdin/control.
   # Never talks to the worker directly — coupling is Redis-only.
-  # NOTE: the API needs NO S3 creds — only the worker uploads/signs/lifecycles.
+  # NOTE: for ARTIFACTS the API needs no S3 creds (the worker uploads/signs those).
+  # For CAS BLOBS (Phase 16) the API PRESIGNS upload PUT URLs — that is pure LOCAL
+  # crypto (no S3 network call, no byte proxying), so it carries blob presign
+  # config (public endpoint + bucket + creds). Existence is checked in Redis; the
+  # worker remains the only party that reads/writes blob bytes + verifies sha256.
   api:
     build:
       context: .
@@ -114,6 +118,20 @@ services:
       ENABLE_CHANNEL_AUTH: "true"
       # The languages dir inside the container (bound via the build context)
       LANGUAGES_DIR: /app/languages
+      # ── Content-addressed blob store presign (Phase 16, BLOB-02) ──
+      # The API presigns blob PUT URLs (local crypto only). Presign against the
+      # PUBLIC endpoint the SDK can reach. In dev the SDK runs on the HOST, so the
+      # public endpoint must be a host-reachable address — set
+      # BLOB_S3_PUBLIC_ENDPOINT to e.g. http://127.0.0.1:9000 in .env AND expose
+      # the MinIO 9000 port (uncomment the minio `ports:` block below). When unset,
+      # the /v1/blobs/* routes return 501 and transparent CAS is disabled — a plain
+      # `docker compose up` stays a no-op (mirrors telemetry-off-by-default).
+      BLOB_S3_PUBLIC_ENDPOINT: ${BLOB_S3_PUBLIC_ENDPOINT:-}
+      BLOB_S3_BUCKET: ${BLOB_S3_BUCKET:-${BUCKET_NAME:-code-runner-artifacts}}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      BLOB_IDLE_TTL: ${BLOB_IDLE_TTL:-86400}
       # ── OpenTelemetry (no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) ──
       # Blank by default → the API SDK bootstrap is a TRUE no-op (no exporter,
       # no connection). Uncomment the OTEL_* block in .env to enable, then run
@@ -182,6 +200,15 @@ services:
       RUN_RESULT_TTL: ${RUN_RESULT_TTL:-600}
       PRESIGNED_URL_TTL: ${PRESIGNED_URL_TTL:-86400}
       ARTIFACT_S3_OBJECT_TTL: ${ARTIFACT_S3_OBJECT_TTL:-3}
+      # ── Content-addressed blob store (Phase 16, CAS) ──
+      # Blobs REUSE the artifact S3 endpoint/creds/region above; bytes live under
+      # the blobs/cas/ prefix. BLOB_S3_BUCKET (BYO-bucket) defaults to BUCKET_NAME
+      # so blobs + artifacts share one bucket in dev. Liveness lives in Redis;
+      # the worker is the authoritative sha256 verifier on pull + runs the GC.
+      BLOB_S3_BUCKET: ${BLOB_S3_BUCKET:-}
+      BLOB_IDLE_TTL: ${BLOB_IDLE_TTL:-86400}
+      BLOB_GC_INTERVAL: ${BLOB_GC_INTERVAL:-600}
+      BLOB_GC_GRACE: ${BLOB_GC_GRACE:-1800}
       # ── OpenTelemetry (no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) ──
       # Blank by default → the worker OTel init is a TRUE no-op (no exporter,
       # no provider, no port). Uncomment the OTEL_* block in .env + run the
