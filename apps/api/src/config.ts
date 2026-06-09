@@ -19,6 +19,10 @@ export interface Config {
   // POST /v1/execute returns 429 when LLEN(jobs:queue) >= maxQueueDepth.
   // Set via MAX_QUEUE_DEPTH env var. Default: 256.
   maxQueueDepth: number;
+  // Multi-file input size cap (FILES-06): max TOTAL decoded bytes across all
+  // input files in a single /v1/execute request. POST returns 413 when the sum
+  // of decoded file bytes exceeds this. Set via MAX_FILES_BYTES. Default: 8 MiB.
+  maxFilesBytes: number;
 }
 
 function requireEnv(name: string): string {
@@ -50,6 +54,10 @@ function loadConfig(): Config {
     soketiAppSecret: process.env["SOKETI_APP_SECRET"] ?? "",
     enableChannelAuth: process.env["ENABLE_CHANNEL_AUTH"] === "true",
     maxQueueDepth: parseInt(process.env["MAX_QUEUE_DEPTH"] ?? "256", 10),
+    maxFilesBytes: parseInt(
+      process.env["MAX_FILES_BYTES"] ?? String(8 * 1024 * 1024),
+      10,
+    ),
   };
 }
 

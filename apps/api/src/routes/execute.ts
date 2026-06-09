@@ -23,6 +23,7 @@ import { getRedis } from "../redis.ts";
 import { getManifests, resolveManifest } from "../manifests.ts";
 import { atCapacity, admissionError } from "../admission.ts";
 import { config } from "../config.ts";
+import { validateFiles } from "../files.ts";
 import { jobContext } from "../logger.ts";
 import type { LimitsOverride, Limits } from "@teovilla/code-runner-contract";
 
@@ -97,6 +98,33 @@ export function registerExecuteRoutes(app: Hono): void {
             error: `Unknown language "${req.language}". Check GET /v1/languages.`,
           },
           400,
+        );
+      }
+
+      // File-input validation (FILES-06/07). AFTER manifest resolution so an
+      // invalid request gets 400/413, and BEFORE the capacity check so a
+      // malformed body never returns 429 (400/413-before-429 ordering). The
+      // worker re-sanitizes every path regardless — this is a fast caller-
+      // facing rejection, not a trust boundary.
+      const fileCheck = validateFiles(req.files);
+      if (fileCheck.error) {
+        const { kind, message } = fileCheck.error;
+        return c.json(
+          {
+            error:
+              kind === "base64"
+                ? `Invalid file content: ${message}`
+                : `Invalid file path: ${message}`,
+          },
+          400,
+        );
+      }
+      if (fileCheck.totalBytes > config.maxFilesBytes) {
+        return c.json(
+          {
+            error: `Input files too large: ${fileCheck.totalBytes} decoded bytes exceeds the ${config.maxFilesBytes}-byte limit (MAX_FILES_BYTES).`,
+          },
+          413,
         );
       }
 
