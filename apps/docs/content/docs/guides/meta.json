@@ -4,6 +4,8 @@
   "defaultOpen": true,
   "pages": [
     "backend-sdk",
+    "input-files",
+    "blobs",
     "react-sdk",
     "interactive-stdin",
     "channel-auth",
