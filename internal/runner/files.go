@@ -20,11 +20,22 @@ import (
 // The worker never trusts the API's validation, so this is the single decode
 // path used by both the DockerSocketRunner and the ZygoteRunner relay.
 func decodeFileContent(f wire.FileInput) ([]byte, error) {
+	// content is now *string (a FileInput carries EXACTLY ONE of content/ref).
+	// A nil Content here means the file was a blob ref that should have been
+	// resolved into inline content BEFORE the runner saw it (the worker's
+	// resolveBlobRefs runs first). Reaching here with nil Content is a
+	// programming error, not user input — fail loud rather than write an empty
+	// file. An empty inline string (Content set to "") is legitimate (a
+	// zero-byte file) and handled by the "" pointer-deref below.
+	if f.Content == nil {
+		return nil, fmt.Errorf("file %q: has neither inline content nor a resolved blob (unresolved ref?)", f.Name)
+	}
+	content := *f.Content
 	switch f.Encoding {
 	case "", wire.FileInputEncodingUtf8:
-		return []byte(f.Content), nil
+		return []byte(content), nil
 	case wire.FileInputEncodingBase64:
-		raw, err := base64.StdEncoding.DecodeString(f.Content)
+		raw, err := base64.StdEncoding.DecodeString(content)
 		if err != nil {
 			return nil, fmt.Errorf("file %q: invalid base64 content: %w", f.Name, err)
 		}

@@ -142,7 +142,7 @@ func TestZygoteIntegrationStdoutExit(t *testing.T) {
 	}()
 
 	jobID := fmt.Sprintf("zyg-stdout-%d", time.Now().UnixNano())
-	files := []wire.FileInput{{Name: "main.py", Content: "print('hello from zygote')\n"}}
+	files := []wire.FileInput{{Name: "main.py", Content: wire.Ptr("print('hello from zygote')\n")}}
 	spec := zygoteSpec(jobID, "main.py", files)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -196,7 +196,7 @@ func TestZygoteIntegrationStdinEchoCPU(t *testing.T) {
 		"sys.exit(0)",
 		"",
 	}, "\n")
-	files := []wire.FileInput{{Name: "main.py", Content: script}}
+	files := []wire.FileInput{{Name: "main.py", Content: wire.Ptr(script)}}
 	spec := zygoteSpec(jobID, "main.py", files)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -250,7 +250,7 @@ func TestZygoteIntegrationKill(t *testing.T) {
 	jobID := fmt.Sprintf("zyg-kill-%d", time.Now().UnixNano())
 	// An infinite loop the agent must cgroup.kill on KILL.
 	script := "import time\nwhile True:\n    time.sleep(0.05)\n"
-	files := []wire.FileInput{{Name: "main.py", Content: script}}
+	files := []wire.FileInput{{Name: "main.py", Content: wire.Ptr(script)}}
 	spec := zygoteSpec(jobID, "main.py", files)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

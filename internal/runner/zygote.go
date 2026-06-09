@@ -194,9 +194,18 @@ func buildHello(spec wire.JobSpec, cfg config.Config) helloPayload {
 		// travels over the relay as a JSON base64 string; the agent decodes it
 		// before writing the file. The agent owns path sanitization + traversal
 		// guard for this tier (the worker never trusts the path either way).
+		// Content is *string (a FileInput carries EXACTLY ONE of content/ref).
+		// By the time the zygote relay sees spec.Files, the worker's
+		// resolveBlobRefs has already converted every ref into inline
+		// (base64-encoded) content, so Content is non-nil here. Guard against a
+		// stray nil rather than panic — an empty string yields a zero-byte file.
+		content := ""
+		if f.Content != nil {
+			content = *f.Content
+		}
 		files = append(files, helloFile{
 			Name:     f.Name,
-			Content:  f.Content,
+			Content:  content,
 			Encoding: string(f.Encoding),
 		})
 	}

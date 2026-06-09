@@ -239,7 +239,7 @@ func TestLangFanout_R_Batch(t *testing.T) {
 		Entrypoint:  "main.R",
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
-		Files:       []wire.FileInput{{Name: "main.R", Content: mainR}},
+		Files:       []wire.FileInput{{Name: "main.R", Content: wire.Ptr(mainR)}},
 		Limits:      rDefaultLimits(),
 	}
 
@@ -379,7 +379,7 @@ flush(stdout())
 		Entrypoint:  "main.R",
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
-		Files:       []wire.FileInput{{Name: "main.R", Content: mainR}},
+		Files:       []wire.FileInput{{Name: "main.R", Content: wire.Ptr(mainR)}},
 		Limits:      rDefaultLimits(),
 	}
 

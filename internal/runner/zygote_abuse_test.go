@@ -220,7 +220,7 @@ func runSessionSupervised(
 // abuseZygoteSpec builds a python zygote spec with explicit limits.
 func abuseZygoteSpec(name, script string, lim wire.Limits) wire.JobSpec {
 	jobID := fmt.Sprintf("zyg-abuse-%s-%d", name, time.Now().UnixNano())
-	s := zygoteSpec(jobID, "main.py", []wire.FileInput{{Name: "main.py", Content: script}})
+	s := zygoteSpec(jobID, "main.py", []wire.FileInput{{Name: "main.py", Content: wire.Ptr(script)}})
 	s.Limits = lim
 	s.Interactive = true
 	return s

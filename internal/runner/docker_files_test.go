@@ -41,10 +41,10 @@ func TestBuildFilesTar_Base64AndSubdirs(t *testing.T) {
 	// {main.py utf8} + {data/in.csv utf8} + {blob.bin base64} → all three at
 	// the right paths with correct bytes, with parent dir entries for data/.
 	in := []wire.FileInput{
-		{Name: "main.py", Content: "print('hi')"},
-		{Name: "data/in.csv", Content: "a,b\n1,2\n", Encoding: wire.FileInputEncodingUtf8},
-		{Name: "blob.bin", Content: "AAEC/w==", Encoding: wire.FileInputEncodingBase64},
-		{Name: "nested/deep/x.bin", Content: "aGk=", Encoding: wire.FileInputEncodingBase64},
+		{Name: "main.py", Content: wire.Ptr("print('hi')")},
+		{Name: "data/in.csv", Content: wire.Ptr("a,b\n1,2\n"), Encoding: wire.FileInputEncodingUtf8},
+		{Name: "blob.bin", Content: wire.Ptr("AAEC/w=="), Encoding: wire.FileInputEncodingBase64},
+		{Name: "nested/deep/x.bin", Content: wire.Ptr("aGk="), Encoding: wire.FileInputEncodingBase64},
 	}
 	buf, err := buildFilesTar(in)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestBuildFilesTar_Base64AndSubdirs(t *testing.T) {
 
 func TestBuildFilesTar_RejectsTraversal(t *testing.T) {
 	for _, name := range []string{"../escape", "/etc/passwd", "a/../../escape"} {
-		_, err := buildFilesTar([]wire.FileInput{{Name: name, Content: "x"}})
+		_, err := buildFilesTar([]wire.FileInput{{Name: name, Content: wire.Ptr("x")}})
 		if err == nil {
 			t.Fatalf("expected error for %q, got nil", name)
 		}
@@ -88,7 +88,7 @@ func TestBuildFilesTar_RejectsTraversal(t *testing.T) {
 
 func TestBuildFilesTar_RejectsBadBase64(t *testing.T) {
 	_, err := buildFilesTar([]wire.FileInput{
-		{Name: "blob.bin", Content: "not!!base64", Encoding: wire.FileInputEncodingBase64},
+		{Name: "blob.bin", Content: wire.Ptr("not!!base64"), Encoding: wire.FileInputEncodingBase64},
 	})
 	if err == nil {
 		t.Fatal("expected error for bad base64, got nil")
@@ -99,7 +99,7 @@ func TestBuildFilesTar_RejectsBadBase64(t *testing.T) {
 // exactly a single regular-file entry with verbatim bytes and no dir entries —
 // identical to the pre-Phase-15 behavior.
 func TestBuildFilesTar_BackwardCompat(t *testing.T) {
-	buf, err := buildFilesTar([]wire.FileInput{{Name: "main.py", Content: "print(1)"}})
+	buf, err := buildFilesTar([]wire.FileInput{{Name: "main.py", Content: wire.Ptr("print(1)")}})
 	if err != nil {
 		t.Fatalf("buildFilesTar: %v", err)
 	}

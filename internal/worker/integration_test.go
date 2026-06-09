@@ -550,7 +550,7 @@ func TestIntegration_FileBasedPythonJob(t *testing.T) {
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
 		Files: []wire.FileInput{
-			{Name: "main.py", Content: mainPyContent},
+			{Name: "main.py", Content: wire.Ptr(mainPyContent)},
 		},
 		Limits: wire.Limits{
 			WallTimeMs: 30000,

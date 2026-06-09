@@ -159,7 +159,7 @@ fn main() {
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
 		Files: []wire.FileInput{
-			{Name: "main.rs", Content: mainRsContent},
+			{Name: "main.rs", Content: wire.Ptr(mainRsContent)},
 		},
 		Limits: wire.Limits{
 			WallTimeMs: 120000,
@@ -344,7 +344,7 @@ func TestLangFanout_Rust_CompileError(t *testing.T) {
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
 		Files: []wire.FileInput{
-			{Name: "main.rs", Content: brokenRsContent},
+			{Name: "main.rs", Content: wire.Ptr(brokenRsContent)},
 		},
 		Limits: wire.Limits{
 			WallTimeMs: 120000,

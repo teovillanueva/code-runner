@@ -32,6 +32,35 @@ export const keys = {
    * Written with a TTL to bound leakage for jobs that are never claimed.
    */
   startFlag: (jobId: string): string => `start:${jobId}`,
+
+  // ── Content-addressed blob store (Phase 16, BLOB-07/08) ────────────────────
+  // Bytes live in S3 under blobs/cas/<hash>; LIVENESS lives in Redis. The `h`
+  // passed to every builder is the full "sha256:<64hex>" ref string (NOT the
+  // bare hex), so the Redis key and the FileInput.ref are the same token end to
+  // end. Kept in lockstep with internal/keys/keys.go.
+
+  /**
+   * Liveness metadata hash for a blob ({size, createdAtMs}). Carries an idle
+   * TTL that touch-on-use extends MONOTONICALLY (only ever lengthens). Its
+   * existence is the liveness signal — GC treats an expired meta as a deletion
+   * candidate. Format: blob:meta:<hash>
+   */
+  blobMeta: (h: string): string => `blob:meta:${h}`,
+  /**
+   * SET of active jobIds currently referencing a blob. Non-empty ⇒ pinned: GC
+   * never deletes a leased blob regardless of TTL. Format: blob:lease:<hash>
+   */
+  blobLease: (h: string): string => `blob:lease:${h}`,
+  /** SET of all known blob hashes — the GC enumeration source. */
+  blobIndex: "blobs:index",
+  /**
+   * ZSET of blobs first-seen collectable (meta expired AND unleased), scored by
+   * the unix-ms timestamp they entered that state. GC deletes only once
+   * now - score exceeds the grace window.
+   */
+  blobGcCandidates: "blobs:gc:candidates",
+  /** SET NX PX lock so only one worker replica runs a GC sweep at a time. */
+  blobGcLock: "blobs:gc:lock",
 } as const;
 
 /** soketi event names emitted on the private-run-<jobId> channel. */

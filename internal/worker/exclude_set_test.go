@@ -13,10 +13,10 @@ func TestBuildArtifactExcludeSet_RelativePaths(t *testing.T) {
 	t.Parallel()
 	spec := wire.JobSpec{
 		Files: []wire.FileInput{
-			{Name: "main.py", Content: "x"},
-			{Name: "data/in.csv", Content: "a,b"},
-			{Name: "a/b/c.bin", Content: "AAA=", Encoding: wire.FileInputEncodingBase64},
-			{Name: "../escape", Content: "ignored"}, // bad path: skipped, not panicked
+			{Name: "main.py", Content: wire.Ptr("x")},
+			{Name: "data/in.csv", Content: wire.Ptr("a,b")},
+			{Name: "a/b/c.bin", Content: wire.Ptr("AAA="), Encoding: wire.FileInputEncodingBase64},
+			{Name: "../escape", Content: wire.Ptr("ignored")}, // bad path: skipped, not panicked
 		},
 	}
 	got := buildArtifactExcludeSet(spec)
@@ -45,7 +45,7 @@ func TestBuildArtifactExcludeSet_CompileBinary(t *testing.T) {
 	spec := wire.JobSpec{
 		Compile: &compile,
 		Run:     []string{"/workspace/app"},
-		Files:   []wire.FileInput{{Name: "main.c", Content: "int main(){}"}},
+		Files:   []wire.FileInput{{Name: "main.c", Content: wire.Ptr("int main(){}")}},
 	}
 	got := buildArtifactExcludeSet(spec)
 	if !got["app"] {

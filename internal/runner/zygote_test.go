@@ -19,8 +19,8 @@ func TestBuildHelloFromSpec(t *testing.T) {
 		JobId:      "job-xyz",
 		Entrypoint: "solution.py",
 		Files: []wire.FileInput{
-			{Name: "solution.py", Content: "print(1)"},
-			{Name: "data.txt", Content: "x"},
+			{Name: "solution.py", Content: wire.Ptr("print(1)")},
+			{Name: "data.txt", Content: wire.Ptr("x")},
 		},
 		Limits: wire.Limits{
 			MemoryMb: 256,
@@ -65,9 +65,9 @@ func TestBuildHelloThreadsEncoding(t *testing.T) {
 		JobId:      "j",
 		Entrypoint: "main.py",
 		Files: []wire.FileInput{
-			{Name: "main.py", Content: "print(1)"}, // no encoding → utf8
-			{Name: "data/in.csv", Content: "a,b", Encoding: wire.FileInputEncodingUtf8},
-			{Name: "blob.bin", Content: "AAEC", Encoding: wire.FileInputEncodingBase64},
+			{Name: "main.py", Content: wire.Ptr("print(1)")}, // no encoding → utf8
+			{Name: "data/in.csv", Content: wire.Ptr("a,b"), Encoding: wire.FileInputEncodingUtf8},
+			{Name: "blob.bin", Content: wire.Ptr("AAEC"), Encoding: wire.FileInputEncodingBase64},
 		},
 		Limits: wire.Limits{MemoryMb: 128, Pids: 16, OutputKb: 1024},
 	}

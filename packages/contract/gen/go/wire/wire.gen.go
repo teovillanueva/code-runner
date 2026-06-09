@@ -20,6 +20,48 @@ type Artifact struct {
 	Url string `json:"url"`
 }
 
+// Body of POST /v1/blobs/check. The SDK sends the sha256 hashes (sha256:<64-hex>)
+// of every blob it wants to use; the API replies which are missing (with a
+// presigned PUT URL) and which are already present (TTL refreshed).
+type BlobCheckRequest struct {
+	// Content-addressed blob hashes (sha256:<64-hex>) to check for existence.
+	Hashes []string `json:"hashes"`
+}
+
+// 200 response of POST /v1/blobs/check.
+type BlobCheckResponse struct {
+	// Blobs not yet present: each carries a presigned PUT URL for upload.
+	Missing []BlobUpload `json:"missing"`
+
+	// Blobs already present in the store (liveness TTL was refreshed).
+	Present []string `json:"present"`
+}
+
+// Body of POST /v1/blobs/finalize. Called by the SDK after PUTting missing bytes;
+// the API records liveness (blob:meta TTL + blobs:index membership). Integrity is
+// NOT trusted here — it is verified authoritatively by the worker on pull.
+type BlobFinalizeRequest struct {
+	// Hashes whose bytes were just uploaded and should be recorded as live.
+	Hashes []string `json:"hashes"`
+}
+
+// 200 response of POST /v1/blobs/finalize.
+type BlobFinalizeResponse struct {
+	// Hashes recorded as live (liveness set/refreshed + added to the index).
+	Finalized []string `json:"finalized"`
+}
+
+// A single missing blob and the presigned PUT URL the SDK uploads its bytes to
+// (client→store direct; bytes never transit the API).
+type BlobUpload struct {
+	// The blob hash this upload URL is for.
+	Hash string `json:"hash"`
+
+	// Presigned PUT URL (against the public S3 endpoint) the SDK PUTs the raw bytes
+	// to.
+	UploadUrl string `json:"uploadUrl"`
+}
+
 // Single source of truth for every message exchanged between the API and the
 // worker, plus the manifest and public API payloads. TS types + zod validators +
 // Go structs are generated from this file. Do not edit generated artifacts by
@@ -103,20 +145,34 @@ type ExecuteResponse struct {
 	Status string `json:"status"`
 }
 
-// A single source file submitted by the caller.
+// A single source file submitted by the caller. A FileInput carries EXACTLY ONE of
+// `content` (inline bytes) or `ref` (a reference to a pre-uploaded
+// content-addressed blob). This XOR is NOT expressible in JSON Schema draft
+// 2020-12 in a way that survives codegen (both fields become optional in the
+// generated TS/Go structs), so it is enforced at runtime in BOTH the API (zod
+// refinement on the request) AND the worker (validateFileInput) — never trust one
+// side. Backward-compat: existing inline (content) callers are unaffected; `ref`
+// is purely additive.
 type FileInput struct {
-	// File content. Interpreted per `encoding`: utf8 text by default, or
-	// base64-encoded arbitrary bytes when encoding=base64.
-	Content string `json:"content"`
+	// Inline file content. Interpreted per `encoding`: utf8 text by default, or
+	// base64-encoded arbitrary bytes when encoding=base64. Mutually exclusive with
+	// `ref`.
+	Content *string `json:"content,omitempty,omitzero"`
 
-	// How content is encoded. utf8=text (default, back-compat); base64=arbitrary
-	// bytes.
+	// How `content` is encoded. utf8=text (default, back-compat); base64=arbitrary
+	// bytes. Ignored when `ref` is set.
 	Encoding FileInputEncoding `json:"encoding,omitempty,omitzero"`
 
 	// Relative path written into the sandbox workspace; may contain '/'
 	// subdirectories (e.g. data/input.csv). Must not escape the workspace; absolute
 	// paths and traversal are rejected.
 	Name string `json:"name"`
+
+	// Reference to a pre-uploaded content-addressed blob (sha256:<64-hex>). The
+	// worker streams the blob from code-runner's own configured store, verifies
+	// sha256 == ref authoritatively, and materializes it as the workspace file at
+	// `name`. Mutually exclusive with `content`.
+	Ref *string `json:"ref,omitempty,omitzero"`
 }
 
 type FileInputEncoding string

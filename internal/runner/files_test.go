@@ -16,32 +16,32 @@ func TestDecodeFileContent(t *testing.T) {
 	}{
 		{
 			name: "absent encoding is utf8 verbatim",
-			in:   wire.FileInput{Name: "a.txt", Content: "hello"},
+			in:   wire.FileInput{Name: "a.txt", Content: wire.Ptr("hello")},
 			want: []byte("hello"),
 		},
 		{
 			name: "explicit utf8",
-			in:   wire.FileInput{Name: "a.txt", Content: "héllo", Encoding: wire.FileInputEncodingUtf8},
+			in:   wire.FileInput{Name: "a.txt", Content: wire.Ptr("héllo"), Encoding: wire.FileInputEncodingUtf8},
 			want: []byte("héllo"),
 		},
 		{
 			name: "base64 round-trip",
-			in:   wire.FileInput{Name: "blob.bin", Content: "aGVsbG8=", Encoding: wire.FileInputEncodingBase64},
+			in:   wire.FileInput{Name: "blob.bin", Content: wire.Ptr("aGVsbG8="), Encoding: wire.FileInputEncodingBase64},
 			want: []byte("hello"),
 		},
 		{
 			name: "base64 arbitrary bytes",
-			in:   wire.FileInput{Name: "blob.bin", Content: "AAEC/w==", Encoding: wire.FileInputEncodingBase64},
+			in:   wire.FileInput{Name: "blob.bin", Content: wire.Ptr("AAEC/w=="), Encoding: wire.FileInputEncodingBase64},
 			want: []byte{0x00, 0x01, 0x02, 0xff},
 		},
 		{
 			name:    "bad base64",
-			in:      wire.FileInput{Name: "blob.bin", Content: "not!!base64", Encoding: wire.FileInputEncodingBase64},
+			in:      wire.FileInput{Name: "blob.bin", Content: wire.Ptr("not!!base64"), Encoding: wire.FileInputEncodingBase64},
 			wantErr: true,
 		},
 		{
 			name:    "unknown encoding",
-			in:      wire.FileInput{Name: "a.txt", Content: "x", Encoding: "rot13"},
+			in:      wire.FileInput{Name: "a.txt", Content: wire.Ptr("x"), Encoding: "rot13"},
 			wantErr: true,
 		},
 	}

@@ -44,8 +44,31 @@ describe("FileInput.encoding", () => {
     assert.equal(parsed.name, "data/input.csv");
   });
 
-  it("still requires name and content", () => {
-    assert.throws(() => FileInputSchema.parse({ name: "x" }));
+  it("still requires name (content is now optional — XOR with ref)", () => {
+    // name remains mandatory.
     assert.throws(() => FileInputSchema.parse({ content: "x" }));
+    // content is OPTIONAL at the schema level: a FileInput carries EXACTLY ONE
+    // of content/ref, but that XOR is NOT expressible in the generated zod
+    // schema (both become optional). It is enforced at runtime in the API
+    // (zod .refine on the request) and the worker. So a bare { name } parses
+    // here — the XOR rejection lives one layer up.
+    const bare = FileInputSchema.parse({ name: "x" });
+    assert.equal(bare.name, "x");
+  });
+
+  it("accepts a content-addressed ref (sha256:<64hex>)", () => {
+    const h = "sha256:" + "a".repeat(64);
+    const parsed = FileInputSchema.parse({ name: "big.csv", ref: h });
+    assert.equal(parsed.ref, h);
+  });
+
+  it("rejects a malformed ref", () => {
+    assert.throws(() =>
+      FileInputSchema.parse({ name: "big.csv", ref: "sha256:zzz" }),
+    );
+    assert.throws(() =>
+      // bare hex without the sha256: prefix is rejected
+      FileInputSchema.parse({ name: "big.csv", ref: "a".repeat(64) }),
+    );
   });
 });

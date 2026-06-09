@@ -296,8 +296,8 @@ func TestArtifacts_CompileOutputExcluded(t *testing.T) {
 	spec.Compile = &compile
 	spec.Run = []string{"/workspace/app"}
 	spec.Files = []wire.FileInput{
-		{Name: "main.c", Content: "int main(){return 0;}"},
-		{Name: "data/in.csv", Content: "a,b\n1,2\n"},
+		{Name: "main.c", Content: wire.Ptr("int main(){return 0;}")},
+		{Name: "data/in.csv", Content: wire.Ptr("a,b\n1,2\n")},
 	}
 
 	artStore := &fakeArtifactStore{}

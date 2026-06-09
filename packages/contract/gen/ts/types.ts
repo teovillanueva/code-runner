@@ -58,7 +58,7 @@ export interface LimitsOverride {
   maxArtifactBytes?: number;
 }
 /**
- * A single source file submitted by the caller.
+ * A single source file submitted by the caller. A FileInput carries EXACTLY ONE of `content` (inline bytes) or `ref` (a reference to a pre-uploaded content-addressed blob). This XOR is NOT expressible in JSON Schema draft 2020-12 in a way that survives codegen (both fields become optional in the generated TS/Go structs), so it is enforced at runtime in BOTH the API (zod refinement on the request) AND the worker (validateFileInput) — never trust one side. Backward-compat: existing inline (content) callers are unaffected; `ref` is purely additive.
  */
 export interface FileInput {
   /**
@@ -66,13 +66,17 @@ export interface FileInput {
    */
   name: string;
   /**
-   * File content. Interpreted per `encoding`: utf8 text by default, or base64-encoded arbitrary bytes when encoding=base64.
+   * Inline file content. Interpreted per `encoding`: utf8 text by default, or base64-encoded arbitrary bytes when encoding=base64. Mutually exclusive with `ref`.
    */
-  content: string;
+  content?: string;
   /**
-   * How content is encoded. utf8=text (default, back-compat); base64=arbitrary bytes.
+   * How `content` is encoded. utf8=text (default, back-compat); base64=arbitrary bytes. Ignored when `ref` is set.
    */
   encoding?: "utf8" | "base64";
+  /**
+   * Reference to a pre-uploaded content-addressed blob (sha256:<64-hex>). The worker streams the blob from code-runner's own configured store, verifies sha256 == ref authoritatively, and materializes it as the workspace file at `name`. Mutually exclusive with `content`.
+   */
+  ref?: string;
 }
 /**
  * A language package manifest (languages/<lang-version>/manifest.json).
@@ -366,4 +370,57 @@ export interface CompileResult1 {
    * Wall-clock time of the compile stage in ms.
    */
   durationMs: number;
+}
+/**
+ * Body of POST /v1/blobs/check. The SDK sends the sha256 hashes (sha256:<64-hex>) of every blob it wants to use; the API replies which are missing (with a presigned PUT URL) and which are already present (TTL refreshed).
+ */
+export interface BlobCheckRequest {
+  /**
+   * Content-addressed blob hashes (sha256:<64-hex>) to check for existence.
+   */
+  hashes: string[];
+}
+/**
+ * A single missing blob and the presigned PUT URL the SDK uploads its bytes to (client→store direct; bytes never transit the API).
+ */
+export interface BlobUpload {
+  /**
+   * The blob hash this upload URL is for.
+   */
+  hash: string;
+  /**
+   * Presigned PUT URL (against the public S3 endpoint) the SDK PUTs the raw bytes to.
+   */
+  uploadUrl: string;
+}
+/**
+ * 200 response of POST /v1/blobs/check.
+ */
+export interface BlobCheckResponse {
+  /**
+   * Blobs not yet present: each carries a presigned PUT URL for upload.
+   */
+  missing: BlobUpload[];
+  /**
+   * Blobs already present in the store (liveness TTL was refreshed).
+   */
+  present: string[];
+}
+/**
+ * Body of POST /v1/blobs/finalize. Called by the SDK after PUTting missing bytes; the API records liveness (blob:meta TTL + blobs:index membership). Integrity is NOT trusted here — it is verified authoritatively by the worker on pull.
+ */
+export interface BlobFinalizeRequest {
+  /**
+   * Hashes whose bytes were just uploaded and should be recorded as live.
+   */
+  hashes: string[];
+}
+/**
+ * 200 response of POST /v1/blobs/finalize.
+ */
+export interface BlobFinalizeResponse {
+  /**
+   * Hashes recorded as live (liveness set/refreshed + added to the index).
+   */
+  finalized: string[];
 }

@@ -97,3 +97,41 @@ func WorkerJobsKey(workerID string) string {
 // jobs:queue, used in plan 05-03).  Counter drift is acceptable — it must not
 // be used for hard admission decisions.
 const CapacityFree = "capacity:free"
+
+// ── Content-addressed blob store (Phase 16, BLOB-07/08) ──────────────────────
+// Bytes live in S3 under blobs/cas/<hash>; LIVENESS lives in Redis. The hash in
+// every builder is the full "sha256:<64hex>" ref string (NOT the bare hex), so
+// the Redis key and the FileInput.ref are the same token end to end. Keep these
+// in lockstep with the `keys` object in packages/contract/src/index.ts.
+
+// BlobMetaKey returns the Redis key for a blob's liveness metadata hash
+// ({size, createdAtMs}). It carries an idle TTL that touch-on-use extends
+// MONOTONICALLY (only ever lengthens). Its EXISTENCE is the liveness signal:
+// GC treats a blob whose meta key has expired as a deletion candidate.
+// Matches keys.blobMeta(h) in index.ts. Format: blob:meta:<hash>
+func BlobMetaKey(hash string) string {
+	return fmt.Sprintf("blob:meta:%s", hash)
+}
+
+// BlobLeaseKey returns the Redis key for the SET of active jobIds currently
+// referencing a blob. A non-empty set PINS the blob: GC must never delete a
+// blob whose lease set is non-empty, regardless of TTL.
+// Matches keys.blobLease(h) in index.ts. Format: blob:lease:<hash>
+func BlobLeaseKey(hash string) string {
+	return fmt.Sprintf("blob:lease:%s", hash)
+}
+
+// BlobIndex is the SET of all known blob hashes — the GC enumeration source.
+// Matches keys.blobIndex in index.ts.
+const BlobIndex = "blobs:index"
+
+// BlobGCCandidates is the ZSET of blobs first-seen collectable (meta expired AND
+// unleased), scored by the unix-ms timestamp they entered that state. GC only
+// deletes a candidate once now - score exceeds the grace window; a blob that
+// recovers (re-touched or re-leased) is removed from this set.
+// Matches keys.blobGcCandidates in index.ts.
+const BlobGCCandidates = "blobs:gc:candidates"
+
+// BlobGCLock is the SET NX PX lock ensuring only one worker replica runs a GC
+// sweep at a time. Matches keys.blobGcLock in index.ts.
+const BlobGCLock = "blobs:gc:lock"

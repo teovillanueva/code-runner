@@ -235,7 +235,7 @@ func TestLangFanout_SQLite_FileJob(t *testing.T) {
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
 		Files: []wire.FileInput{
-			{Name: "main.sql", Content: mainSQL},
+			{Name: "main.sql", Content: wire.Ptr(mainSQL)},
 		},
 		Limits: sqliteLimits(),
 	}
@@ -343,7 +343,7 @@ func TestLangFanout_SQLite_InteractiveStdin(t *testing.T) {
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
 		Files: []wire.FileInput{
-			{Name: "main.sql", Content: mainSQL},
+			{Name: "main.sql", Content: wire.Ptr(mainSQL)},
 		},
 		Limits: sqliteLimits(),
 	}

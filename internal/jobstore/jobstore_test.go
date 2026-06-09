@@ -74,7 +74,7 @@ func TestJobStore_SpecRoundTrip(t *testing.T) {
 			IdleMs:     5000,
 		},
 		Files: []wire.FileInput{
-			{Name: "main.py", Content: "print('hello')"},
+			{Name: "main.py", Content: wire.Ptr("print('hello')")},
 		},
 	}
 
