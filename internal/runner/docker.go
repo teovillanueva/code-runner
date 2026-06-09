@@ -18,6 +18,7 @@ import (
 	"io"
 	"mime"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -445,28 +446,84 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 // copyFilesToContainer writes spec.Files into the container's workspace via a
 // tar archive uploaded with CopyToContainer.
 func (r *DockerSocketRunner) copyFilesToContainer(ctx context.Context, containerID string, files []wire.FileInput) error {
+	buf, err := buildFilesTar(files)
+	if err != nil {
+		return err
+	}
+	return r.cli.CopyToContainer(ctx, containerID, sandboxWorkDir, buf, container.CopyToContainerOptions{})
+}
+
+// buildFilesTar builds the tar archive uploaded to the container's workspace.
+// Each file's wire name is sanitized (subdirs preserved, traversal/absolute
+// rejected) and its content decoded per the encoding (utf8 verbatim | base64).
+// Parent directories get explicit tar.TypeDir entries (written once, before the
+// files under them) so the materialized layout is deterministic regardless of
+// the daemon's Untar parent-creation behavior. Pure (no Docker) so it is
+// unit-testable on any platform.
+func buildFilesTar(files []wire.FileInput) (*bytes.Buffer, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 
+	seenDirs := map[string]bool{}
+	emitDirs := func(rel string) error {
+		dir := path.Dir(rel)
+		if dir == "." || dir == "/" || dir == "" {
+			return nil
+		}
+		// Build cumulative segments: a/b/c -> a, a/b, a/b/c.
+		segs := strings.Split(dir, "/")
+		cur := ""
+		for _, s := range segs {
+			if cur == "" {
+				cur = s
+			} else {
+				cur += "/" + s
+			}
+			if seenDirs[cur] {
+				continue
+			}
+			seenDirs[cur] = true
+			if err := tw.WriteHeader(&tar.Header{
+				Name:     cur + "/",
+				Mode:     0755,
+				Typeflag: tar.TypeDir,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	for _, f := range files {
-		content := []byte(f.Content)
+		// Sanitize the path in the worker regardless of API validation: the
+		// threat model is host-escape-only and the worker never trusts the path.
+		rel, err := sanitizeWorkspacePath(f.Name)
+		if err != nil {
+			return nil, fmt.Errorf("docker: copy files: %w", err)
+		}
+		content, err := decodeFileContent(f)
+		if err != nil {
+			return nil, fmt.Errorf("docker: copy files: %w", err)
+		}
+		if err := emitDirs(rel); err != nil {
+			return nil, err
+		}
 		hdr := &tar.Header{
-			Name: filepath.Base(f.Name), // sanitize to avoid path traversal
+			Name: rel, // full sanitized relative path, subdirs preserved
 			Mode: 0644,
 			Size: int64(len(content)),
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tw.Write(content); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := tw.Close(); err != nil {
-		return err
+		return nil, err
 	}
-
-	return r.cli.CopyToContainer(ctx, containerID, sandboxWorkDir, &buf, container.CopyToContainerOptions{})
+	return &buf, nil
 }
 
 // ── dockerSandbox ─────────────────────────────────────────────────────────────
@@ -640,7 +697,8 @@ func (s *dockerSandbox) Limits() wire.Limits {
 // is force-removed. It carries the raw bytes; the worker is responsible for
 // uploading them to the ArtifactStore and discarding them afterwards.
 type CapturedArtifact struct {
-	// Name is the basename of the captured file (e.g. "plot.png").
+	// Name is the captured file's path relative to the workspace root
+	// (e.g. "plot.png" or "out/plot.png").
 	Name string
 	// MimeType is the best-effort detected MIME type, derived from the file
 	// extension; "application/octet-stream" when unknown.
@@ -655,17 +713,17 @@ type CapturedArtifact struct {
 // /workspace anonymous volume (RemoveVolumes=true) — reading after races a gone
 // volume (D-07).
 //
-// The exclude map keys are basenames that must NOT be returned as artifacts:
-// the worker passes the input file-name set + ".compile_ready" + the
-// compile-output binary basename (D-05/R4). ReadArtifacts ALSO defensively
-// excludes the compile marker basename (filepath.Base(compileRunMarker) ==
+// The exclude map keys are the full sanitized relative paths (under the
+// workspace root, e.g. "main.py" or "data/in.csv") that must NOT be returned as
+// artifacts: the worker passes the input file-name set + ".compile_ready" + the
+// compile-output binary path (D-05/R4). ReadArtifacts ALSO defensively excludes
+// the compile marker basename (filepath.Base(compileRunMarker) ==
 // ".compile_ready") even when the caller omits it, so the bridge marker is
 // never surfaced as an artifact.
 //
-// Only top-level regular files are returned (tar entries with a basename equal
-// to the entry name and Typeflag == tar.TypeReg). Directories and nested paths
-// are skipped — workspace-diff capture is a flat cwd convention (users save
-// with relative names).
+// Nested files ARE captured now that inputs may live in subdirectories: an
+// artifact's Name is its relative path under the workspace (e.g.
+// "out/plot.png"), and exclusion is compared on that same relative-path form.
 func (s *dockerSandbox) ReadArtifacts(ctx context.Context, exclude map[string]bool) ([]CapturedArtifact, error) {
 	rc, _, err := s.cli.CopyFromContainer(ctx, s.containerID, sandboxWorkDir)
 	if err != nil {
@@ -689,37 +747,54 @@ func (s *dockerSandbox) ReadArtifacts(ctx context.Context, exclude map[string]bo
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		name := filepath.Base(hdr.Name)
-		// Skip nested paths: CopyFromContainer prefixes entries with the dir name
-		// (e.g. "workspace/plot.png"); a top-level file's basename matches its
-		// position. We accept any regular file whose basename is not excluded.
-		if name == "" || name == "." {
+		// CopyFromContainer prefixes every entry with the source directory's
+		// basename (e.g. "workspace/plot.png", "workspace/out/x.png"). Strip that
+		// leading component to recover the relative path under the workspace,
+		// matching the exclude-set key form and the input file names.
+		rel := stripWorkspacePrefix(hdr.Name)
+		if rel == "" || rel == "." {
 			continue
 		}
-		if name == markerBase {
+		base := path.Base(rel)
+		if base == markerBase {
 			continue
 		}
-		if exclude != nil && exclude[name] {
+		if exclude != nil && (exclude[rel] || exclude[base]) {
 			continue
 		}
 
 		data, readErr := io.ReadAll(tr)
 		if readErr != nil {
-			return artifacts, fmt.Errorf("docker: ReadArtifacts read %q: %w", name, readErr)
+			return artifacts, fmt.Errorf("docker: ReadArtifacts read %q: %w", rel, readErr)
 		}
 
-		mimeType := mime.TypeByExtension(filepath.Ext(name))
+		mimeType := mime.TypeByExtension(path.Ext(rel))
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
 
 		artifacts = append(artifacts, CapturedArtifact{
-			Name:     name,
+			Name:     rel,
 			MimeType: mimeType,
 			Data:     data,
 		})
 	}
 	return artifacts, nil
+}
+
+// stripWorkspacePrefix removes the leading "<workspace-basename>/" component
+// that Docker's CopyFromContainer prepends to every tar entry, returning the
+// path relative to the workspace root. Entries are forward-slash (tar/wire).
+func stripWorkspacePrefix(name string) string {
+	wsBase := path.Base(sandboxWorkDir) // "workspace"
+	name = strings.TrimPrefix(name, "./")
+	if name == wsBase || name == wsBase+"/" {
+		return ""
+	}
+	if rest := strings.TrimPrefix(name, wsBase+"/"); rest != name {
+		return path.Clean(rest)
+	}
+	return path.Clean(name)
 }
 
 // Compile executes argv as an exec inside the already-running hardened
