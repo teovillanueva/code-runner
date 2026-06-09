@@ -99,6 +99,7 @@ The API rejects bad requests up front:
 | --- | --- |
 | `400` | `content` is not valid base64 (when `encoding:"base64"`). |
 | `400` | `name` is absolute (`/…`) or contains a `..` traversal segment. |
+| `400` | A file has **both** `content` and `ref`, **neither**, or a malformed `ref`. |
 | `413` | Total decoded bytes exceed `MAX_FILES_BYTES`. |
 
 The **worker re-sanitizes every path regardless of the API** (host-escape-only
@@ -114,8 +115,10 @@ excluded from capture by their full relative path, so an input at
 `data/input.csv` is never echoed back as an artifact — only genuinely new
 outputs (e.g. `out/plot.png`) are.
 
-## Not in this phase
+## Large & shared files → content-addressed blobs
 
-Input files are **fully inline**. There is no content-addressed blob store and
-no presigned upload here — that is a later phase. Keep total decoded input under
-`MAX_FILES_BYTES`.
+Inline files are best for small inputs. For **large** files or files reused
+across **many** runs, the content-addressed blob store (CAS) uploads each file
+**once** (by `sha256`) and lets jobs reference it by hash — skipping re-upload and
+sidestepping `MAX_FILES_BYTES`. The Node SDK routes oversized binary buffers there
+transparently. See **[blobs.md](./blobs.md)**.
