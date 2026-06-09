@@ -449,6 +449,30 @@ func configFromEnv() config.Config {
 		}
 	}
 
+	// ── Content-addressed blob store (Phase 16, BLOB-01..) ────────────────────
+	// Blobs REUSE the artifact S3 endpoint/creds/region resolved above. The bucket
+	// defaults to S3Bucket (blobs and artifacts share one bucket, distinct
+	// prefixes) unless BLOB_S3_BUCKET overrides it. TTL/GC knobs are in SECONDS.
+	cfg.BlobS3Bucket = cfg.S3Bucket
+	if v := os.Getenv("BLOB_S3_BUCKET"); v != "" {
+		cfg.BlobS3Bucket = v
+	}
+	if v := os.Getenv("BLOB_IDLE_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.BlobIdleTTL = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("BLOB_GC_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.BlobGCInterval = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("BLOB_GC_GRACE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.BlobGCGrace = time.Duration(n) * time.Second
+		}
+	}
+
 	// ── Zygote runner (Phase 13, ZDEP-01..03) ────────────────────────────────
 	// Overlay the ZYGOTE_* knobs (ZYGOTE_ENABLED + relay port / idle / uid base /
 	// pool memory). Default = OFF, so a vanilla worker is unaffected; only the Fly

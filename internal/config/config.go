@@ -214,6 +214,22 @@ func (c Config) Validate() error {
 		)
 	}
 
+	// CAS blob store (Phase 16): the liveness TTL and GC interval must be
+	// positive (a non-positive TTL would mean the blob is collectable the instant
+	// it is recorded; a non-positive interval would spin the GC ticker). The
+	// grace window may be zero (delete as soon as collectable) but never negative.
+	// These always hold for the shipped defaults; a misconfigured override fails
+	// fast at boot rather than producing a runaway GC.
+	if c.BlobIdleTTL <= 0 {
+		return fmt.Errorf("BlobIdleTTL (%s) must be > 0", c.BlobIdleTTL)
+	}
+	if c.BlobGCInterval <= 0 {
+		return fmt.Errorf("BlobGCInterval (%s) must be > 0", c.BlobGCInterval)
+	}
+	if c.BlobGCGrace < 0 {
+		return fmt.Errorf("BlobGCGrace (%s) must be >= 0", c.BlobGCGrace)
+	}
+
 	// Zygote knobs are only meaningful when the runner is enabled; validate them
 	// then so a vanilla (Docker-only) worker never trips on zygote settings.
 	if c.ZygoteEnabled {
