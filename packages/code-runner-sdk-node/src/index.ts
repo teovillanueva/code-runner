@@ -15,6 +15,13 @@ export {
   RateLimitError,
 } from "./errors.ts";
 
+export { toFileInput, toFileInputs } from "./files.ts";
+export type {
+  SdkFileInput,
+  TextFileInput,
+  BinaryFileInput,
+} from "./files.ts";
+
 export {
   signChannelAuth,
   createChannelAuthorizer,

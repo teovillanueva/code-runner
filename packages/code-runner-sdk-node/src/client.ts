@@ -19,6 +19,7 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "./errors.ts";
+import { toFileInputs, type SdkFileInput } from "./files.ts";
 
 export type FetchLike = (
   input: string,
@@ -65,6 +66,23 @@ export class CodeRunnerClient {
   /** POST /v1/execute — enqueue a job. 429 -> CapacityError, 400 -> ValidationError. */
   execute(req: ExecuteRequest): Promise<ExecuteResponse> {
     return this.request<ExecuteResponse>("POST", "/v1/execute", req);
+  }
+
+  /**
+   * POST /v1/execute with ergonomic file inputs (FILES-08). `files` may mix raw
+   * wire FileInputs, text files ({name, content}), and binary files
+   * ({name, data: Buffer | Uint8Array}). Binary files are base64-encoded and
+   * tagged encoding:"base64" transparently. Identical to {@link execute} once
+   * the files are normalized.
+   */
+  executeFiles(
+    req: Omit<ExecuteRequest, "files"> & { files: readonly SdkFileInput[] },
+  ): Promise<ExecuteResponse> {
+    const normalized: ExecuteRequest = {
+      ...req,
+      files: toFileInputs(req.files) as ExecuteRequest["files"],
+    };
+    return this.execute(normalized);
   }
 
   /** GET /v1/jobs/:id — fetch job status. 404 -> NotFoundError. */
