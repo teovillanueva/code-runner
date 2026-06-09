@@ -20,6 +20,7 @@ package worker_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -230,7 +231,7 @@ func TestLangFanout_SQLite_FileJob(t *testing.T) {
 		Version:  "3",
 		Image:    "executor/sqlite:3",
 		// run argv exactly as declared in the manifest.
-		Run:         []string{"sqlite3", "-batch", ":memory:", "-init", "main.sql"},
+		Run:         []string{"sqlite3", "-batch", "database.db", "-init", "main.sql"},
 		Entrypoint:  "main.sql",
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
@@ -338,7 +339,7 @@ func TestLangFanout_SQLite_InteractiveStdin(t *testing.T) {
 		Language:    "sqlite",
 		Version:     "3",
 		Image:       "executor/sqlite:3",
-		Run:         []string{"sqlite3", "-batch", ":memory:", "-init", "main.sql"},
+		Run:         []string{"sqlite3", "-batch", "database.db", "-init", "main.sql"},
 		Entrypoint:  "main.sql",
 		Channel:     fmt.Sprintf("private-run-%s", jobID),
 		Interactive: true,
@@ -422,6 +423,120 @@ func TestLangFanout_SQLite_InteractiveStdin(t *testing.T) {
 
 	// Log captured events.
 	t.Logf("SQLite interactive-stdin captured %d events:", len(it.allEvents()))
+	for _, ev := range it.allEvents() {
+		t.Logf("  [%s] %s: %s", ev.channel, ev.event, ev.data)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestLangFanout_SQLite_SeededDatabaseFile
+//
+// Case C: A caller-provided SQLite database file (database.db) is opened by the
+// run. The exam use case: a pre-seeded .db is delivered as a normal input file
+// (here inline base64; in production typically a content-addressed blob `ref`),
+// and the run's `SELECT q FROM exam;` reads a row that ONLY exists because the
+// provided db was opened — main.sql never creates the table. A passing SELECT is
+// proof the manifest run argv (sqlite3 -batch database.db -init main.sql) opened
+// the provided database rather than a fresh empty one. Then stdin_close delivers
+// EOF and sqlite3 exits 0 cleanly; no container leak.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestLangFanout_SQLite_SeededDatabaseFile(t *testing.T) {
+	rc := sqliteDialRedis(t)
+	defer rc.Close() //nolint:errcheck
+	dockerCli := sqliteDockerGuard(t)
+	defer dockerCli.Close() //nolint:errcheck
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	w, it := sqliteWorkerStack(t, rc)
+
+	jobID := fmt.Sprintf("langfanout-sqlite-seeded-%d", time.Now().UnixNano())
+
+	// Read the committed, pre-seeded SQLite database. It contains:
+	//   CREATE TABLE exam(q TEXT); INSERT INTO exam VALUES('seeded-from-blob');
+	dbBytes, err := os.ReadFile("testdata/exam-seed.db")
+	require.NoError(t, err, "read testdata/exam-seed.db")
+	dbB64 := base64.StdEncoding.EncodeToString(dbBytes)
+
+	// main.sql deliberately does NOT create the table — a successful SELECT proves
+	// the provided database.db was opened.
+	mainSQL := "SELECT q FROM exam;\n"
+
+	spec := wire.JobSpec{
+		JobId:       jobID,
+		Language:    "sqlite",
+		Version:     "3",
+		Image:       "executor/sqlite:3",
+		Run:         []string{"sqlite3", "-batch", "database.db", "-init", "main.sql"},
+		Entrypoint:  "main.sql",
+		Channel:     fmt.Sprintf("private-run-%s", jobID),
+		Interactive: true,
+		Files: []wire.FileInput{
+			// The caller-provided database, delivered as a normal input file. Inline
+			// base64 here; in production this is typically a blob `ref` (deduped via
+			// the CAS — uploaded once, opened by every student run against a fresh copy).
+			{
+				Name:     "database.db",
+				Content:  wire.Ptr(dbB64),
+				Encoding: wire.FileInputEncodingBase64,
+			},
+			{Name: "main.sql", Content: wire.Ptr(mainSQL)},
+		},
+		Limits: sqliteLimits(),
+	}
+
+	wCancel, workerDone := sqliteRunAndStart(t, ctx, rc, w, it, spec)
+
+	// Give sqlite3 time to open database.db and execute the init SELECT.
+	time.Sleep(500 * time.Millisecond)
+
+	// Assert stdout contains the seeded row — proof the provided db was opened.
+	ok := it.waitFor(15*time.Second, func(evs []integrationEvent) bool {
+		for _, ev := range evs {
+			if ev.event == "stdout" {
+				var oe wire.OutputChunkEvent
+				if json.Unmarshal(ev.data, &oe) == nil && strings.Contains(oe.Chunk, "seeded-from-blob") {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	require.True(t, ok, "timed out waiting for stdout containing 'seeded-from-blob' (proves database.db was opened)")
+
+	// Send stdin_close (EOF) so sqlite3 exits cleanly.
+	stdinClosePayload, _ := json.Marshal(wire.ControlMessage{Type: wire.ControlTypeStdinClose})
+	require.NoError(t, rc.Publish(ctx, fmt.Sprintf("ctrl:%s", jobID), stdinClosePayload).Err())
+
+	// Assert terminal result with ExitCode 0 (clean EOF exit).
+	ok = it.waitFor(15*time.Second, func(evs []integrationEvent) bool {
+		for _, ev := range evs {
+			if ev.event == "result" {
+				var re wire.ResultEvent
+				if json.Unmarshal(ev.data, &re) == nil && re.ExitCode != nil && *re.ExitCode == 0 {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	require.True(t, ok, "timed out waiting for terminal result with exitCode=0 (clean EOF exit)")
+
+	// Shut down worker.
+	wCancel()
+	select {
+	case <-workerDone:
+	case <-time.After(10 * time.Second):
+		t.Error("worker did not stop after context cancel")
+	}
+
+	// Assert no container leak.
+	assertNoContainerLeak(t, dockerCli, jobID)
+
+	// Log captured events.
+	t.Logf("SQLite seeded-database captured %d events:", len(it.allEvents()))
 	for _, ev := range it.allEvents() {
 		t.Logf("  [%s] %s: %s", ev.channel, ev.event, ev.data)
 	}

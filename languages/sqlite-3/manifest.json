@@ -5,7 +5,7 @@
   "image": "executor/sqlite:3",
   "entrypoint": "main.sql",
   "compile": null,
-  "run": ["sqlite3", "-batch", ":memory:", "-init", "main.sql"],
+  "run": ["sqlite3", "-batch", "database.db", "-init", "main.sql"],
   "interactive": true,
   "defaultLimits": {
     "wallTimeMs": 30000,
