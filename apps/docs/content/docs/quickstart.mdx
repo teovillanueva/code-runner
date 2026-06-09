@@ -165,6 +165,29 @@ curl http://localhost:8080/v1/jobs/<jobId> \
 
 </Tabs>
 
+### Multiple files & subdirectories
+
+`files[]` takes more than one entry, and a `name` may contain `/` to create
+subdirectories under `/workspace`. Here `main.py` reads a CSV materialized at
+`data/input.csv`:
+
+```bash
+curl -X POST http://localhost:8080/v1/execute \
+  -H "Authorization: Bearer dev-insecure-token-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "language": "python",
+    "files": [
+      { "name": "main.py", "content": "import csv\nwith open(\"data/input.csv\") as f:\n    print(sum(1 for _ in csv.reader(f)), \"rows\")\n" },
+      { "name": "data/input.csv", "content": "a,b\n1,2\n3,4\n" }
+    ]
+  }'
+```
+
+Files also support **binary** content (`"encoding":"base64"`) and, for large or reused
+files, [content-addressed blobs](/docs/guides/blobs) via `ref`. See
+[Multi-file input](/docs/guides/input-files).
+
 <Callout type="warn">
   All `/v1/*` endpoints require `Authorization: Bearer <EXECUTOR_API_TOKEN>`.
   The default dev token is `dev-insecure-token-change-me` — **change it** before

@@ -26,6 +26,15 @@ adding a folder" extensibility model.
   memory/CPU/PID limits — applied to every sandbox unconditionally.
 - **Interactive sessions.** Write to a running process's stdin mid-execution and
   watch stdout/stderr stream back over WebSockets, chunk by chunk.
+- **Multi-file input (text + binary).** Submit many files and subdirectories in one
+  job — UTF-8 text or base64 binary, materialized under `/workspace`. See
+  [Multi-file input](/docs/guides/input-files).
+- **Content-addressed blobs.** Upload large or reused files **once** by `sha256` and
+  reference them by hash across runs — skipping re-upload and the request-size cap.
+  See [Large & shared files](/docs/guides/blobs).
+- **Optional zygote density tier.** An opt-in warm-pool copy-on-write backend packs
+  ~2.7× more heavy Python sandboxes per node. See the
+  [Zygote tier](/docs/self-hosting/zygote-tier).
 - **Bounded resource usage.** Three independent clocks — wall, idle, and CPU —
   guarantee no sandbox, container, or session slot is ever leaked.
 - **Real-time output** via [soketi](https://soketi.app/) (a Pusher-compatible

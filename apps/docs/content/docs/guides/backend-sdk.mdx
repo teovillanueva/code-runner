@@ -71,7 +71,10 @@ const client = new CodeRunnerClient({
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `listLanguages()` | `GET /v1/languages` | List available languages & versions. |
-| `execute(req)` | `POST /v1/execute` | Enqueue a job → `{ jobId, channel, status }`. |
+| `execute(req)` | `POST /v1/execute` | Enqueue a job (raw passthrough) → `{ jobId, channel, status }`. |
+| `executeFiles({ language, version?, files })` | `POST /v1/execute` | Convenience submit: accepts text files, binary `Buffer`s, and raw `FileInput`s, routing each inline-vs-CAS automatically. |
+| `blobs.upload(buffer, { ttlSeconds? })` | blob handshake | Upload a buffer to the [blob store](/docs/guides/blobs) → `{ ref }` (skips the PUT if already present). |
+| `blobs.check(hashes)` | `POST /v1/blobs/check` | Low-level existence check passthrough. |
 | `getJob(id)` | `GET /v1/jobs/:id` | Poll job status. |
 | `getOutput(id)` | `GET /v1/jobs/:id/output` | Pull the persisted `RunResult` (needs `collectOutput`). For compiled languages it includes an optional `compile` block with the build logs, distinct from the run `stdout`/`stderr`. |
 | `start(id)` | `POST /v1/jobs/:id/start` | Send the start signal (the handshake). |
@@ -98,6 +101,63 @@ console.log(job.channel); // "private-run-550e8400-..."
 `execute` returns **before** the process starts. The next step is the
 [start-handshake](/docs/concepts/lifecycle#the-start-handshake): your client
 subscribes to `job.channel` over soketi, and *then* you call `client.start(job.jobId)`.
+
+## Submit multiple files & binary input
+
+`executeFiles` is the convenience wrapper for richer inputs. Pass text files as
+`{ name, content }`, binary files as `{ name, data }` (a `Buffer`/`Uint8Array` — the SDK
+base64-encodes them for you), and raw wire `FileInput`s if you prefer. A `name` may
+contain `/` for [subdirectories](/docs/guides/input-files):
+
+```ts
+import { readFileSync } from 'node:fs';
+
+const job = await client.executeFiles({
+  language: 'python',
+  files: [
+    // text + a CSV in a subdirectory
+    { name: 'main.py', content: "import pandas as pd; print(pd.read_csv('data/input.csv').shape)" },
+    { name: 'data/input.csv', content: 'a,b\n1,2\n3,4\n' },
+    // a binary file via Buffer → SDK sets encoding:"base64"
+    { name: 'fixtures/sheet.xlsx', data: readFileSync('./sheet.xlsx') },
+  ],
+});
+```
+
+By default, binary files larger than `inlineThresholdBytes`
+(`DEFAULT_INLINE_THRESHOLD_BYTES`, 256 KiB) are routed to the
+[content-addressed blob store](/docs/guides/blobs) automatically; smaller ones are
+inlined. Tune the threshold in the constructor:
+
+```ts
+const client = new CodeRunnerClient({ baseUrl, token, inlineThresholdBytes: 512 * 1024 });
+```
+
+## Large & shared files (blobs)
+
+For files that are large or reused across many runs, upload them **once** by `sha256` and
+reference the returned `ref` from any job — re-running the same upload skips the PUT
+entirely:
+
+```ts
+// upload returns a content address you can reuse
+const { ref } = await client.blobs.upload(readFileSync('./train.parquet'));
+
+await client.executeFiles({
+  language: 'python',
+  files: [
+    { name: 'main.py', content: "import pandas as pd; print(pd.read_parquet('data/train.parquet').shape)" },
+    { name: 'data/train.parquet', ref }, // reference the blob by hash
+  ],
+});
+```
+
+<Callout type="info">
+  Blob methods require the object store to be configured server-side; otherwise
+  `/v1/blobs/*` returns **501**. The helpers `toFileInput`/`toFileInputs` and the types
+  `SdkFileInput` / `TextFileInput` / `BinaryFileInput` are also exported. See the
+  [Blobs guide](/docs/guides/blobs).
+</Callout>
 
 ## Error handling
 
