@@ -133,6 +133,34 @@ type Config struct {
 	// Env: ARTIFACT_S3_OBJECT_TTL (days).
 	S3ObjectTTL time.Duration
 
+	// ── Content-addressed blob store (Phase 16, BLOB-01..) ───────────────────
+	// The blob store REUSES the artifact S3 endpoint/creds/region (BYO-bucket =
+	// the same *_S3_* envs). By default blobs and artifacts share ONE bucket
+	// (distinct prefixes: blobs/cas/ vs artifacts/). BlobS3Bucket is an optional
+	// override (env BLOB_S3_BUCKET) to split blobs into their own bucket; when
+	// empty it defaults to S3Bucket (set in configFromEnv). The full blob env
+	// wiring + GC/TTL knobs land alongside this field.
+
+	// BlobS3Bucket is the bucket blobs are stored in under the blobs/cas/ prefix.
+	// Defaults to S3Bucket (shared bucket) unless overridden. Env: BLOB_S3_BUCKET.
+	BlobS3Bucket string
+
+	// BlobIdleTTL is the idle liveness TTL on blob:meta:<hash>. Touch-on-use
+	// extends it MONOTONICALLY (never shrinks). When it expires (no use within
+	// the window) and the blob is unleased, GC may reclaim it after the grace
+	// window. Default 24h. Env: BLOB_IDLE_TTL (seconds).
+	BlobIdleTTL time.Duration
+
+	// BlobGCInterval is how often the GC sweep goroutine ticks. Default 10m.
+	// Env: BLOB_GC_INTERVAL (seconds).
+	BlobGCInterval time.Duration
+
+	// BlobGCGrace is the grace window a blob must remain collectable (meta
+	// expired AND unleased) before GC actually deletes it — a debounce against
+	// deleting a blob that is about to be re-used. Default 30m. Env: BLOB_GC_GRACE
+	// (seconds).
+	BlobGCGrace time.Duration
+
 	// ── Zygote runner (Phase 12, ZDEP-01..03) ────────────────────────────────
 	// These knobs configure the ZygoteRunner + warm parent pool. They are parsed
 	// and validated here but DO NOT change which runner the worker builds — the
@@ -277,6 +305,12 @@ func Default() Config {
 		RunResultTTL:    600 * time.Second,
 		PresignedURLTTL: 24 * time.Hour,
 		S3ObjectTTL:     72 * time.Hour,
+		// CAS blob store (Phase 16). BlobS3Bucket defaults empty here and is
+		// resolved to S3Bucket in configFromEnv (so a shared bucket is the
+		// zero-config default). TTL/GC knobs carry sane production-safe defaults.
+		BlobIdleTTL:    24 * time.Hour,
+		BlobGCInterval: 10 * time.Minute,
+		BlobGCGrace:    30 * time.Minute,
 		// Zygote runner (Phase 12) — OFF by default; safe default = Docker for
 		// everything. The knobs carry sane values so an operator only has to flip
 		// ZYGOTE_ENABLED=true on the Fly worker.
