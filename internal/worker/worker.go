@@ -194,6 +194,18 @@ type Config struct {
 	// RunResultTTL is the Redis TTL applied to the persisted RunResult key.
 	// Defaults to 600s if zero. Plan 09-04 reads w.cfg.RunResultTTL in teardown.
 	RunResultTTL time.Duration
+
+	// ── Content-addressed blob store (Phase 16, BLOB-06/09) ──────────────────
+	// BlobStore + BlobIndex are nil when CAS is unconfigured: a job that
+	// references a blob then fails cleanly (errBlobVerify), while inline-only jobs
+	// are unaffected. They ride on Config (not a New param) so the constructor
+	// signatures stay byte-stable, exactly like Artifacts.
+	BlobStore BlobStore
+	BlobIndex BlobIndex
+
+	// BlobIdleTTL is the idle liveness TTL the worker extends (monotonically) each
+	// time it leases/touches a blob. Defaults to 24h if zero.
+	BlobIdleTTL time.Duration
 }
 
 // Worker is the job execution run loop. It claims jobs from the jobstore, runs
@@ -269,6 +281,9 @@ func NewWithTransport(
 	}
 	if cfg.RunResultTTL <= 0 {
 		cfg.RunResultTTL = 600 * time.Second
+	}
+	if cfg.BlobIdleTTL <= 0 {
+		cfg.BlobIdleTTL = 24 * time.Hour
 	}
 	slots := make(chan struct{}, cfg.MaxSandboxes)
 	for i := 0; i < cfg.MaxSandboxes; i++ {
@@ -599,6 +614,32 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 		}
 	}
 
+	// 2c. Resolve content-addressed blob refs → ordinary inline workspace files
+	//     (BLOB-06/09), BEFORE the runner is invoked, so BOTH the DockerSocketRunner
+	//     and the zygote relay see refs as normal inputs. For each ref: lease the
+	//     blob, stream it from OUR configured store while hashing, verify sha256 ==
+	//     ref (authoritative tamper gate), and inline the verified bytes as base64.
+	//     A store-miss / mismatch / unconfigured-store fails the job cleanly here —
+	//     NO sandbox is created, NO partial run, NO leak. Every leased hash is
+	//     released on EVERY terminal path (the resolve-failure path here releases
+	//     immediately; the success path releases inside the once-only teardown).
+	// resolveBlobRefs emits its OWN "blobs.resolve" span ONLY when the job
+	// actually references a blob — an inline-only job (the common case) produces
+	// no extra span, preserving the exact phase-span set (OBS-03).
+	resolvedSpec, leasedBlobs, blobErr := w.resolveBlobRefs(ctx, spec)
+	if blobErr != nil {
+		log.Error("worker: blob ref resolution failed", "err", blobErr)
+		w.releaseLeases(ctx, leasedBlobs, jobID) // release any partial leases now
+		stdinSub.Close()                         //nolint:errcheck
+		ctrlSub.Close()                          //nolint:errcheck
+		w.publishError(ctx, jobID, spec)
+		recordTerminal(ctx, terminalError)
+		releaseSlot() // early return — no sandbox was created
+		return
+	}
+	// From here on the runner sees the RESOLVED spec (refs → inline files).
+	spec = resolvedSpec
+
 	// 3. Create the sandbox. The container is started by Create (docker.go calls
 	//    ContainerStart inside Create) but the process reads from stdin so it will
 	//    block waiting for input. The start-handshake below gates when we begin
@@ -636,6 +677,8 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 		}
 		stdinSub.Close() //nolint:errcheck
 		ctrlSub.Close()  //nolint:errcheck
+		// Release any blob leases taken during resolution — the run never started.
+		w.releaseLeases(ctx, leasedBlobs, jobID)
 		w.publishError(ctx, jobID, spec)
 		recordTerminal(ctx, terminalError)
 		releaseSlot() // early return — sandbox never occupied a slot
@@ -665,6 +708,11 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 
 			// Release the capacity slot — exactly once on every terminal path.
 			releaseSlot()
+
+			// Release every blob lease taken for this job (BLOB-09) — idempotent
+			// (SREM), so a double terminal path is harmless. Done inside the
+			// once-only teardown so GC can reclaim the blob once no run pins it.
+			w.releaseLeases(ctx, leasedBlobs, jobID)
 
 			// Publish result event (publish.result phase span).
 			_, pubSpan := tracer().Start(ctx, "publish.result")

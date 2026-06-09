@@ -28,6 +28,8 @@ import (
 	"github.com/docker/docker/client"
 
 	"github.com/teovillanueva/code-runner/internal/artifactstore"
+	"github.com/teovillanueva/code-runner/internal/blobindex"
+	"github.com/teovillanueva/code-runner/internal/blobstore"
 	"github.com/teovillanueva/code-runner/internal/config"
 	"github.com/teovillanueva/code-runner/internal/jobstore"
 	"github.com/teovillanueva/code-runner/internal/logging"
@@ -232,6 +234,35 @@ func run(ctx context.Context) error {
 		slog.Info("artifact capture disabled (S3 unconfigured); output pull active (D-04)")
 	}
 
+	// ── Content-addressed blob store (Phase 16, BLOB-06/09) ────────────────────
+	// When S3 is configured, construct the CAS blob store (reuses the artifact S3
+	// endpoint/creds; bucket = BLOB_S3_BUCKET or the shared artifact bucket) and
+	// ensure its bucket exists at boot. blobIndex (Redis liveness + lease) is
+	// always available because Redis is required. A nil blobStore means a job that
+	// references a blob fails cleanly; inline-only jobs are unaffected.
+	blobIndex := blobindex.New(redisClient)
+	var blobStore blobstore.BlobStore
+	if cfg.S3Bucket != "" && cfg.S3Endpoint != "" {
+		bs, bsErr := blobstore.NewS3Store(cfg)
+		if bsErr != nil {
+			return fmt.Errorf("blobstore: create S3 store: %w", bsErr)
+		}
+		if ebErr := bs.EnsureBucket(ctx); ebErr != nil {
+			slog.Warn("blobstore: EnsureBucket failed; blob pulls may fail until the bucket exists",
+				"err", ebErr, "bucket", cfg.BlobS3Bucket, "endpoint", cfg.S3Endpoint)
+		}
+		blobStore = bs
+		slog.Info("CAS blob store enabled",
+			"bucket", cfg.BlobS3Bucket,
+			"endpoint", cfg.S3Endpoint,
+			"idle_ttl", cfg.BlobIdleTTL,
+			"gc_interval", cfg.BlobGCInterval,
+			"gc_grace", cfg.BlobGCGrace,
+		)
+	} else {
+		slog.Info("CAS blob store disabled (S3 unconfigured); jobs referencing a blob will fail cleanly")
+	}
+
 	// ── Worker ────────────────────────────────────────────────────────────────
 	workerCfg := worker.Config{
 		MaxSandboxes:        cfg.MaxSandboxes,
@@ -241,6 +272,9 @@ func run(ctx context.Context) error {
 		HeartbeatTTLMs:      cfg.HeartbeatTTLMs,
 		Artifacts:           artifactStore,
 		RunResultTTL:        cfg.RunResultTTL,
+		BlobStore:           blobStore,
+		BlobIndex:           blobIndex,
+		BlobIdleTTL:         cfg.BlobIdleTTL,
 	}
 
 	w := worker.New(store, transport, jobRunner, pub, workerCfg)
