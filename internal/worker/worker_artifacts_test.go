@@ -295,7 +295,10 @@ func TestArtifacts_CompileOutputExcluded(t *testing.T) {
 	compile := wire.JobSpecCompile([]string{"gcc", "-O2", "-o", "app", "main.c"})
 	spec.Compile = &compile
 	spec.Run = []string{"/workspace/app"}
-	spec.Files = []wire.FileInput{{Name: "main.c", Content: "int main(){return 0;}"}}
+	spec.Files = []wire.FileInput{
+		{Name: "main.c", Content: "int main(){return 0;}"},
+		{Name: "data/in.csv", Content: "a,b\n1,2\n"},
+	}
 
 	artStore := &fakeArtifactStore{}
 	sb := runCollectedJob(t, store, pngArtifacts(1), artStore, spec)
@@ -305,7 +308,9 @@ func TestArtifacts_CompileOutputExcluded(t *testing.T) {
 	require.NotNil(t, exclude, "exclude map captured")
 	assert.True(t, exclude["app"], "compile-output binary basename must be excluded (R4)")
 	assert.True(t, exclude[".compile_ready"], "compile marker must be excluded")
-	assert.True(t, exclude["main.c"], "input file must be excluded")
+	assert.True(t, exclude["main.c"], "flat input file must be excluded by relative path")
+	assert.True(t, exclude["data/in.csv"], "subdir input file must be excluded by FULL relative path (FILES-05)")
+	assert.False(t, exclude["in.csv"], "subdir input must NOT be excluded by basename alone")
 }
 
 // TestArtifacts_NoCollectOutputNoRunResult asserts a job WITHOUT collectOutput

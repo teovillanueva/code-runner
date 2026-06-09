@@ -497,7 +497,7 @@ func buildFilesTar(files []wire.FileInput) (*bytes.Buffer, error) {
 	for _, f := range files {
 		// Sanitize the path in the worker regardless of API validation: the
 		// threat model is host-escape-only and the worker never trusts the path.
-		rel, err := sanitizeWorkspacePath(f.Name)
+		rel, err := SanitizeWorkspacePath(f.Name)
 		if err != nil {
 			return nil, fmt.Errorf("docker: copy files: %w", err)
 		}

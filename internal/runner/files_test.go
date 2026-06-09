@@ -89,7 +89,7 @@ func TestSanitizeWorkspacePath(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := sanitizeWorkspacePath(tc.in)
+			got, err := SanitizeWorkspacePath(tc.in)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error for %q, got %q", tc.in, got)

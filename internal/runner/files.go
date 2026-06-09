@@ -34,7 +34,7 @@ func decodeFileContent(f wire.FileInput) ([]byte, error) {
 	}
 }
 
-// sanitizeWorkspacePath converts a caller-supplied wire file name into a safe
+// SanitizeWorkspacePath converts a caller-supplied wire file name into a safe
 // relative path anchored at the workspace root. Subdirectories are preserved
 // (e.g. "data/input.csv"); absolute paths and any ".." traversal are rejected
 // rather than silently collapsed, because the threat model is host-escape-only
@@ -42,7 +42,7 @@ func decodeFileContent(f wire.FileInput) ([]byte, error) {
 //
 // Wire paths are always forward-slash, so this uses the `path` package (not
 // `filepath`) to stay platform-independent regardless of the worker's OS.
-func sanitizeWorkspacePath(name string) (string, error) {
+func SanitizeWorkspacePath(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("file name is empty")
 	}

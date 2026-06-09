@@ -1110,15 +1110,24 @@ func assembleRunResult(r runner.Result, stdout, stderr string) wire.RunResult {
 	}
 }
 
-// buildArtifactExcludeSet computes the set of basenames that workspace-diff
-// capture must NOT return as artifacts (D-05/R4): the input file names, the
-// ".compile_ready" bridge marker, and (for a compiled language) the
-// compile-output binary basename. ReadArtifacts also defensively excludes the
-// marker, but we include it here so the contract is explicit.
+// buildArtifactExcludeSet computes the set of paths that workspace-diff capture
+// must NOT return as artifacts (D-05/R4): the input file names (by full
+// sanitized relative path so a subdir input like "data/in.csv" is correctly
+// excluded, not just its basename), the ".compile_ready" bridge marker, and
+// (for a compiled language) the compile-output binary basename. ReadArtifacts
+// also defensively excludes the marker, but we include it here so the contract
+// is explicit. ReadArtifacts compares on the same full-relative-path form.
 func buildArtifactExcludeSet(spec wire.JobSpec) map[string]bool {
 	exclude := make(map[string]bool, len(spec.Files)+2)
 	for _, f := range spec.Files {
-		exclude[filepath.Base(f.Name)] = true
+		// Use the same sanitizer the runner uses to materialize the file, so the
+		// exclude key matches the path the artifact reader sees. Skip names that
+		// fail to sanitize (the runner rejects them before run anyway).
+		rel, err := runner.SanitizeWorkspacePath(f.Name)
+		if err != nil {
+			continue
+		}
+		exclude[rel] = true
 	}
 	exclude[".compile_ready"] = true
 	if out := compileOutputBasename(spec); out != "" {
