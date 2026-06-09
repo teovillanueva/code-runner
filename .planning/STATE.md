@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Input Files & Content-Addressed Blobs
-status: planning
-last_updated: "2026-06-09T08:51:24.383Z"
-last_activity: 2026-06-09
+status: executing
+stopped_at: Completed 15-01-PLAN.md — multi-file input (inline base64 + subdirs) shipped. FILES-01..08 all satisfied; go build/test, pnpm -r test, make contract-check all green. Next: Phase 16 (CAS).
+last_updated: "2026-06-09T11:25:00.000Z"
+last_activity: 2026-06-09 — executed Phase 15 Plan 01 (multi-file input inline)
 progress:
-  total_phases: 2
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 16
+  completed_phases: 11
+  total_plans: 38
+  completed_plans: 38
+  percent: 66
 ---
 
 # Project State
@@ -24,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 
 ## Current Position
 
-Phase: 15 — Multi-file Input (inline) (next: `/gsd:plan-phase 15`)
-Plan: —
-Status: Roadmap created — awaiting phase planning
-Last activity: 2026-06-09 — v1.2 roadmap created (Phases 15–16)
+Phase: 15 — Multi-file Input (inline) — COMPLETE (1/1 plans)
+Plan: 15-01 shipped (next: `/gsd:plan-phase 16`)
+Status: Phase 15 executed — FILES-01..08 satisfied; all gates green
+Last activity: 2026-06-09 — executed Phase 15 Plan 01 (inline base64 + subdirs)
 
 ## Performance Metrics
 
@@ -126,6 +127,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-09
+Last session: 2026-06-09T09:25:05.454Z
 Stopped at: v1.2 roadmap created — Phases 15–16 appended to ROADMAP.md (summary checklist + Phase Details — Milestone v1.2 + progress table + execution order), 20 v1.2 requirements (FILES-01..08, BLOB-01..12) mapped 100% in REQUIREMENTS.md. v1.0 phases 1–9 and v1.1 phases 10–14 untouched.
-Resume file: Next — `/gsd:plan-phase 15`
+Resume file: None

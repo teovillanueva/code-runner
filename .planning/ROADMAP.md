@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 ## Milestone v1.2 — Input Files & Content-Addressed Blobs
 
-- [ ] **Phase 15: Multi-file Input (inline)** - Multiple input files per `/v1/execute` (text + binary via `FileInput.encoding` base64, subdir paths under `/workspace`), worker-side path sanitization (host-escape-only), `MAX_FILES_BYTES` 413 cap, base64/path 400 validation, artifact-exclude by full relative path, Node SDK Buffer/text passthrough — zero new infra, independently shippable
+- [x] **Phase 15: Multi-file Input (inline)** - Multiple input files per `/v1/execute` (text + binary via `FileInput.encoding` base64, subdir paths under `/workspace`), worker-side path sanitization (host-escape-only), `MAX_FILES_BYTES` 413 cap, base64/path 400 validation, artifact-exclude by full relative path, Node SDK Buffer/text passthrough — zero new infra, independently shippable (completed 2026-06-09)
 - [ ] **Phase 16: Content-Addressed Blob Store (CAS)** - A `Blob` interface over an S3-compatible store (reusing Phase-9 artifact-store plumbing), `POST /v1/blobs/check` issuing presigned PUTs to OUR store (bytes go client->store, never through the gateway), sha256 verify on finalize + worker pull, a `FileInput.ref` variant, Redis monotonic idle-TTL + per-run lease + grace-window GC, worker streaming blob->tar->sandbox, Node SDK `blobs.upload` + transparent inline-vs-CAS routing, BYO-bucket via env, minio inert in compose
 
 ## Phase Details
@@ -394,5 +394,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 12. Go ZygoteRunner & Warm Pool | 0/? | Not started | - |
 | 13. Tiered Routing, Deploy & Gating | 0/? | Not started | - |
 | 14. Zygote Safety, Density & Pool Observability | 0/? | Not started | - |
-| 15. Multi-file Input (inline) | 0/? | Not started | - |
+| 15. Multi-file Input (inline) | 1/1 | Complete   | 2026-06-09 |
 | 16. Content-Addressed Blob Store (CAS) | 0/? | Not started | - |

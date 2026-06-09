@@ -223,14 +223,14 @@ Let callers ship arbitrary input files (text + binary, in subdirectories) alongs
 
 ### Multi-file Input — Inline (Phase 15)
 
-- [ ] **FILES-01**: A caller can submit multiple input files in a single `/v1/execute` request and they all materialize in the sandbox workspace before the run starts
-- [ ] **FILES-02**: `FileInput` gains an `encoding` field (`utf8` default | `base64`); `base64` lets binary files (xlsx, parquet, images, zip) be sent inline, and omitting the field is fully backward-compatible with existing text callers
-- [ ] **FILES-03**: A caller can place a file in a subdirectory via a relative path in `name` (e.g. `data/input.csv`); the worker creates the parent directories under `/workspace`
-- [ ] **FILES-04**: The worker sanitizes every file path so it cannot escape `/workspace` (rejects absolute paths; collapses `..` traversal), enforced in the worker regardless of any API-side validation
-- [ ] **FILES-05**: Captured artifacts (`collectOutput`) exclude every input file by its full relative path, not just its basename, so a subdir input is never echoed back as an artifact
-- [ ] **FILES-06**: The API rejects an over-large request (sum of decoded input bytes) with HTTP 413, governed by a configurable `MAX_FILES_BYTES`
-- [ ] **FILES-07**: The API rejects invalid base64 content and escaping/absolute paths with HTTP 400 before the job is enqueued
-- [ ] **FILES-08**: The Node SDK accepts both text and binary (`Buffer`) input files and sets the correct `encoding` transparently
+- [x] **FILES-01**: A caller can submit multiple input files in a single `/v1/execute` request and they all materialize in the sandbox workspace before the run starts
+- [x] **FILES-02**: `FileInput` gains an `encoding` field (`utf8` default | `base64`); `base64` lets binary files (xlsx, parquet, images, zip) be sent inline, and omitting the field is fully backward-compatible with existing text callers
+- [x] **FILES-03**: A caller can place a file in a subdirectory via a relative path in `name` (e.g. `data/input.csv`); the worker creates the parent directories under `/workspace`
+- [x] **FILES-04**: The worker sanitizes every file path so it cannot escape `/workspace` (rejects absolute paths; collapses `..` traversal), enforced in the worker regardless of any API-side validation
+- [x] **FILES-05**: Captured artifacts (`collectOutput`) exclude every input file by its full relative path, not just its basename, so a subdir input is never echoed back as an artifact
+- [x] **FILES-06**: The API rejects an over-large request (sum of decoded input bytes) with HTTP 413, governed by a configurable `MAX_FILES_BYTES`
+- [x] **FILES-07**: The API rejects invalid base64 content and escaping/absolute paths with HTTP 400 before the job is enqueued
+- [x] **FILES-08**: The Node SDK accepts both text and binary (`Buffer`) input files and sets the correct `encoding` transparently
 
 ### Content-Addressed Blob Store — CAS (Phase 16)
 
