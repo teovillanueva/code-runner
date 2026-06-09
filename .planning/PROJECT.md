@@ -12,24 +12,21 @@ It is a **polyglot monorepo by design** — each component uses the right tool: 
 
 Run untrusted code in a hardened, resource-bounded sandbox with a live interactive stdin session and reliable real-time output — without ever leaking a container, a subscription, or a session slot — and make it trivially self-hostable and extensible (add a language = add a folder + an image).
 
-## Current Milestone: v1.1 Density / ZygoteRunner
+## Current Milestone: v1.2 Input Files & Content-Addressed Blobs
 
-**Goal:** Make the `ZygoteRunner` production-ready on main — all 4 languages work end-to-end, with Python + R gaining ~2.7× sandbox density via copy-on-write of pre-imported libraries.
+**Goal:** Let callers send arbitrary input files alongside the code — text *and* binary, in subdirectories — and dedupe large/shared files across runs via a content-addressed (sha256) blob store, without breaking the thin-gateway or host-escape-only security posture.
 
 **Target features:**
-- `preimport` manifest field + contract regen (`pnpm contract`) + Python/R manifest updates
-- Per-language zygote agents (Python, R): pre-import → spawn protocol → double-fork + per-child hardening → stdio wiring
-- Go `ZygoteRunner` behind the existing `Runner`/`Sandbox` interface (Create/Stdin/Stdout/Stderr/Wait/Kill/Cleanup/Compile, CPUReader, `sync.Once` cleanup, full-tree kill, three-clock contract)
-- Warm per-language parent pool + idle-parent reaping (credential-free parent over a minimal pipe)
-- `TieredRunner`: routes Python/R → zygote, Rust/SQLite → `DockerSocketRunner`
-- Abuse + isolation test coverage for the zygote path (Phase 4 parity)
-- Fly deploy config for privileged pools + Fly-only runtime gating
+- **Multi-file input (inline):** `FileInput.encoding` (`utf8` default | `base64`) so binary files (xlsx/parquet/images/zip) ship inline; subdirectory paths in `FileInput.name` (e.g. `data/input.csv`) materialized under `/workspace`; worker-side path sanitization (no escape); a configurable `MAX_FILES_BYTES` body cap; Node SDK Buffer/text passthrough.
+- **Content-addressed blob store (CAS):** a `Blob` interface over an S3-compatible store (reusing the Phase-9 artifact-store plumbing where it fits); `POST /v1/blobs/check` → missing hashes + presigned PUT URLs to *our* store; sha256 verify on finalize and on worker pull; a `FileInput.ref` variant; Redis-tracked idle TTL (monotonic, touch-on-use) + per-run lease so GC never deletes an in-use blob; worker streams blobs into the sandbox; Node SDK `blobs.upload` + transparent inline-vs-CAS routing; BYO-bucket via env; minio shipped inert in compose.
 
 **Locked decisions:**
-- **Tiered coverage** — CoW (2.7×) only benefits interpreted heavy-import languages; Python + R run on `ZygoteRunner`, Rust (compiles a static binary) + SQLite (no imports) stay on `DockerSocketRunner`. A `TieredRunner` routes per-manifest. All 4 languages must still work end-to-end.
-- **Fly-only security posture** — the zygote pool runs privileged (`CAP_SYS_ADMIN` + `CAP_SETUID` + host cgroups) to rebuild per-child isolation inside it; gated to the Fly/production runtime where Firecracker is the real host boundary. Local dev + CI keep `DockerSocketRunner`.
+- **`encoding` is additive and default-`utf8`** — existing callers (text `content`) are unchanged; `base64` unlocks binary. Subdir paths are sanitized with `path.Clean` anchored at `/` so traversal collapses inside `/workspace`; sanitization is enforced in the **worker** regardless of API validation (host-escape-only threat model).
+- **code-runner OWNS the CAS store** (not the consumer) — required for global dedup to mean anything. The presigned URL is *issued by code-runner* and points at our own store; the worker pulls only from that known host → **no SSRF**. Bytes go client→store directly, never through the Hono gateway (keeps it thin).
+- **TTL is the blob's, not the job's** — a reference can only *extend* the TTL (monotonic, touch-on-use); a live run *leases* its blobs so GC skips them; GC uses a grace window. Mirrors the existing Lua-guarded slot-accounting pattern.
+- **Single trusted backend caller** (bearer token, never internet-exposed) → global CAS dedup is safe; **no per-tenant namespacing** in v1.2 (deferred to if/when mutually-distrusting end users reference hashes directly).
 
-**Foundation:** Builds on validated spikes 005 (measured 2.7×: Python 30→81 concurrent on 4GB, marginal RAM 110MB→41MB) and 006 (full L4 hardening is free — 81/41.6MB holds). Four spike-proven design rules: (1) credential-free parent (fork inherits FDs; CLOEXEC doesn't help without `exec()`); (2) per-child hardening (distinct UID, PID-ns via double-fork, `no_new_privs`, private `/tmp`, per-child cgroup-v2 sub-cgroup; child scrubs fds>2); (3) per-language pools (CoW shares only within the same parent/image); (4) manifest pre-import of the common set. See `.planning/decisions/FAST-FOLLOW-zygote-runner.md`.
+**Layering:** Phase 15 (inline) is zero-new-infra and independently shippable. Phase 16 (CAS) needs an object-store bucket — implemented + tested locally (minio), with deploy steps documented; prod storage is not half-provisioned autonomously. See the design discussion captured in `.planning/decisions/` (input-files + CAS).
 
 ## Requirements
 
@@ -119,4 +116,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-08 — started milestone v1.1 (Density / ZygoteRunner): tiered Python+R zygote with CoW density, Fly-only privileged pools, building on validated spikes 005/006.*
+*Last updated: 2026-06-09 — started milestone v1.2 (Input Files & Content-Addressed Blobs): inline multi-file input (binary via base64 + subdirs) and a content-addressed sha256 blob store with presigned upload, Redis-tracked TTL/lease, and worker streaming pull. v1.1 (Density / ZygoteRunner) shipped.*

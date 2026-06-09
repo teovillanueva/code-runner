@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: Density / ZygoteRunner
-status: shipped
-last_updated: "2026-06-09T00:00:00.000Z"
+milestone: v1.2
+milestone_name: Input Files & Content-Addressed Blobs
+status: planning
+last_updated: "2026-06-09T08:51:24.383Z"
 last_activity: 2026-06-09
 progress:
-  total_phases: 5
-  completed_phases: 5
+  total_phases: 0
+  completed_phases: 0
   total_plans: 0
   completed_plans: 0
-  percent: 100
+  percent: 0
 ---
 
 # Project State
@@ -24,17 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-02)
 
 ## Current Position
 
-Phase: v1.1 SHIPPED (Phases 10–14 complete, executed directly with gsd-executor subagents per phase, not the per-phase PLAN.md flow)
+Phase: Not started (defining requirements)
 Plan: —
-Status: On main + deployed to Fly prod (worker sha-2ddd3b2, zygote enabled). Python = zygote tier; R/Rust/SQLite = Docker tier; Docker fallback guarantees all 4 work even if a pool fails.
-Last activity: 2026-06-09 — deployed worker to prod, refreshed agent-baked python image on all 3 pool nodes, confirmed cgroup delegation works on Fly; restored scale-to-zero
-
-Milestone v1.1 phase map:
-- Phase 10: Pre-Import Contract — `preimport` manifest field + contract regen + Python/R sets (PRE-01..04)
-- Phase 11: Zygote Agents & Per-Child Hardening — credential-free Python/R agents + double-fork hardening (AGENT-*, ZHARD-*)
-- Phase 12: Go ZygoteRunner & Warm Pool — Runner-interface ZygoteRunner + warm parent pool (ZYG-*, POOL-*)
-- Phase 13: Tiered Routing, Deploy & Gating — TieredRunner, all 4 langs E2E, Fly privileged pool, off→Docker default (TIER-*, ZDEP-*)
-- Phase 14: Zygote Safety, Density & Pool Observability — abuse parity + isolation + density + no-leak gate + pool metrics (ZTEST-*, ZOBS-*)
+Status: Defining requirements
+Last activity: 2026-06-09 — Milestone v1.2 started
 
 ## Performance Metrics
 
