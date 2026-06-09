@@ -227,7 +227,9 @@ is the only unauthenticated route.
   "language": "python",            // name or alias: "py", "rust", "rs", "sqlite", "sql", …
   "version": "3.12",               // optional; omit to use the only/most-recent match
   "files": [
-    { "name": "main.py", "content": "name = input('name? ')\nprint(f'hello {name}')\n" }
+    { "name": "main.py", "content": "name = input('name? ')\nprint(f'hello {name}')\n" },
+    { "name": "data/input.csv", "content": "a,b\n1,2\n" },           // subdir: written to /workspace/data/input.csv
+    { "name": "fixtures/sheet.xlsx", "content": "UEsDBBQ…", "encoding": "base64" } // binary file
   ],
   "limits": {                      // optional per-request overrides; absent → manifest defaults
     "wallTimeMs": 30000, "idleMs": 10000, "cpuMs": 15000,
@@ -237,10 +239,13 @@ is the only unauthenticated route.
 }
 ```
 
+Each `files[]` entry: `name` is a **relative path** under `/workspace` (subdirs via `/` are allowed; absolute paths and `..` traversal are rejected). `content` is UTF-8 text unless `encoding:"base64"` carries arbitrary bytes. See [`docs/input-files.md`](docs/input-files.md).
+
 | Code | Body | When |
 | --- | --- | --- |
 | `202` | `{"jobId","channel":"private-run-<jobId>","status":"queued"}` | Accepted; enqueued. |
-| `400` | `{"error","details":[…]}` | Invalid body / unknown language or version. |
+| `400` | `{"error","details":[…]}` | Invalid body / unknown language or version / invalid base64 / escaping or absolute file path. |
+| `413` | `{"error":"Input files too large…"}` | Total decoded file bytes exceed `MAX_FILES_BYTES` (default 8 MiB). |
 | `429` | `{"error":"Executor at capacity…","retryAfterMs":1000}` | `LLEN(jobs:queue) >= MAX_QUEUE_DEPTH`. |
 
 </details>
@@ -308,6 +313,20 @@ const job = await client.execute({ language: "python", files: [{ name: "main.py"
 // subscribe on the browser, then:
 await client.start(job.jobId);
 await client.sendStdin(job.jobId, "world\n");
+```
+
+**Binary + subdir inputs** — pass a `Buffer` and the SDK base64-encodes it for you (`encoding:"base64"`):
+
+```ts
+import { readFileSync } from "node:fs";
+
+await client.executeFiles({
+  language: "python",
+  files: [
+    { name: "main.py", content: "import openpyxl; print(openpyxl.load_workbook('data/sheet.xlsx').active.max_row)" },
+    { name: "data/sheet.xlsx", data: readFileSync("./sheet.xlsx") }, // binary → base64 transparently
+  ],
+});
 ```
 
 **Browser (subscribe to live output):**
@@ -384,6 +403,7 @@ scale-to-zero caveats.
 | `REDIS_URL` | `redis://redis:6379` | Native TCP Redis. |
 | `API_PORT` | `8080` | API listen port. |
 | `MAX_QUEUE_DEPTH` | `256` | `/v1/execute` → `429` when `LLEN(jobs:queue) >=` this. |
+| `MAX_FILES_BYTES` | `8388608` | `/v1/execute` → `413` when total **decoded** input-file bytes exceed this (8 MiB). |
 | `SOKETI_HOST` / `SOKETI_PORT` | `soketi` / `6001` | soketi address. |
 | `SOKETI_USE_TLS` | `false` | Connect to soketi over TLS. |
 | `SOKETI_APP_ID` / `_APP_KEY` | `code-runner` / `code-runner-key` | Pusher app id & **public** key. |
