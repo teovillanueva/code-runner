@@ -416,6 +416,42 @@ def _writeall(fd, buf):
         view = view[n:]
 
 
+def _flush_matplotlib_figures():
+    """Save every still-open matplotlib figure to the CWD as figure_NNN.png, so a
+    job that renders plots WITHOUT calling savefig() still produces artifacts.
+
+    This is the zygote-tier counterpart of sitecustomize.py's atexit saver. On the
+    Docker tier the sandbox runs `python main.py` and the interpreter shuts down
+    normally, so sitecustomize's atexit hook fires and writes the figures. The
+    zygote child runs user code via runpy.run_path() and exits with os._exit() —
+    runpy does NOT trigger interpreter shutdown and os._exit() bypasses atexit
+    entirely, so that hook NEVER runs here. We therefore drive the same flush
+    explicitly from the child's finally block, while the CWD is still the job
+    workspace, so _capture_artifacts() picks the PNGs up like any other file.
+
+    Path is RELATIVE (figure_NNN.png) so it lands in the child's workspace
+    (/tmp/work) — NOT the hardcoded /workspace, which does not exist in the
+    child's private mount namespace.
+
+    Best-effort throughout: a job that never imported matplotlib emits ZERO
+    figures (sys.modules.get avoids forcing an import → no blank PNGs), and a
+    single bad figure never alters the job's exit status."""
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None:
+        return
+    try:
+        for num in plt.get_fignums():
+            try:
+                plt.figure(num).savefig(
+                    "figure_%03d.png" % num, dpi=100, bbox_inches="tight"
+                )
+            except Exception:
+                # A single bad figure must never crash the capture path.
+                pass
+    except Exception:
+        pass
+
+
 def _capture_artifacts(workdir, input_rel, art_fd):
     """Runs in the hardened child (post-uid-drop) AFTER user code, regardless of
     exit path — mirroring the Docker tier, which reads /workspace once the process
@@ -500,6 +536,13 @@ def _run_user_code(files, entrypoint, child_in, child_out, child_err, child_art,
             sys.stderr.write(f"{type(e).__name__}: {e}\n")
         exit_code = 1
     finally:
+        # Flush still-open matplotlib figures to the workspace BEFORE capture:
+        # the zygote child never runs atexit (runpy + os._exit), so the no-savefig
+        # auto-capture sitecustomize relies on would otherwise be lost (#369).
+        try:
+            _flush_matplotlib_figures()
+        except Exception:
+            pass
         # Capture + stream artifacts regardless of exit path, then close the
         # artifact fd so the agent sees EOF and stops reading for this job.
         try:

@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -316,6 +317,120 @@ func TestZygoteIntegrationArtifacts(t *testing.T) {
 	assert.Greater(t, len(plot.Data), 0, "captured PNG must be non-empty")
 	assert.Equal(t, "image/png", plot.MimeType, "PNG MIME inferred from extension")
 	assert.Equal(t, []byte("\x89PNG"), plot.Data[:4], "captured bytes must be a real PNG header")
+}
+
+// TestZygoteIntegrationArtifactsAutoCapture is the #369 repro: a matplotlib job
+// that renders a figure WITHOUT calling savefig() must still produce an artifact.
+// On the Docker tier sitecustomize's atexit hook saves open figures at interpreter
+// shutdown; the zygote child runs user code via runpy + os._exit (atexit never
+// fires), so the agent must drive the figure flush explicitly. The figure must be
+// captured as figure_000.png. Before the fix this returned zero artifacts.
+func TestZygoteIntegrationArtifactsAutoCapture(t *testing.T) {
+	cli := requireZygotePython(t)
+	r := newZygoteTestRunner(t)
+	defer func() {
+		_ = r.Close()
+		assertNoZygotePoolLeak(t, cli)
+	}()
+
+	jobID := fmt.Sprintf("zyg-autocap-%d", time.Now().UnixNano())
+	// NOTE: no savefig() — relies on the auto-capture of open figures.
+	script := strings.Join([]string{
+		"import matplotlib.pyplot as plt",
+		"plt.plot([1,2,3],[1,4,9])",
+		"plt.title('no savefig')",
+		"print('rendered a figure without savefig')",
+		"",
+	}, "\n")
+	files := []wire.FileInput{{Name: "main.py", Content: wire.Ptr(script)}}
+	spec := zygoteSpec(jobID, "main.py", files)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	sb := createOrSkipUnreachable(t, r, ctx, spec)
+	defer func() { _ = sb.Cleanup() }()
+
+	outCh := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(sb.Stdout())
+		outCh <- string(b)
+	}()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer waitCancel()
+	result, werr := sb.Wait(waitCtx)
+	require.NoError(t, werr, "Wait must not error")
+	require.NotNil(t, result.ExitCode, "ExitCode must be set")
+	assert.Equal(t, 0, *result.ExitCode, "matplotlib script must exit 0")
+	<-outCh
+
+	ar, ok := sb.(zygoteArtifactReader)
+	require.True(t, ok, "zygote sandbox must expose ReadArtifacts (worker.DockerSandbox parity)")
+
+	arts, err := ar.ReadArtifacts(context.Background(), map[string]bool{"main.py": true})
+	require.NoError(t, err, "ReadArtifacts must not error")
+
+	// pyplot is 1-indexed, so the first implicit figure saves as figure_001.png;
+	// match any figure_NNN.png rather than a fixed number.
+	figRe := regexp.MustCompile(`^figure_\d+\.png$`)
+	var fig *runner.CapturedArtifact
+	for i := range arts {
+		if figRe.MatchString(arts[i].Name) {
+			fig = &arts[i]
+		}
+		assert.NotEqual(t, "main.py", arts[i].Name, "input/entrypoint must never be an artifact")
+	}
+	require.NotNil(t, fig, "a figure_NNN.png must be auto-captured without savefig (got %d artifacts)", len(arts))
+	assert.Greater(t, len(fig.Data), 0, "auto-captured PNG must be non-empty")
+	assert.Equal(t, "image/png", fig.MimeType, "PNG MIME inferred from extension")
+	assert.Equal(t, []byte("\x89PNG"), fig.Data[:4], "captured bytes must be a real PNG header")
+}
+
+// TestZygoteIntegrationNoMatplotlibNoArtifacts guards the inverse invariant: a job
+// that never imports matplotlib must emit ZERO figure_*.png artifacts (the flush
+// must not force-import matplotlib or fabricate blank PNGs).
+func TestZygoteIntegrationNoMatplotlibNoArtifacts(t *testing.T) {
+	cli := requireZygotePython(t)
+	r := newZygoteTestRunner(t)
+	defer func() {
+		_ = r.Close()
+		assertNoZygotePoolLeak(t, cli)
+	}()
+
+	jobID := fmt.Sprintf("zyg-nomatplotlib-%d", time.Now().UnixNano())
+	script := "print('no plots here')\n"
+	files := []wire.FileInput{{Name: "main.py", Content: wire.Ptr(script)}}
+	spec := zygoteSpec(jobID, "main.py", files)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	sb := createOrSkipUnreachable(t, r, ctx, spec)
+	defer func() { _ = sb.Cleanup() }()
+
+	outCh := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(sb.Stdout())
+		outCh <- string(b)
+	}()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer waitCancel()
+	result, werr := sb.Wait(waitCtx)
+	require.NoError(t, werr, "Wait must not error")
+	require.NotNil(t, result.ExitCode, "ExitCode must be set")
+	assert.Equal(t, 0, *result.ExitCode, "script must exit 0")
+	<-outCh
+
+	ar, ok := sb.(zygoteArtifactReader)
+	require.True(t, ok, "zygote sandbox must expose ReadArtifacts")
+
+	arts, err := ar.ReadArtifacts(context.Background(), map[string]bool{"main.py": true})
+	require.NoError(t, err, "ReadArtifacts must not error")
+	for i := range arts {
+		assert.NotContains(t, arts[i].Name, "figure_", "no figure_*.png when matplotlib was never imported")
+	}
 }
 
 // TestZygoteIntegrationKill sends KILL to a long-running script and asserts the

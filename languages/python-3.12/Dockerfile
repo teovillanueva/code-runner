@@ -99,13 +99,15 @@ RUN set -eu; \
     # never ship a sandbox image where the advertised sci stack crashes at import.
     python -c "import numpy, numpy.testing, scipy, sklearn, statsmodels.api, seaborn, matplotlib; matplotlib.use('Agg'); from matplotlib import pyplot; print('cr: scientific-stack import smoke ok')"
 
-# ── Auto-capture matplotlib figures as /workspace artifacts ───────────────────
+# ── Auto-capture matplotlib figures as workspace artifacts ────────────────────
 # COPY (after the pip install so site-packages exists) the sitecustomize.py hook
 # into site-packages; Python auto-imports `sitecustomize` at interpreter startup
-# with no env var. It captures any open matplotlib figures to /workspace/figure_*.png
-# at shutdown WITHOUT the user calling savefig(). COPY preserves 0644 so the
-# runtime UID 65534 can read it. A run that never imports matplotlib emits zero
-# figures (the saver only registers on the first matplotlib import).
+# with no env var. It captures any open matplotlib figures to figure_*.png in the
+# cwd (the job workspace) at shutdown WITHOUT the user calling savefig(). On the
+# Docker tier this fires via atexit; on the zygote tier the agent drives the same
+# flush explicitly (atexit never runs there — see zygote_agent.py, #369). COPY
+# preserves 0644 so the runtime UID 65534 can read it. A run that never imports
+# matplotlib emits zero figures (the saver only registers on the first import).
 COPY sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
 
 # ── Zygote agent (Phase 11) ───────────────────────────────────────────────────

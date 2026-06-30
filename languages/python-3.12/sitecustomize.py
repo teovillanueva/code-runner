@@ -54,13 +54,16 @@ def _install():
     import atexit
 
     def _saver():
-        # Save every currently-open figure to /workspace, then destroy them all.
+        # Save every currently-open figure to the CWD, then destroy them all.
+        # RELATIVE path (not hardcoded /workspace) so capture works on BOTH tiers:
+        # the Docker sandbox runs with cwd=/workspace, and the zygote child runs
+        # with cwd=/tmp/work — a hardcoded /workspace would miss the latter (#369).
         try:
             for num in plt.get_fignums():
                 try:
                     fig = plt.figure(num)
                     fig.savefig(
-                        "/workspace/figure_%03d.png" % num,
+                        "figure_%03d.png" % num,
                         dpi=100,
                         bbox_inches="tight",
                     )
