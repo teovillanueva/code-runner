@@ -25,13 +25,16 @@ primary_region = "gru"
   #   EXECUTOR_API_TOKEN, SOKETI_APP_SECRET
 
 # Public gateway, gated by the EXECUTOR_API_TOKEN bearer. force_https redirects
-# http->https. Scales to zero when idle (auto-starts on request).
+# http->https. Kept always-warm (min 1, no auto-stop): "suspend" froze the
+# long-lived Redis TCP socket, so on resume the first ops hit ECONNRESET and the
+# job `start` publish to ctrl:<id> was lost — workers warmup-timed-out and batch
+# runs 45s-PollTimeout'd to 500. Always-on keeps the Redis connection alive.
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "suspend"
+  auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
 # Fly scrapes this into the org's managed Prometheus, exposing
 # code_runner_queue_depth (LLEN jobs:queue) for fly-autoscaler to scale the
