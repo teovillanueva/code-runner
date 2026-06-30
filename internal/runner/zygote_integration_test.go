@@ -237,6 +237,87 @@ func TestZygoteIntegrationStdinEchoCPU(t *testing.T) {
 	assert.Greater(t, cpuMs, 0, "agent must report cumulative CPU > 0 (ZYG-05)")
 }
 
+// zygoteArtifactReader is the subset of the (unexported) zygoteSandbox surface the
+// worker reaches via type assertion to capture workspace files (mirrors
+// worker.DockerSandbox.ReadArtifacts). Declared locally so the external test can
+// drain artifacts without importing the worker package.
+type zygoteArtifactReader interface {
+	ReadArtifacts(ctx context.Context, exclude map[string]bool) ([]runner.CapturedArtifact, error)
+}
+
+// TestZygoteIntegrationArtifacts is the acceptance repro: a matplotlib job writes
+// plot.png into its workspace; the agent must stream it back so ReadArtifacts
+// returns it (parity with the Docker tier). The input/entrypoint main.py must NOT
+// be returned. This is the end-to-end proof that ZYGOTE_ENABLED no longer drops
+// artifacts.
+func TestZygoteIntegrationArtifacts(t *testing.T) {
+	cli := requireZygotePython(t)
+	r := newZygoteTestRunner(t)
+	defer func() {
+		_ = r.Close()
+		assertNoZygotePoolLeak(t, cli)
+	}()
+
+	jobID := fmt.Sprintf("zyg-artifacts-%d", time.Now().UnixNano())
+	script := strings.Join([]string{
+		"import matplotlib",
+		"matplotlib.use('Agg')",
+		"import matplotlib.pyplot as plt, os",
+		"plt.plot([1,2,3],[1,4,9])",
+		"plt.savefig('plot.png')",
+		"print('EXISTS:', os.path.exists('plot.png'), 'SIZE:', os.path.getsize('plot.png'))",
+		"",
+	}, "\n")
+	files := []wire.FileInput{{Name: "main.py", Content: wire.Ptr(script)}}
+	spec := zygoteSpec(jobID, "main.py", files)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	sb := createOrSkipUnreachable(t, r, ctx, spec)
+	defer func() { _ = sb.Cleanup() }()
+
+	// Drain stdout so the relay never blocks.
+	outCh := make(chan string, 1)
+	go func() {
+		b, _ := io.ReadAll(sb.Stdout())
+		outCh <- string(b)
+	}()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer waitCancel()
+	result, werr := sb.Wait(waitCtx)
+	require.NoError(t, werr, "Wait must not error")
+	require.NotNil(t, result.ExitCode, "ExitCode must be set")
+	assert.Equal(t, 0, *result.ExitCode, "matplotlib script must exit 0")
+
+	select {
+	case out := <-outCh:
+		assert.Contains(t, out, "EXISTS: True", "the PNG must exist in the workspace")
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out reading stdout")
+	}
+
+	ar, ok := sb.(zygoteArtifactReader)
+	require.True(t, ok, "zygote sandbox must expose ReadArtifacts (worker.DockerSandbox parity)")
+
+	// Exclude the input/entrypoint exactly as the worker's buildArtifactExcludeSet does.
+	arts, err := ar.ReadArtifacts(context.Background(), map[string]bool{"main.py": true})
+	require.NoError(t, err, "ReadArtifacts must not error")
+
+	var plot *runner.CapturedArtifact
+	for i := range arts {
+		if arts[i].Name == "plot.png" {
+			plot = &arts[i]
+		}
+		assert.NotEqual(t, "main.py", arts[i].Name, "input/entrypoint must never be an artifact")
+	}
+	require.NotNil(t, plot, "plot.png must be captured as an artifact (got %d artifacts)", len(arts))
+	assert.Greater(t, len(plot.Data), 0, "captured PNG must be non-empty")
+	assert.Equal(t, "image/png", plot.MimeType, "PNG MIME inferred from extension")
+	assert.Equal(t, []byte("\x89PNG"), plot.Data[:4], "captured bytes must be a real PNG header")
+}
+
 // TestZygoteIntegrationKill sends KILL to a long-running script and asserts the
 // child tree is terminated (Wait returns) with no pool leak after Close.
 func TestZygoteIntegrationKill(t *testing.T) {

@@ -22,7 +22,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
+	"path"
 	"sync"
 	"time"
 
@@ -360,6 +362,66 @@ func (s *zygoteSandbox) CPUReader() CPUUsageFunc {
 // Limits returns the job limits stored in the sandbox, mirroring
 // dockerSandbox.Limits so the worker can pass them to session.Run uniformly.
 func (s *zygoteSandbox) Limits() wire.Limits { return s.spec.Limits }
+
+// ReadArtifacts returns the workspace files the agent streamed back as ARTIFACT
+// frames during the run (accumulated on the relay connection), filtered + MIME-
+// tagged to mirror dockerSandbox.ReadArtifacts EXACTLY so the worker consumes
+// both tiers through the same DockerSandbox.ReadArtifacts path (worker.go:149)
+// with no branching.
+//
+// Unlike the Docker tier — which reads /workspace out of the live container via
+// CopyFromContainer at BeforeCleanup time — the zygote child's workspace lives in
+// the child's OWN private mount namespace (an in-child tmpfs), invisible to the
+// agent and destroyed when the child exits. So the child itself captures the
+// files just before it exits and streams them over the relay; this method simply
+// drains what already arrived (it performs no I/O and never errors). Because all
+// ARTIFACT frames precede EXIT and Wait blocks on EXIT, the set is complete by
+// the time the session's BeforeCleanup hook calls this.
+//
+// The exclude keys match the Docker contract: full sanitized relative paths AND
+// basenames not to return (input files + ".compile_ready" + any compile-output
+// binary). The agent also pre-excludes its known input files, but this re-applies
+// the worker's authoritative set for exact parity + defense in depth.
+func (s *zygoteSandbox) ReadArtifacts(_ context.Context, exclude map[string]bool) ([]CapturedArtifact, error) {
+	raw := s.rc.takeArtifacts()
+	// Defensive exclusion of the compile marker basename, regardless of caller
+	// (mirrors dockerSandbox.ReadArtifacts). The marker path uses forward slashes,
+	// so path.Base recovers ".compile_ready".
+	markerBase := path.Base(compileRunMarker)
+
+	out := make([]CapturedArtifact, 0, len(raw))
+	for _, a := range raw {
+		rel := path.Clean(a.Name)
+		if rel == "" || rel == "." {
+			continue
+		}
+		base := path.Base(rel)
+		if base == markerBase {
+			continue
+		}
+		if exclude != nil && (exclude[rel] || exclude[base]) {
+			continue
+		}
+		mimeType := mime.TypeByExtension(path.Ext(rel))
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		out = append(out, CapturedArtifact{
+			Name:     rel,
+			MimeType: mimeType,
+			Data:     a.Data,
+		})
+	}
+	return out, nil
+}
+
+// ArtifactsTruncated reports whether the agent dropped one or more workspace
+// files because a single ARTIFACT frame would have exceeded the relay transport
+// cap (maxFramePayload). The worker ORs this into RunResult.ArtifactsTruncated so
+// the zygote tier marks transport-truncation identically to the Docker tier's
+// per-cap truncation. dockerSandbox does not implement this accessor (it has no
+// such transport limit), so the worker's optional type-assert is a no-op there.
+func (s *zygoteSandbox) ArtifactsTruncated() bool { return s.rc.artifactsTruncated.Load() }
 
 // Compile is never called on the zygote tier: Python/R manifests have
 // compile == nil, and any compile-bearing manifest is routed to the Docker tier

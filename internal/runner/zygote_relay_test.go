@@ -362,6 +362,117 @@ func TestRelayReadStartedEarlyExit(t *testing.T) {
 	}
 }
 
+// artifactFramePayload builds an ARTIFACT frame payload: [4 BE nameLen][name][data].
+func artifactFramePayload(name string, data []byte) []byte {
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(name)))
+	out := append([]byte{}, hdr[:]...)
+	out = append(out, []byte(name)...)
+	out = append(out, data...)
+	return out
+}
+
+// TestDecodeArtifactFrame covers the ARTIFACT payload parse: a well-formed frame
+// recovers name + data; malformed frames (too short / lying name length) error.
+func TestDecodeArtifactFrame(t *testing.T) {
+	data := []byte{0x89, 0x50, 0x4e, 0x47, 0x00, 0x01}
+	a, err := decodeArtifactFrame(artifactFramePayload("out/plot.png", data))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if a.Name != "out/plot.png" {
+		t.Errorf("name = %q, want out/plot.png", a.Name)
+	}
+	if !bytes.Equal(a.Data, data) {
+		t.Errorf("data mismatch: got %v", a.Data)
+	}
+	if a.MimeType != "" {
+		t.Errorf("MimeType must be empty (filled in ReadArtifacts), got %q", a.MimeType)
+	}
+
+	// Empty-data artifact is valid (a zero-byte file).
+	if a0, err := decodeArtifactFrame(artifactFramePayload("empty.txt", nil)); err != nil || a0.Name != "empty.txt" || len(a0.Data) != 0 {
+		t.Errorf("empty-data artifact: a=%+v err=%v", a0, err)
+	}
+
+	// Too short to hold the 4-byte name length.
+	if _, err := decodeArtifactFrame([]byte{0x00, 0x01}); err == nil {
+		t.Errorf("short frame: err = nil, want non-nil")
+	}
+	// Name length exceeds the remaining payload.
+	bad := []byte{0x00, 0x00, 0x00, 0x10, 'a'} // claims 16-byte name, has 1
+	if _, err := decodeArtifactFrame(bad); err == nil {
+		t.Errorf("oversize name length: err = nil, want non-nil")
+	}
+}
+
+// TestRelayArtifactAccumulationAndReadArtifacts drives the agent side emitting
+// ARTIFACT frames then EXIT(artifactsTruncated=true), and asserts the worker
+// accumulates them, that zygoteSandbox.ReadArtifacts applies the exclude set +
+// marker filter + MIME tagging (Docker-tier parity), and that the truncation flag
+// surfaces.
+func TestRelayArtifactAccumulationAndReadArtifacts(t *testing.T) {
+	rc, agent := newTestRelay(t)
+	var amu sync.Mutex
+
+	// STARTED, then start the demux reader.
+	startedBody, _ := json.Marshal(startedPayload{RealPID: 7})
+	go func() { _ = writeFrame(agent, &amu, frameStarted, startedBody) }()
+	dec := newFrameDecoder(rc.conn)
+	if _, _, err := rc.readStarted(dec); err != nil {
+		t.Fatalf("readStarted: %v", err)
+	}
+	rc.startReader(dec)
+
+	png := []byte{0x89, 0x50, 0x4e, 0x47}
+	go func() {
+		// plot.png is a real artifact; main.py is an input (excluded by the caller);
+		// .compile_ready is the bridge marker (defensively excluded).
+		_ = writeFrame(agent, &amu, frameArtifact, artifactFramePayload("plot.png", png))
+		_ = writeFrame(agent, &amu, frameArtifact, artifactFramePayload("main.py", []byte("print(1)")))
+		_ = writeFrame(agent, &amu, frameArtifact, artifactFramePayload(".compile_ready", []byte("x")))
+		exitCode := 0
+		exitBody, _ := json.Marshal(exitPayload{ExitCode: &exitCode, ArtifactsTruncated: true})
+		_ = writeFrame(agent, &amu, frameExit, exitBody)
+	}()
+
+	// Block on EXIT — all prior ARTIFACT frames are processed in order first.
+	select {
+	case e := <-rc.exitCh:
+		if e.err != nil {
+			t.Fatalf("exit err = %v", e.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for exit")
+	}
+
+	sb := &zygoteSandbox{rc: rc}
+	arts, err := sb.ReadArtifacts(context.Background(), map[string]bool{"main.py": true})
+	if err != nil {
+		t.Fatalf("ReadArtifacts: %v", err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("got %d artifacts, want 1 (plot.png; main.py + .compile_ready excluded): %+v", len(arts), arts)
+	}
+	if arts[0].Name != "plot.png" {
+		t.Errorf("name = %q, want plot.png", arts[0].Name)
+	}
+	if arts[0].MimeType != "image/png" {
+		t.Errorf("mime = %q, want image/png", arts[0].MimeType)
+	}
+	if !bytes.Equal(arts[0].Data, png) {
+		t.Errorf("data mismatch")
+	}
+	if !sb.ArtifactsTruncated() {
+		t.Errorf("ArtifactsTruncated = false, want true")
+	}
+
+	// takeArtifacts cleared the slice: a second read returns nothing.
+	if again, _ := sb.ReadArtifacts(context.Background(), nil); len(again) != 0 {
+		t.Errorf("second ReadArtifacts = %d, want 0 (drained once)", len(again))
+	}
+}
+
 // readN reads exactly n bytes from r (test helper) with a timeout guard via the
 // caller's overall test timeout.
 func readN(t *testing.T, r io.Reader, n int) string {

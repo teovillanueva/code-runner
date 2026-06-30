@@ -124,6 +124,12 @@ T_STDOUT = 0x11
 T_STDERR = 0x12
 T_CPU = 0x13
 T_EXIT = 0x14
+T_ARTIFACT = 0x15
+
+# Max single relay frame payload — MUST match maxFramePayload in zygote_relay.go
+# (16 MiB). An artifact whose frame would exceed this is dropped + flagged
+# (truncate + mark), mirroring the worker's per-cap artifact truncation.
+MAX_FRAME_PAYLOAD = 16 * 1024 * 1024
 
 CG_BASE = None  # delegated cgroup-v2 subtree, resolved at boot if available
 _job_seq = 0    # monotonic per-job counter for unique UID + cgroup leaf names
@@ -361,19 +367,26 @@ CHILD_WORKDIR = "/tmp/work"  # inside the child's OWN private /tmp tmpfs
 
 def _materialize_files(files, entrypoint):
     """Write the job's files into the child's private /tmp/work (which lives in the
-    child's own tmpfs — invisible to sibling children). Returns the cwd. The files
-    arrive copy-on-write through fork(); nothing is shared on a common filesystem,
-    so cross-child file isolation is total."""
+    child's own tmpfs — invisible to sibling children). Returns (cwd, input_rel)
+    where input_rel is the set of forward-slash relative paths of the materialized
+    inputs (used to exclude them from artifact capture, matching the worker's
+    exclude set). The files arrive copy-on-write through fork(); nothing is shared
+    on a common filesystem, so cross-child file isolation is total."""
     os.makedirs(CHILD_WORKDIR, exist_ok=True)
+    root = os.path.normpath(CHILD_WORKDIR)
+    input_rel = set()
     for f in files or []:
         name = f.get("name")
         if not name:
             continue
         dest = os.path.normpath(os.path.join(CHILD_WORKDIR, name))
-        root = os.path.normpath(CHILD_WORKDIR)
         if not (dest == root or dest.startswith(root + os.sep)):
             continue
         os.makedirs(os.path.dirname(dest), exist_ok=True)
+        # Record the input's path relative to the workspace root, forward-slashed
+        # to match the worker's SanitizeWorkspacePath exclude keys (e.g. "main.py"
+        # or "data/in.csv"), so an input file is never returned as an artifact.
+        input_rel.add(os.path.relpath(dest, root).replace(os.sep, "/"))
         content = f.get("content", "")
         encoding = f.get("encoding") or "utf8"
         if encoding == "base64":
@@ -389,14 +402,70 @@ def _materialize_files(files, entrypoint):
         else:
             with open(dest, "wb") as fh:
                 fh.write(content)
-    return CHILD_WORKDIR
+    return CHILD_WORKDIR, input_rel
 
 
-def _run_user_code(files, entrypoint, child_in, child_out, child_err, n,
-                   mem_bytes, tmpfs_bytes):
+# ============================ Artifact capture (R4/R5) ========================
+def _writeall(fd, buf):
+    """Write all of buf to a raw fd (os.write may do a partial write on a full
+    socket buffer; loop until drained). The agent drains the read end concurrently
+    in relay_loop, so a large artifact never deadlocks."""
+    view = memoryview(buf)
+    while view:
+        n = os.write(fd, view)
+        view = view[n:]
+
+
+def _capture_artifacts(workdir, input_rel, art_fd):
+    """Runs in the hardened child (post-uid-drop) AFTER user code, regardless of
+    exit path — mirroring the Docker tier, which reads /workspace once the process
+    terminates. Walks the child's private workspace and streams every NEW regular
+    file back to the agent over the dedicated artifact fd as a record:
+
+        [4-byte BE nameLen][name UTF-8][4-byte BE dataLen][data]
+
+    Input files (and the entrypoint) are excluded by relative path; the worker
+    re-applies the authoritative exclude set. Symlinks and non-regular files are
+    skipped (parity with the Docker tar TypeReg filter). Best-effort throughout:
+    any error is swallowed so artifact capture never alters the job's exit status."""
+    try:
+        for dirpath, _dirnames, filenames in os.walk(workdir):
+            for fn in filenames:
+                full = os.path.join(dirpath, fn)
+                try:
+                    if os.path.islink(full) or not os.path.isfile(full):
+                        continue
+                    rel = os.path.relpath(full, workdir).replace(os.sep, "/")
+                    if rel in input_rel:
+                        continue
+                    with open(full, "rb") as fh:
+                        data = fh.read()
+                    name_b = rel.encode()
+                    hdr = struct.pack(">I", len(name_b)) + name_b + struct.pack(">I", len(data))
+                    _writeall(art_fd, hdr)
+                    _writeall(art_fd, data)
+                except OSError:
+                    continue
+    except Exception:
+        pass
+
+
+def _run_user_code(files, entrypoint, child_in, child_out, child_err, child_art,
+                   n, mem_bytes, tmpfs_bytes):
     """Runs in the session (PID 1 of a fresh pidns). Wire stdio, harden, scrub,
     materialize files into the private tmpfs, chdir, exec the entrypoint in-process
-    via runpy. Exits with the script status."""
+    via runpy. Then — in ALL exit paths — capture workspace artifacts and stream
+    them back over child_art before exiting with the script status.
+
+    child_art is the child end of the dedicated artifact socketpair; it is kept
+    open across the fd scrub so post-run capture can stream files to the agent
+    (the workspace lives in this child's private mount namespace, unreachable from
+    the agent). User code runs with this fd open — an acceptable, bounded exposure:
+    the worst a job could do is fabricate "artifacts" it could equally have written
+    as real files; the relay carries no secrets (design RULE #1)."""
+    exit_code = 0
+    workdir = CHILD_WORKDIR
+    input_rel = set()
     try:
         # dup the child-side socketpair ends onto 0/1/2 BEFORE scrubbing.
         os.dup2(child_in, 0)
@@ -406,9 +475,10 @@ def _run_user_code(files, entrypoint, child_in, child_out, child_err, n,
         _harden_child(n, mem_bytes, tmpfs_bytes)
         # write files into the child's OWN private /tmp tmpfs (post-mount, post-uid:
         # owned by the child uid, unreachable from siblings)
-        workdir = _materialize_files(files, entrypoint)
-        # scrub every inherited fd>2 (relay socket, redis/soketi if any, pipes)
-        _scrub_fds(keep=())
+        workdir, input_rel = _materialize_files(files, entrypoint)
+        # scrub every inherited fd>2 (relay socket, redis/soketi if any, pipes),
+        # KEEPING the artifact fd so post-run capture can stream files back.
+        _scrub_fds(keep=(child_art,))
         os.chdir(workdir)
         # reset Python signal handlers to default for user code
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -416,23 +486,35 @@ def _run_user_code(files, entrypoint, child_in, child_out, child_err, n,
     except SystemExit as se:
         code = se.code
         if code is None:
-            os._exit(0)
-        if isinstance(code, int):
-            os._exit(code & 0xFF)
-        sys.stderr.write(f"{code}\n")
-        os._exit(1)
+            exit_code = 0
+        elif isinstance(code, int):
+            exit_code = code & 0xFF
+        else:
+            sys.stderr.write(f"{code}\n")
+            exit_code = 1
     except BaseException as e:  # surface user errors on the child's stderr (fd 2)
         try:
             import traceback
             traceback.print_exc()
         except Exception:
             sys.stderr.write(f"{type(e).__name__}: {e}\n")
-        os._exit(1)
-    os._exit(0)
+        exit_code = 1
+    finally:
+        # Capture + stream artifacts regardless of exit path, then close the
+        # artifact fd so the agent sees EOF and stops reading for this job.
+        try:
+            _capture_artifacts(workdir, input_rel, child_art)
+        except Exception:
+            pass
+        try:
+            os.close(child_art)
+        except OSError:
+            pass
+    os._exit(exit_code)
 
 
 def spawn_session(files, entrypoint, n, mem_bytes, tmpfs_bytes,
-                  child_in, child_out, child_err):
+                  child_in, child_out, child_err, child_art):
     """DOUBLE FORK for a per-child PID namespace. A process may unshare
     CLONE_NEWPID only once, so a thin intermediate unshares then forks the real
     session as PID 1 of the new pidns and exits. The session reparents to this
@@ -449,7 +531,7 @@ def spawn_session(files, entrypoint, n, mem_bytes, tmpfs_bytes,
                 # ---- session = PID 1 of the new pidns ----
                 os.close(w)
                 _run_user_code(files, entrypoint, child_in, child_out, child_err,
-                               n, mem_bytes, tmpfs_bytes)  # never returns
+                               child_art, n, mem_bytes, tmpfs_bytes)  # never returns
             os.write(w, f"{g}\n".encode())
             os.close(w)
         except BaseException as e:
@@ -490,6 +572,59 @@ def send_json(conn, ftype, obj):
     send_frame(conn, ftype, json.dumps(obj).encode())
 
 
+class ArtifactReader:
+    """Incremental parser for the child->agent artifact stream. Each record is
+    [4 BE nameLen][name][4 BE dataLen][data]; iter_records() yields complete
+    (name, data) tuples as they arrive over the non-blocking artifact socket."""
+
+    def __init__(self):
+        self.buf = bytearray()
+
+    def feed(self, data):
+        self.buf.extend(data)
+
+    def iter_records(self):
+        while True:
+            if len(self.buf) < 4:
+                return
+            (name_len,) = struct.unpack(">I", self.buf[:4])
+            head = 4 + name_len + 4
+            if len(self.buf) < head:
+                return
+            name = bytes(self.buf[4:4 + name_len]).decode("utf-8", "replace")
+            (data_len,) = struct.unpack(">I", self.buf[4 + name_len:head])
+            total = head + data_len
+            if len(self.buf) < total:
+                return
+            data = bytes(self.buf[head:total])
+            del self.buf[:total]
+            yield name, data
+
+
+def _send_artifacts(conn, artifacts):
+    """Re-frame accumulated (name, data) records as T_ARTIFACT frames on the worker
+    conn (payload: [4 BE nameLen][name][data]; data length implied by the frame).
+    An artifact whose frame would exceed MAX_FRAME_PAYLOAD is dropped and flips the
+    truncation flag (same truncate+mark outcome as the worker's per-cap skip). The
+    conn is set blocking so a large frame is delivered in full. ALL frames are sent
+    BEFORE the EXIT frame, so the worker has the complete set when Wait resolves.
+    Returns True if any artifact was dropped."""
+    truncated = False
+    conn.setblocking(True)
+    for name, data in artifacts:
+        name_b = name.encode()
+        if 4 + len(name_b) + len(data) > MAX_FRAME_PAYLOAD:
+            truncated = True
+            continue
+        payload = struct.pack(">I", len(name_b)) + name_b + data
+        try:
+            send_frame(conn, T_ARTIFACT, payload)
+        except OSError:
+            truncated = True
+            break
+    return truncated
+
+
 class FrameReader:
     """Incremental frame parser over a non-blocking socket. feed() drains the
     socket; iter_frames() yields complete (type, payload) tuples."""
@@ -522,12 +657,12 @@ def handle_job(conn):
     leaf = None
     realpid = None
     # parent-side socketpair ends (agent keeps these; child gets the other end)
-    p_in = c_in = p_out = c_out = p_err = c_err = None
+    p_in = c_in = p_out = c_out = p_err = c_err = p_art = c_art = None
     started = False
     exited = False
 
     def cleanup():
-        for sock in (p_in, c_in, p_out, c_out, p_err, c_err):
+        for sock in (p_in, c_in, p_out, c_out, p_err, c_err, p_art, c_art):
             if sock is not None:
                 try:
                     sock.close()
@@ -571,26 +706,32 @@ def handle_job(conn):
         # child via fork() and materialized into the child's OWN private /tmp tmpfs
         # (see _materialize_files), so sibling children can never read them.
 
-        # ---- 3 socketpairs for child stdin/stdout/stderr ----
+        # ---- 4 socketpairs: child stdin/stdout/stderr + artifact channel ----
+        # The artifact pair carries workspace files the child streams back AFTER
+        # user code (the workspace is in the child's private mount namespace, so
+        # the agent cannot read it directly — see _capture_artifacts).
         p_in, c_in = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         p_out, c_out = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         p_err, c_err = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        p_art, c_art = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         # convert agent-side socketpair ends to raw fds we can select() on
         p_in_fd, c_in_fd = p_in.fileno(), c_in.fileno()
         p_out_fd, c_out_fd = p_out.fileno(), c_out.fileno()
         p_err_fd, c_err_fd = p_err.fileno(), c_err.fileno()
+        c_art_fd = c_art.fileno()
 
         # ---- double-fork + harden the session (serialized: fork-in-thread) ----
         with _spawn_lock:
             realpid = spawn_session(files, entrypoint, uid_n, mem_bytes,
-                                    tmpfs_bytes, c_in_fd, c_out_fd, c_err_fd)
+                                    tmpfs_bytes, c_in_fd, c_out_fd, c_err_fd,
+                                    c_art_fd)
         # close the CHILD ends in the agent (child has its own copies)
-        for s in (c_in, c_out, c_err):
+        for s in (c_in, c_out, c_err, c_art):
             try:
                 s.close()
             except OSError:
                 pass
-        c_in = c_out = c_err = None
+        c_in = c_out = c_err = c_art = None
 
         # ---- per-child cgroup leaf + placement ----
         leaf = make_cgroup_leaf(realpid, n, mem_bytes, pids_max)
@@ -608,10 +749,14 @@ def handle_job(conn):
         log(f"job {job_id}: started realpid={realpid} cgroup={'yes' if leaf else 'no'}")
 
         # ---- relay loop ----
-        exit_code, exit_signal = relay_loop(
-            conn, reader, p_in, p_out, p_err, realpid, leaf)
+        (exit_code, exit_signal), artifacts = relay_loop(
+            conn, reader, p_in, p_out, p_err, p_art, realpid, leaf)
+        # Stream captured artifacts BEFORE the terminal EXIT frame so the worker's
+        # relay reader has the full set by the time Wait (on EXIT) resolves.
+        artifacts_truncated = _send_artifacts(conn, artifacts)
         exited = True
-        send_json(conn, T_EXIT, {"exitCode": exit_code, "signal": exit_signal})
+        send_json(conn, T_EXIT, {"exitCode": exit_code, "signal": exit_signal,
+                                 "artifactsTruncated": artifacts_truncated})
     except Exception as e:
         log(f"job {n} error: {e}")
         if started and not exited:
@@ -647,22 +792,29 @@ def reap(realpid):
     return (None, None)
 
 
-def relay_loop(conn, reader, p_in, p_out, p_err, realpid, leaf):
+def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
     """select() loop: conn STDIN->child stdin; STDIN_CLOSE->shutdown child stdin;
     KILL/conn-close->cgroup.kill; child stdout/stderr->STDOUT/STDERR frames;
-    CPU push ~every 100ms; on child reap return (exit_code, signal)."""
+    child artifact channel->accumulated (name, data) records; CPU push ~every
+    100ms; on child reap (and all streams drained) return ((exit_code, signal),
+    artifacts). Artifacts are accumulated here and framed by the caller AFTER the
+    loop (with conn back in blocking mode) so a large file is sent reliably."""
     conn.setblocking(False)
-    for s in (p_in, p_out, p_err):
+    for s in (p_in, p_out, p_err, p_art):
         s.setblocking(False)
     conn_fd = conn.fileno()
     p_in_fd, p_out_fd, p_err_fd = p_in.fileno(), p_out.fileno(), p_err.fileno()
+    p_art_fd = p_art.fileno()
 
     out_open = True
     err_open = True
+    art_open = True
     stdin_open = True
     last_cpu_push = 0.0
     last_cpu_ms = -1
     result = None
+    art_reader = ArtifactReader()
+    artifacts = []
 
     while True:
         # has the child exited?
@@ -670,12 +822,14 @@ def relay_loop(conn, reader, p_in, p_out, p_err, realpid, leaf):
             r = reap(realpid)
             if r is not None:
                 result = r
-                # drain any remaining stdout/stderr before returning
+                # drain any remaining stdout/stderr/artifacts before returning
         rlist = [conn_fd]
         if out_open:
             rlist.append(p_out_fd)
         if err_open:
             rlist.append(p_err_fd)
+        if art_open:
+            rlist.append(p_art_fd)
 
         try:
             ready, _, _ = select.select(rlist, [], [], 0.05)
@@ -739,6 +893,23 @@ def relay_loop(conn, reader, p_in, p_out, p_err, realpid, leaf):
             elif chunk:
                 send_frame(conn, T_STDERR, chunk)
 
+        # --- child artifact channel -> accumulated (name, data) records ---
+        # Drained concurrently so a child blocked writing a large artifact (full
+        # socket buffer) unblocks; EOF (child closed the fd before exit) ends it.
+        if art_open and p_art_fd in ready:
+            try:
+                chunk = p_art.recv(65536)
+            except (BlockingIOError, InterruptedError):
+                chunk = None
+            except OSError:
+                chunk = b""
+            if chunk == b"":
+                art_open = False
+            elif chunk:
+                art_reader.feed(chunk)
+                for name, data in art_reader.iter_records():
+                    artifacts.append((name, data))
+
         # --- CPU push ~every 100ms ---
         now = time.monotonic()
         if now - last_cpu_push >= 0.1:
@@ -751,8 +922,8 @@ def relay_loop(conn, reader, p_in, p_out, p_err, realpid, leaf):
                 except OSError:
                     pass
 
-        # --- terminal condition: child reaped AND output drained ---
-        if result is not None and not out_open and not err_open:
+        # --- terminal condition: child reaped AND output + artifacts drained ---
+        if result is not None and not out_open and not err_open and not art_open:
             # one final CPU sample
             ms = cpu_ms(leaf, realpid)
             if ms is not None and ms != last_cpu_ms:
@@ -760,11 +931,11 @@ def relay_loop(conn, reader, p_in, p_out, p_err, realpid, leaf):
                     send_json(conn, T_CPU, {"cpuMs": ms})
                 except OSError:
                     pass
-            return result
+            return result, artifacts
         # if child reaped but pipes never EOF (e.g. inherited by a lingering
         # grandchild we already killed), bail after the cgroup is empty.
         if result is not None and leaf is not None and _cgroup_empty(leaf):
-            return result
+            return result, artifacts
 
 
 def _cgroup_empty(leaf):

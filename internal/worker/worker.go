@@ -790,6 +790,15 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 							log.Warn("worker: publish Artifact failed", "name", a.Name, "err", pubErr)
 						}
 					}
+
+					// OR in any transport-level truncation the sandbox itself
+					// reported (the zygote relay drops an artifact whose frame would
+					// exceed the relay payload cap and flags it). dockerSandbox does
+					// not implement this accessor, so this is a no-op on the Docker
+					// tier; ORed so a cap-loop truncation above is preserved.
+					if at, ok := sb.(interface{ ArtifactsTruncated() bool }); ok && at.ArtifactsTruncated() {
+						runResult.ArtifactsTruncated = true
+					}
 				}
 
 				// Persist the RunResult with the env-configured TTL (R6/D-09).

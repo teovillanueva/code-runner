@@ -20,9 +20,9 @@ import threading
 import time
 
 T_HELLO, T_STDIN, T_STDIN_CLOSE, T_KILL = 0x01, 0x02, 0x03, 0x04
-T_STARTED, T_STDOUT, T_STDERR, T_CPU, T_EXIT = 0x10, 0x11, 0x12, 0x13, 0x14
+T_STARTED, T_STDOUT, T_STDERR, T_CPU, T_EXIT, T_ARTIFACT = 0x10, 0x11, 0x12, 0x13, 0x14, 0x15
 NAMES = {T_STARTED: "STARTED", T_STDOUT: "STDOUT", T_STDERR: "STDERR",
-         T_CPU: "CPU", T_EXIT: "EXIT"}
+         T_CPU: "CPU", T_EXIT: "EXIT", T_ARTIFACT: "ARTIFACT"}
 
 HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 7000
@@ -101,10 +101,17 @@ def collect_until_exit(c, timeout=20, on_started=None, stdin_sender=None):
             err.extend(payload)
         elif ftype == T_CPU:
             cpu_frames.append(json.loads(payload.decode()))
+        elif ftype == T_ARTIFACT:
+            # [4 BE nameLen][name][data] — workspace files streamed back before EXIT.
+            # This throwaway harness doesn't assert on artifacts; it just logs them
+            # so they aren't reported as "unknown" frames during a manual run.
+            nl = struct.unpack(">I", payload[:4])[0]
+            print(f"    (artifact: {payload[4:4 + nl].decode('utf-8', 'replace')}, "
+                  f"{len(payload) - 4 - nl} bytes)")
         elif ftype == T_EXIT:
             exit_payload = json.loads(payload.decode())
             break
-    return started, bytes(out), bytes(err), cpu_frames, exit_payload
+    return started, bytes(out), bytes(err), cpu_frames, exit_payload, artifacts
 
 
 # --- Test 1: stdout relay + EXIT code -----------------------------------------

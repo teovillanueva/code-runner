@@ -9,11 +9,14 @@
 //
 //	Worker → agent: HELLO=0x01 STDIN=0x02 STDIN_CLOSE=0x03 KILL=0x04
 //	agent → worker: STARTED=0x10 STDOUT=0x11 STDERR=0x12 CPU=0x13 EXIT=0x14
+//	                ARTIFACT=0x15
 //
 // A single reader goroutine demuxes STDOUT/STDERR into two io.Pipes (mirroring
 // how dockerSandbox demuxes Docker's stdcopy framing), captures the latest CPU
-// value, and resolves Wait on the terminal EXIT frame. Stdin() returns an
-// io.WriteCloser that emits STDIN frames and a final STDIN_CLOSE on Close.
+// value, accumulates ARTIFACT frames (workspace files streamed back by the
+// agent before EXIT), and resolves Wait on the terminal EXIT frame. Stdin()
+// returns an io.WriteCloser that emits STDIN frames and a final STDIN_CLOSE on
+// Close.
 package runner
 
 import (
@@ -35,11 +38,12 @@ const (
 	frameStdinClose byte = 0x03
 	frameKill       byte = 0x04
 	// agent → worker.
-	frameStarted byte = 0x10
-	frameStdout  byte = 0x11
-	frameStderr  byte = 0x12
-	frameCPU     byte = 0x13
-	frameExit    byte = 0x14
+	frameStarted  byte = 0x10
+	frameStdout   byte = 0x11
+	frameStderr   byte = 0x12
+	frameCPU      byte = 0x13
+	frameExit     byte = 0x14
+	frameArtifact byte = 0x15
 )
 
 // frameHeaderLen is the fixed prefix length: 1 type byte + 4 length bytes.
@@ -94,6 +98,11 @@ type exitPayload struct {
 	ExitCode *int   `json:"exitCode"`
 	Signal   *int   `json:"signal"`
 	Error    string `json:"error,omitempty"`
+	// ArtifactsTruncated reports that the agent dropped one or more workspace
+	// files because their ARTIFACT frame would exceed maxFramePayload (the relay
+	// transport cap). Absent on older agents (decodes to false → backward-compat).
+	// Mirrors the worker-side per-cap truncation: same "truncate + mark" outcome.
+	ArtifactsTruncated bool `json:"artifactsTruncated,omitempty"`
 }
 
 // writeFrame encodes one frame onto w under mu (sendall semantics). Concurrent
@@ -171,6 +180,18 @@ type relayConn struct {
 
 	// latestCPUMs holds the most recent cumulative cpuMs pushed by the agent.
 	latestCPUMs atomic.Int64
+
+	// artifacts accumulates ARTIFACT frames (workspace files the agent streams
+	// back before EXIT). Each carries only Name+Data on the wire; MimeType is
+	// derived later in zygoteSandbox.ReadArtifacts (mirroring dockerSandbox).
+	// Guarded by artifactsMu — the reader goroutine appends; the worker drains
+	// via takeArtifacts after EXIT (Wait) resolves, so no concurrent append races
+	// the drain, but the mutex keeps the race detector quiet either way.
+	artifactsMu sync.Mutex
+	artifacts   []CapturedArtifact
+	// artifactsTruncated is set from the EXIT frame when the agent dropped an
+	// over-cap artifact (see exitPayload.ArtifactsTruncated).
+	artifactsTruncated atomic.Bool
 
 	// exit carries the terminal EXIT result; closed by the reader goroutine.
 	exitOnce sync.Once
@@ -278,9 +299,22 @@ func (rc *relayConn) startReader(dec *frameDecoder) {
 				if json.Unmarshal(payload, &c) == nil {
 					rc.latestCPUMs.Store(int64(c.CPUMs))
 				}
+			case frameArtifact:
+				// One workspace file streamed back before EXIT. A malformed frame
+				// is dropped (best-effort, like a missing artifact) rather than
+				// failing the job. All ARTIFACT frames precede EXIT, so the slice
+				// is fully populated by the time Wait resolves.
+				if a, derr := decodeArtifactFrame(payload); derr == nil {
+					rc.artifactsMu.Lock()
+					rc.artifacts = append(rc.artifacts, a)
+					rc.artifactsMu.Unlock()
+				}
 			case frameExit:
 				var e exitPayload
 				_ = json.Unmarshal(payload, &e)
+				if e.ArtifactsTruncated {
+					rc.artifactsTruncated.Store(true)
+				}
 				rc.closeOutputs(io.EOF)
 				if e.Error != "" {
 					rc.resolveExit(relayExit{
@@ -326,6 +360,42 @@ func (rc *relayConn) resolveExit(e relayExit) {
 		rc.exitCh <- e
 		close(rc.exitCh)
 	})
+}
+
+// decodeArtifactFrame parses an ARTIFACT frame payload into a CapturedArtifact.
+// Layout (must match zygote_agent.py's _send_artifacts):
+//
+//	[4-byte big-endian nameLen][name UTF-8][data ...]
+//
+// The data is the remainder of the payload (its length is implied by the frame
+// length), so no separate data-length prefix travels on the relay. MimeType is
+// left empty here and derived from the name's extension in ReadArtifacts, exactly
+// as the Docker tier derives it (single source of MIME logic across both tiers).
+func decodeArtifactFrame(payload []byte) (CapturedArtifact, error) {
+	if len(payload) < 4 {
+		return CapturedArtifact{}, fmt.Errorf("zygote: artifact frame too short: %d bytes", len(payload))
+	}
+	nameLen := binary.BigEndian.Uint32(payload[:4])
+	if int(nameLen) > len(payload)-4 {
+		return CapturedArtifact{}, fmt.Errorf("zygote: artifact name length %d exceeds payload %d", nameLen, len(payload)-4)
+	}
+	name := string(payload[4 : 4+nameLen])
+	// The data sub-slice shares the frame's payload buffer, which the decoder
+	// freshly allocates per frame (frameDecoder.next) and never reuses — so it is
+	// safe to retain without copying.
+	data := payload[4+nameLen:]
+	return CapturedArtifact{Name: name, Data: data}, nil
+}
+
+// takeArtifacts atomically returns and clears the accumulated artifacts. Called
+// once by zygoteSandbox.ReadArtifacts after Wait has resolved (EXIT received),
+// at which point the reader goroutine has stopped appending.
+func (rc *relayConn) takeArtifacts() []CapturedArtifact {
+	rc.artifactsMu.Lock()
+	defer rc.artifactsMu.Unlock()
+	out := rc.artifacts
+	rc.artifacts = nil
+	return out
 }
 
 // sendStdin emits a STDIN frame.
