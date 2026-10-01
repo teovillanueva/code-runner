@@ -28,12 +28,23 @@ var ErrNotFound = errors.New("jobstore: key not found")
 // Store is a Redis-backed job persistence layer. All methods are safe for
 // concurrent use.
 type Store struct {
-	client *redis.Client
+	client    *redis.Client
+	statusTTL time.Duration // 0 = no expiry (legacy behaviour)
 }
 
 // New returns a new Store backed by the provided *redis.Client.
 func New(client *redis.Client) *Store {
 	return &Store{client: client}
+}
+
+// WithStatusTTL makes WriteStatus set an expiry on job:<id>:status — and refresh
+// it on every write, so the key outlives the job by ttl, not forever. Without a
+// TTL every job leaves its status (and the API-written spec) behind permanently;
+// that is how the production Redis filled up on 2026-09-05 and, being
+// `noeviction`, started rejecting every write. Zero keeps the legacy no-expiry.
+func (s *Store) WithStatusTTL(ttl time.Duration) *Store {
+	s.statusTTL = ttl
+	return s
 }
 
 // WriteSpec serialises spec to JSON and stores it at keys.JobSpecKey(spec.JobId).
@@ -90,7 +101,7 @@ func (s *Store) WriteStatus(ctx context.Context, st wire.JobStatus) error {
 	if err != nil {
 		return fmt.Errorf("jobstore.WriteStatus: marshal: %w", err)
 	}
-	if err := s.client.Set(ctx, keys.JobStatusKey(st.JobId), b, 0).Err(); err != nil {
+	if err := s.client.Set(ctx, keys.JobStatusKey(st.JobId), b, s.statusTTL).Err(); err != nil {
 		return fmt.Errorf("jobstore.WriteStatus: SET %s: %w", keys.JobStatusKey(st.JobId), err)
 	}
 	return nil

@@ -28,8 +28,13 @@
 app = "code-runner-autoscaler"
 primary_region = "gru"
 
+# Built from the patched fork (see Dockerfile next to this file): the official
+# 0.3 image can hang forever on a Prometheus request that never answers, which
+# froze scaling for 37 h in prod (2026-09-28/29). Revert to
+#   image = "flyio/fly-autoscaler:<version>"
+# once https://github.com/superfly/fly-autoscaler/pull/46 is released.
 [build]
-  image = "flyio/fly-autoscaler:0.3"
+  dockerfile = "Dockerfile"
 
 [env]
   # Target app to scale.
@@ -44,20 +49,30 @@ primary_region = "gru"
   # global LLEN). Scaling on this makes scale-DOWN safe: the target only drops when
   # sessions actually END (slots free), so a node mid-session is never stopped —
   # unlike scaling on queue depth alone.
-  FAS_PROMETHEUS_QUERY = "sum(code_runner_slots_used) + max(code_runner_queue_depth)"
+  #
+  # HYSTERESIS: take the 10-minute MAX of that in-flight signal. Scaling UP is
+  # still immediate (a new high raises the max at once); scaling DOWN waits
+  # until the load has been low for 10 minutes. Without it the autoscaler acted
+  # on single 15 s samples and flapped: on 2026-09-29 it stopped a worker mid-exam
+  # with ~15 students' sessions on it, then started it again 15 s later, every
+  # couple of minutes. (Fly's managed Prometheus accepts PromQL subqueries.)
+  FAS_PROMETHEUS_QUERY = "max_over_time((sum(code_runner_slots_used) + max(code_runner_queue_depth))[10m:15s])"
 
-  # Scaling expression (Expr). WORKER_MAX_SANDBOXES=24, so each node holds ~24
-  # in-flight sessions → ceil(inflight / 24). Floor 1 so the first job of a burst
-  # doesn't wait on a cold start; ceiling 6 (=144 concurrent) as a cost guard —
-  # raise it AND the pre-created pool together for bigger exams.
+  # Scaling expression (Expr). WORKER_MAX_SANDBOXES=24, but a node is saturated
+  # well before 24 (RAM in the zygote pool, CPU), and a new node needs ~45 s to
+  # boot and warm its pool — so target ~16 in-flight per node, not 24. Floor 1
+  # so the first job of a burst doesn't wait on a cold start; ceiling 8 as a cost
+  # guard — raise it AND the pre-created pool together for bigger exams.
   #
   # STARTED = start/stop a PRE-CREATED pool (provision the pool with
   # `deploy/fly/worker/provision-pool.sh grow N` so new machines fork the golden
-  # snapshot and boot fast; the ceiling can't exceed the pool size). Scale-down:
-  # the worker DRAINS in-flight sandboxes on SIGTERM (kill_timeout=130s in the
-  # worker fly.toml), so stopping a node lets its active sessions finish first.
-  FAS_STARTED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 24)))"
-  # FAS_CREATED_MACHINE_COUNT = "min(6, max(1, ceil(inflight / 24)))"
+  # snapshot and boot fast; the ceiling can't exceed the pool size — with 3
+  # machines created the autoscaler logged "not enough stopped machines" for a
+  # whole exam). Scale-down: the worker DRAINS in-flight sandboxes on SIGTERM
+  # (kill_timeout=300s in the worker fly.toml), so stopping a node lets its
+  # active sessions finish first.
+  FAS_STARTED_MACHINE_COUNT = "min(8, max(1, ceil(inflight / 16)))"
+  # FAS_CREATED_MACHINE_COUNT = "min(8, max(1, ceil(inflight / 16)))"
 
   # Reconcile interval (default 15s).
   # FAS_INTERVAL = "15s"
@@ -65,6 +80,15 @@ primary_region = "gru"
   # Secrets (set via `fly secrets`, never commit):
   #   FAS_API_TOKEN         — deploy/org token to start/stop/create worker Machines
   #   FAS_PROMETHEUS_TOKEN  — readonly org token to query managed Prometheus
+
+# fly-autoscaler serves its own counters on :9090/metrics (fas_reconcile_count,
+# fas_machine_start_count, fas_machine_stop_count). Scraped into the org's
+# Prometheus, `increase(fas_reconcile_count[5m]) == 0` is the "autoscaler hung"
+# alert — the 37 h hang above was invisible: the Machine stayed `started`, it
+# just stopped logging and reconciling.
+[metrics]
+  port = 9090
+  path = "/metrics"
 
 [[vm]]
   size = "shared-cpu-1x"

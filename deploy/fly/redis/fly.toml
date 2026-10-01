@@ -11,13 +11,22 @@ primary_region = "gru"
 # protected-mode off is acceptable because the app is ONLY reachable on the
 # private 6PN, never the internet. For extra hardening set a password via
 # `fly secrets` + `--requirepass` and put it in REDIS_URL.
+#
+# maxmemory + noeviction: fail LOUDLY (writes error, /v1/execute 429s) rather
+# than silently evicting a live job's spec/status. Memory is bounded by the TTLs
+# on every key family (job:*:spec/status via JOB_TTL, job:*:output via
+# RUN_RESULT_TTL, start:*, heartbeats, blob leases) — before JOB_TTL existed the
+# job keys never expired, and this store filled up on 2026-09-05 (~339k keys).
+# Legacy keys from before the TTL: scripts/redis-expire-job-keys.sh.
 [processes]
-  app = "redis-server --appendonly yes --dir /data --protected-mode no"
+  app = "redis-server --appendonly yes --dir /data --protected-mode no --maxmemory 384mb --maxmemory-policy noeviction"
 
 [mounts]
   source = "redis_data"
   destination = "/data"
 
+# 512 MB VM for a 384 MB maxmemory: Redis needs headroom above maxmemory for
+# the AOF rewrite fork and client buffers.
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "256mb"
+  memory = "512mb"

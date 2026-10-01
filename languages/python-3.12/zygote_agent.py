@@ -20,8 +20,11 @@ and isolation_probe.py — proven, do not reinvent):
   - private network namespace (unshare CLONE_NEWNET) — child has no network
   - private mount namespace (unshare CLONE_NEWNS) + rec-private / +
     private /tmp tmpfs (size from limits) + remounted /proc
-  - per-child cgroup-v2 leaf (memory.max + pids.max), placed by the parent using
-    the session's real root-ns pid returned via the double-fork pipe
+  - per-child cgroup leaf (v2: memory.max + pids.max; v1 hosts such as Fly:
+    memory.limit_in_bytes + pids.max), placed by the parent using the session's
+    real root-ns pid returned via the double-fork pipe. The layout is read from
+    the mount table, never inferred from path existence: a tmpfs under
+    /sys/fs/cgroup happily accepts makedirs + writes while enforcing nothing
   - dup2 the child-side socketpair fds onto 0/1/2, scrub all fds>2
 
 ctypes gotcha (mandatory): argtypes/restype are declared on unshare/mount/prctl
@@ -39,6 +42,7 @@ import ctypes
 import errno
 import json
 import os
+import re
 import runpy
 import select
 import signal
@@ -131,7 +135,7 @@ T_ARTIFACT = 0x15
 # (truncate + mark), mirroring the worker's per-cap artifact truncation.
 MAX_FRAME_PAYLOAD = 16 * 1024 * 1024
 
-CG_BASE = None  # delegated cgroup-v2 subtree, resolved at boot if available
+CG_LAYOUT = None  # cgroup layout resolved at boot: {"mode": "v2"|"v1", ...} or None
 _job_seq = 0    # monotonic per-job counter for unique UID + cgroup leaf names
 _job_seq_lock = threading.Lock()
 # os.fork() in a multithreaded process is only safe if no other thread holds a
@@ -184,12 +188,115 @@ def do_preimport(mods):
     log(f"pre-imported: {ok}")
 
 
-# ============================ cgroup-v2 base (RULE #2) ========================
+# ============================ cgroup base (RULE #2) ===========================
+# The layout is read from the MOUNT TABLE, never inferred from path existence.
+# On Fly the pool container sees /sys/fs/cgroup as a TMPFS holding the
+# cgroup-v1 controller mounts (memory/, pids/, cpu,cpuacct/, ...): the host is a
+# v1 hybrid, the unified hierarchy has no controllers. os.makedirs() of a "leaf"
+# on that tmpfs just creates ordinary directories, and writing memory.max /
+# cgroup.procs / cgroup.kill there "succeeds" while enforcing nothing — which is
+# how the agent ran for months believing it had per-child limits and a kill
+# switch. A cgroupfs is only ever one of two mount types: "cgroup2" or "cgroup".
+
+# cgroup-v1 controllers: the two we need for limits, plus CPU accounting if present.
+V1_REQUIRED = ("memory", "pids")
+V1_OPTIONAL = ("cpuacct",)
+
+
+def _unescape_mountinfo(s):
+    # mountinfo escapes space, tab, newline and backslash as \040 etc.
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), s)
+
+
+def mount_entry(path, mountinfo="/proc/self/mountinfo"):
+    """(fstype, root) of the mount at exactly `path`, e.g. ("cgroup", "/docker/<id>")
+    or ("cgroup2", "/"); (None, None) when `path` is not a mount point. Fields
+    per proc(5): id, parent, dev, ROOT, MOUNT POINT, opts, [optional...], "-",
+    FSTYPE, source, super opts. The last matching line is the top-most mount."""
+    want = os.path.normpath(path)
+    found = (None, None)
+    try:
+        with open(mountinfo) as f:
+            for line in f:
+                fields = line.split()
+                try:
+                    sep = fields.index("-")
+                except ValueError:
+                    continue
+                if len(fields) > sep + 1 and _unescape_mountinfo(fields[4]) == want:
+                    found = (fields[sep + 1], _unescape_mountinfo(fields[3]))
+    except OSError:
+        return (None, None)
+    return found
+
+
+def fs_type(path, mountinfo="/proc/self/mountinfo"):
+    return mount_entry(path, mountinfo)[0]
+
+
+def _cgroup_dir(mount_point, cgroup_path):
+    """Directory of the cgroup `cgroup_path` (as listed in /proc/self/cgroup)
+    under the cgroupfs mounted at `mount_point`, honouring the mount's ROOT:
+    Docker mounts the v1 controllers — and cgroup2 under a private cgroupns —
+    with the container's OWN cgroup as the mount root, so `cgroup_path` maps to
+    the mount point itself, not to <mount point>/<cgroup_path> (that would
+    nest a second /docker/<id>/ under the first)."""
+    _, root = mount_entry(mount_point)
+    rel = cgroup_path
+    if root and root != "/":
+        if cgroup_path == root or cgroup_path.startswith(root + "/"):
+            rel = cgroup_path[len(root):]
+        else:
+            rel = ""  # the mount exposes a subtree we're not below: it IS our view
+    return os.path.join(mount_point, rel.lstrip("/"))
+
+
+def read_proc_cgroup(path="/proc/self/cgroup"):
+    """Parse /proc/self/cgroup into {hierarchy_id: (controllers, cgroup_path)}.
+    The v2 (unified) entry has id 0 and an empty controller tuple; v1 entries
+    list their controllers, e.g. 5:cpu,cpuacct:/docker/<id>."""
+    out = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            hid, ctrls, cpath = line.split(":", 2)
+            out[int(hid)] = (tuple(c for c in ctrls.split(",") if c), cpath)
+    return out
+
+
 def setup_cgroup_base():
-    """Build a delegated cgroup-v2 subtree for per-child leaves. Requires the pool
-    to run --privileged --cgroupns=host. Returns the base dir, or None if the
-    layout refuses delegation (non-fatal: a sub-cgroup costs ~0 RAM; without it
-    we still harden via UID + namespaces, only memory.max/pids.max are skipped)."""
+    """Resolve the cgroup layout used for per-child leaves. Returns
+    {"mode": "v2", "base": dir} when /sys/fs/cgroup is a delegable cgroup2 tree,
+    {"mode": "v1", "bases": {controller: dir}} on a v1/hybrid host, or None.
+    Non-fatal: without a layout we still harden via UID + namespaces and kill
+    sessions with SIGKILL; only the per-child memory/pids limits are skipped."""
+    try:
+        procs = read_proc_cgroup()
+    except Exception as e:
+        log(f"cgroup: cannot read /proc/self/cgroup ({e}); per-child limits skipped")
+        return None
+
+    if fs_type(CGROOT) == "cgroup2":
+        layout = _setup_cgroup_v2(procs)
+        if layout:
+            return layout
+    layout = _setup_cgroup_v1(procs)
+    if layout:
+        return layout
+    kind = fs_type(CGROOT)
+    if kind == "cgroup2":
+        log("cgroup: cgroup2 is mounted but could not be delegated (see above); "
+            "per-child memory/pids limits skipped")
+    else:
+        log(f"cgroup: {CGROOT} is neither a cgroup2 tree nor a cgroup-v1 hierarchy "
+            f"(mount type={kind!r}); per-child memory/pids limits skipped")
+    return None
+
+
+def _setup_cgroup_v2(procs):
+    """Delegated cgroup-v2 subtree (pool runs --privileged --cgroupns=host)."""
     try:
         # Docker Desktop mounts cgroup2 read-only by default; a privileged agent
         # (CAP_SYS_ADMIN) can remount it rw. Best-effort — on Linux/Fly with a
@@ -198,9 +305,7 @@ def setup_cgroup_base():
             mount("none", CGROOT, None, MS_REC | (1 << 5), None)  # MS_REMOUNT
         except OSError:
             pass
-        with open("/proc/self/cgroup") as f:
-            rel = f.read().strip().split("::", 1)[1]  # "0::/path"
-        own = os.path.join(CGROOT, rel.lstrip("/"))
+        own = _cgroup_dir(CGROOT, procs[0][1])  # "0::/path"
         base = os.path.join(own, "zygote")
         mgr = os.path.join(base, "mgr")
         os.makedirs(mgr, exist_ok=True)
@@ -209,45 +314,110 @@ def setup_cgroup_base():
             f.write(str(os.getpid()))
         with open(os.path.join(base, "cgroup.subtree_control"), "w") as f:
             f.write("+memory +pids")
-        log(f"cgroup delegated subtree at {base}")
-        return base
+        log(f"cgroup v2: delegated subtree at {base}")
+        return {"mode": "v2", "base": base}
     except Exception as e:
-        log(f"cgroup delegation unavailable ({e}); per-child memory.max/pids.max skipped")
+        log(f"cgroup v2 delegation unavailable ({e})")
         return None
+
+
+def _setup_cgroup_v1(procs):
+    """cgroup-v1 (hybrid) host: one mount per controller group under CGROOT, e.g.
+    /sys/fs/cgroup/memory/docker/<id>. v1 lets a cgroup hold both processes and
+    child cgroups, so leaves go straight under <own>/zygote (no mgr move)."""
+    bases = {}
+    for ctrls, cpath in procs.values():
+        for ctrl in ctrls:
+            if ctrl not in V1_REQUIRED + V1_OPTIONAL:
+                continue
+            # the mount is usually named after the full controller list
+            # ("cpu,cpuacct"); some distros add per-controller symlinks.
+            for cand in (",".join(ctrls),) + tuple(ctrls):
+                mnt = os.path.join(CGROOT, cand)
+                if fs_type(mnt) == "cgroup":
+                    bases[ctrl] = os.path.join(_cgroup_dir(mnt, cpath), "zygote")
+                    break
+    if any(c not in bases for c in V1_REQUIRED):
+        return None
+    try:
+        for b in bases.values():
+            os.makedirs(b, exist_ok=True)
+    except Exception as e:
+        log(f"cgroup v1 base unavailable ({e})")
+        return None
+    log(f"cgroup v1: bases {bases}")
+    return {"mode": "v1", "bases": bases}
+
+
+def _write(path, value):
+    with open(path, "w") as f:
+        f.write(value)
 
 
 def make_cgroup_leaf(child_pid, n, mem_max, pids_max):
-    """Create a per-job cgroup leaf, set limits, place the session pid. Returns the
-    leaf path or None."""
-    if CG_BASE is None:
+    """Create the per-job cgroup leaf(s), set limits, place the session pid.
+    Returns {"mode", "paths": {role: dir}} on FULL success, else None — never a
+    partially-enforced leaf (the Go side trusts cgroupEnforced)."""
+    if CG_LAYOUT is None:
         return None
+    created = []
     try:
-        leaf = os.path.join(CG_BASE, f"job{n}")
-        os.makedirs(leaf, exist_ok=True)
-        with open(os.path.join(leaf, "memory.max"), "w") as f:
-            f.write(str(mem_max))
-        with open(os.path.join(leaf, "pids.max"), "w") as f:
-            f.write(str(pids_max))
-        with open(os.path.join(leaf, "cgroup.procs"), "w") as f:
-            f.write(str(child_pid))
-        return leaf
+        if CG_LAYOUT["mode"] == "v2":
+            leaf = os.path.join(CG_LAYOUT["base"], f"job{n}")
+            os.makedirs(leaf, exist_ok=True)
+            created.append(leaf)
+            _write(os.path.join(leaf, "memory.max"), str(mem_max))
+            _write(os.path.join(leaf, "pids.max"), str(pids_max))
+            _write(os.path.join(leaf, "cgroup.procs"), str(child_pid))
+            return {"mode": "v2", "paths": {"unified": leaf}}
+        paths = {}
+        for ctrl, base in CG_LAYOUT["bases"].items():
+            d = os.path.join(base, f"job{n}")
+            os.makedirs(d, exist_ok=True)
+            created.append(d)
+            paths[ctrl] = d
+        _write(os.path.join(paths["memory"], "memory.limit_in_bytes"), str(mem_max))
+        # memory+swap cap so the child cannot spill into swap. The file is absent
+        # (ENOENT) when swap accounting is off; then memory.limit_in_bytes alone
+        # is the cap, which is what we want anyway.
+        try:
+            _write(os.path.join(paths["memory"], "memory.memsw.limit_in_bytes"), str(mem_max))
+        except OSError as e:
+            if e.errno not in (errno.ENOENT, errno.EINVAL, errno.EPERM, errno.EACCES):
+                raise
+        _write(os.path.join(paths["pids"], "pids.max"), str(pids_max))
+        for d in paths.values():
+            _write(os.path.join(d, "cgroup.procs"), str(child_pid))
+        return {"mode": "v1", "paths": paths}
     except Exception as e:
         log(f"cgroup leaf job{n} failed: {e}")
+        for d in created:
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
         return None
 
 
 def cgroup_cpu_ms(leaf):
-    """Read cumulative CPU usage (ms) from the leaf's cpu.stat (usage_usec)."""
+    """Cumulative CPU (ms) of the leaf: v2 cpu.stat usage_usec, v1 cpuacct.usage
+    (ns). None when unavailable (caller falls back to /proc/<pid>/stat)."""
     if not leaf:
         return None
     try:
-        with open(os.path.join(leaf, "cpu.stat")) as f:
-            for line in f:
-                if line.startswith("usage_usec"):
-                    return int(line.split()[1]) // 1000
+        if leaf["mode"] == "v2":
+            with open(os.path.join(leaf["paths"]["unified"], "cpu.stat")) as f:
+                for line in f:
+                    if line.startswith("usage_usec"):
+                        return int(line.split()[1]) // 1000
+            return None
+        d = leaf["paths"].get("cpuacct")
+        if not d:
+            return None
+        with open(os.path.join(d, "cpuacct.usage")) as f:
+            return int(f.read().strip()) // 1_000_000
     except Exception:
         return None
-    return None
 
 
 _CLK_TCK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
@@ -279,30 +449,54 @@ def cpu_ms(leaf, realpid):
     return proc_cpu_ms(realpid)
 
 
-def cgroup_kill(leaf):
-    """Kill the whole child tree via the leaf's cgroup.kill (full subtree)."""
+def kill_session(leaf, realpid):
+    """Kill the whole session tree. The session is PID 1 of its own pid namespace,
+    so SIGKILL on it takes every descendant down with it whether or not we have
+    a cgroup (the kernel kills a pid namespace when its init dies). cgroup.kill
+    (v2) / walking the leaf's cgroup.procs (v1) are additional, best-effort."""
+    if realpid:
+        try:
+            os.kill(realpid, SIGKILL)
+        except OSError:
+            pass
     if not leaf:
         return
     try:
-        with open(os.path.join(leaf, "cgroup.kill"), "w") as f:
-            f.write("1")
+        if leaf["mode"] == "v2":
+            _write(os.path.join(leaf["paths"]["unified"], "cgroup.kill"), "1")
+        else:
+            with open(os.path.join(leaf["paths"]["memory"], "cgroup.procs")) as f:
+                for pid in f.read().split():
+                    try:
+                        os.kill(int(pid), SIGKILL)
+                    except (OSError, ValueError):
+                        pass
     except Exception as e:
-        log(f"cgroup.kill {leaf} failed: {e}")
+        log(f"cgroup kill {leaf['paths']} failed: {e}")
 
 
 def cgroup_remove(leaf):
     if not leaf:
         return
+    pending = list(leaf["paths"].values())
     # the kernel only lets us rmdir an empty leaf; wait briefly for procs to drain.
     for _ in range(50):
-        try:
-            os.rmdir(leaf)
+        for d in list(pending):
+            try:
+                os.rmdir(d)
+                pending.remove(d)
+            except OSError as e:
+                if e.errno == errno.ENOENT:
+                    pending.remove(d)
+        if not pending:
             return
-        except OSError as e:
-            if e.errno == errno.ENOENT:
-                return
-            time.sleep(0.02)
-    log(f"cgroup leaf {leaf} not removable (procs may linger)")
+        time.sleep(0.02)
+    log(f"cgroup leaf {pending} not removable (procs may linger)")
+
+
+def _cgroup_procs_path(leaf):
+    paths = leaf["paths"]
+    return os.path.join(paths.get("unified") or paths["memory"], "cgroup.procs")
 
 
 # ============================ Child body (RULE #2) ===========================
@@ -711,9 +905,10 @@ def handle_job(conn):
                     sock.close()
                 except OSError:
                     pass
-        if leaf:
-            cgroup_kill(leaf)
-            cgroup_remove(leaf)
+        # Always SIGKILL the session on the way out (works with or without a
+        # cgroup), then drop the leaf. Idempotent: the relay loop usually did it.
+        kill_session(leaf, realpid)
+        cgroup_remove(leaf)
 
     try:
         # ---- read HELLO (blocking until the first complete frame) ----
@@ -780,16 +975,16 @@ def handle_job(conn):
         leaf = make_cgroup_leaf(realpid, n, mem_bytes, pids_max)
 
         # ---- STARTED ----
-        # cgroupEnforced is true ONLY when the per-child cgroup leaf with
-        # memory.max + pids.max was actually created AND the session pid placed
-        # in it (make_cgroup_leaf returns the leaf path only on full success).
-        # When false (e.g. Docker Desktop without delegated cgroups) the Go side
-        # SKIPs the cgroup-enforcement abuse tests; on Fly/Linux it is true.
+        # cgroupEnforced is true ONLY when the per-child cgroup leaf with its
+        # memory + pids limits was actually created on a REAL cgroupfs (v2 or v1)
+        # AND the session pid placed in it (make_cgroup_leaf returns a leaf only
+        # on full success). When false (e.g. Docker Desktop without delegated
+        # cgroups) the Go side SKIPs the cgroup-enforcement abuse tests.
         cgroup_enforced = leaf is not None
         send_json(conn, T_STARTED,
                   {"realpid": realpid, "cgroupEnforced": cgroup_enforced})
         started = True
-        log(f"job {job_id}: started realpid={realpid} cgroup={'yes' if leaf else 'no'}")
+        log(f"job {job_id}: started realpid={realpid} cgroup={leaf['mode'] if leaf else 'no'}")
 
         # ---- relay loop ----
         (exit_code, exit_signal), artifacts = relay_loop(
@@ -800,6 +995,10 @@ def handle_job(conn):
         exited = True
         send_json(conn, T_EXIT, {"exitCode": exit_code, "signal": exit_signal,
                                  "artifactsTruncated": artifacts_truncated})
+    except (BrokenPipeError, ConnectionResetError):
+        # The worker closed the relay first (kill, timeout, cleanup): the session
+        # was killed and there is nobody left to send EXIT to. Routine, not an error.
+        log(f"job {n}: relay closed by worker; session killed")
     except Exception as e:
         log(f"job {n} error: {e}")
         if started and not exited:
@@ -849,6 +1048,20 @@ def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
     p_in_fd, p_out_fd, p_err_fd = p_in.fileno(), p_out.fileno(), p_err.fileno()
     p_art_fd = p_art.fileno()
 
+    conn_open = True       # False once the worker closed its side (EOF/error)
+    kill_sent_at = None    # monotonic time of the last kill_session()
+    kill_attempts = 0
+
+    def emit(ftype, payload):
+        """Frame to the worker; a no-op once the connection is gone."""
+        nonlocal conn_open
+        if not conn_open:
+            return
+        try:
+            send_frame(conn, ftype, payload)
+        except OSError:
+            conn_open = False
+
     out_open = True
     err_open = True
     art_open = True
@@ -866,7 +1079,7 @@ def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
             if r is not None:
                 result = r
                 # drain any remaining stdout/stderr/artifacts before returning
-        rlist = [conn_fd]
+        rlist = [conn_fd] if conn_open else []
         if out_open:
             rlist.append(p_out_fd)
         if err_open:
@@ -874,13 +1087,20 @@ def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
         if art_open:
             rlist.append(p_art_fd)
 
-        try:
-            ready, _, _ = select.select(rlist, [], [], 0.05)
-        except (OSError, ValueError):
+        if not rlist:
+            # worker gone and every child stream drained: pace the reap poll
+            time.sleep(0.05)
             ready = []
+        else:
+            try:
+                ready, _, _ = select.select(rlist, [], [], 0.05)
+            except (OSError, ValueError):
+                # e.g. an fd >= FD_SETSIZE — never spin on a failing select()
+                time.sleep(0.05)
+                ready = []
 
         # --- worker -> agent frames ---
-        if conn_fd in ready:
+        if conn_open and conn_fd in ready:
             try:
                 data = conn.recv(65536)
             except (BlockingIOError, InterruptedError):
@@ -888,11 +1108,14 @@ def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
             except OSError:
                 data = b""
             if data == b"":
-                # conn closed by worker == implicit KILL
-                cgroup_kill(leaf)
-                if leaf is None:
-                    _fallback_kill(realpid)
-                # wait for the child to die so we return a real result
+                # conn closed by worker == implicit KILL. Stop selecting on the
+                # dead socket: an EOF'd fd stays readable forever, so keeping it
+                # in rlist turns this loop into a busy spin (one core per
+                # orphaned job, observed in prod). Then wait for the child to be
+                # reaped so we still return a real result.
+                conn_open = False
+                kill_session(leaf, realpid)
+                kill_sent_at = time.monotonic()
             elif data != b"x":
                 reader.feed(data)
                 for ftype, payload in reader.iter_frames():
@@ -908,9 +1131,8 @@ def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
                             pass
                         stdin_open = False
                     elif ftype == T_KILL:
-                        cgroup_kill(leaf)
-                        if leaf is None:
-                            _fallback_kill(realpid)
+                        kill_session(leaf, realpid)
+                        kill_sent_at = time.monotonic()
 
         # --- child stdout/stderr -> frames ---
         if out_open and p_out_fd in ready:
@@ -923,7 +1145,7 @@ def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
             if chunk == b"":
                 out_open = False
             elif chunk:
-                send_frame(conn, T_STDOUT, chunk)
+                emit(T_STDOUT, chunk)
         if err_open and p_err_fd in ready:
             try:
                 chunk = p_err.recv(65536)
@@ -934,7 +1156,7 @@ def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
             if chunk == b"":
                 err_open = False
             elif chunk:
-                send_frame(conn, T_STDERR, chunk)
+                emit(T_STDERR, chunk)
 
         # --- child artifact channel -> accumulated (name, data) records ---
         # Drained concurrently so a child blocked writing a large artifact (full
@@ -960,48 +1182,46 @@ def relay_loop(conn, reader, p_in, p_out, p_err, p_art, realpid, leaf):
             ms = cpu_ms(leaf, realpid)
             if ms is not None and ms != last_cpu_ms:
                 last_cpu_ms = ms
-                try:
-                    send_json(conn, T_CPU, {"cpuMs": ms})
-                except OSError:
-                    pass
+                emit(T_CPU, json.dumps({"cpuMs": ms}).encode())
 
         # --- terminal condition: child reaped AND output + artifacts drained ---
         if result is not None and not out_open and not err_open and not art_open:
             # one final CPU sample
             ms = cpu_ms(leaf, realpid)
             if ms is not None and ms != last_cpu_ms:
-                try:
-                    send_json(conn, T_CPU, {"cpuMs": ms})
-                except OSError:
-                    pass
+                emit(T_CPU, json.dumps({"cpuMs": ms}).encode())
             return result, artifacts
         # if child reaped but pipes never EOF (e.g. inherited by a lingering
-        # grandchild we already killed), bail after the cgroup is empty.
+        # grandchild we already killed), bail after the cgroup is empty — or,
+        # without a cgroup to consult, a few seconds after we killed it.
         if result is not None and leaf is not None and _cgroup_empty(leaf):
             return result, artifacts
+        if result is not None and kill_sent_at is not None and now - kill_sent_at >= 5.0:
+            return result, artifacts
+
+        # --- a killed session that refuses to die (e.g. stuck in D-state):
+        # re-send SIGKILL every 5s and log sparsely. This never spins: the worker
+        # socket is no longer selected on once it hit EOF, so every pass blocks
+        # on the child fds (or sleeps) before polling the reap again.
+        if result is None and kill_sent_at is not None and now - kill_sent_at >= 5.0:
+            kill_attempts += 1
+            kill_sent_at = now
+            kill_session(leaf, realpid)
+            if kill_attempts in (1, 6, 60):
+                log(f"session {realpid}: not reaped {kill_attempts * 5}s after kill, re-sent SIGKILL")
 
 
 def _cgroup_empty(leaf):
     try:
-        with open(os.path.join(leaf, "cgroup.procs")) as f:
+        with open(_cgroup_procs_path(leaf)) as f:
             return f.read().strip() == ""
     except OSError:
         return True
 
 
-def _fallback_kill(realpid):
-    """Used only when no cgroup leaf exists. Best-effort kill of the session."""
-    if not realpid:
-        return
-    try:
-        os.kill(realpid, SIGKILL)
-    except OSError:
-        pass
-
-
 # ============================ Accept loop ===================================
 def main():
-    global CG_BASE
+    global CG_LAYOUT
     # subreaper FIRST: so sessions whose intermediate exits reparent to us
     try:
         prctl(PR_SET_CHILD_SUBREAPER, 1)
@@ -1009,7 +1229,7 @@ def main():
         log(f"PR_SET_CHILD_SUBREAPER: {e} (continuing)")
 
     do_preimport(preimport_set())
-    CG_BASE = setup_cgroup_base()
+    CG_LAYOUT = setup_cgroup_base()
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

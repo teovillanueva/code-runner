@@ -120,6 +120,12 @@ type Config struct {
 	// (job:<id>:output). Default 600s. Env: RUN_RESULT_TTL (seconds).
 	RunResultTTL time.Duration
 
+	// JobTTL is the Redis TTL the worker (re)applies to job:<id>:status on every
+	// status write. The API applies the same TTL to job:<id>:spec and the initial
+	// status (its own JOB_TTL). Without it those keys never expire and Redis
+	// fills up (prod, 2026-09-05). Default 1h. Env: JOB_TTL (seconds).
+	JobTTL time.Duration
+
 	// PresignedURLTTL is the expiry on the presigned GET URLs returned for each
 	// artifact. Default 24h. Env: PRESIGNED_URL_TTL or ARTIFACT_S3_PRESIGN_TTL
 	// (seconds).
@@ -319,6 +325,7 @@ func Default() Config {
 		// Retention TTLs (D-11). S3ObjectTTL (72h) > PresignedURLTTL (24h)
 		// satisfies the Validate() ordering invariant out of the box.
 		RunResultTTL:    600 * time.Second,
+		JobTTL:          time.Hour,
 		PresignedURLTTL: 24 * time.Hour,
 		S3ObjectTTL:     72 * time.Hour,
 		// CAS blob store (Phase 16). BlobS3Bucket defaults empty here and is

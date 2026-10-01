@@ -184,8 +184,11 @@ For each job the agent (running inside the privileged pool container) performs a
   even though the pool container does.
 - **private mount namespace** (`unshare(CLONE_NEWNS)`) + rec-private `/` +
   a **private `/tmp` tmpfs** (size from the job limits) + remounted `/proc`.
-- **per-child cgroup-v2 leaf** with `memory.max` + `pids.max` (placed by the agent using
-  the session's real root-ns pid, returned over the double-fork pipe).
+- **per-child cgroup leaf** — `memory.max` + `pids.max` on cgroup v2; `memory.limit_in_bytes`
+  + `pids.max` on a cgroup-v1/hybrid host such as Fly's Machines — placed by the agent using
+  the session's real root-ns pid, returned over the double-fork pipe. The layout is read from
+  the mount table (`/proc/self/mountinfo`), never inferred from path existence (see *cgroup
+  v1 hosts* below).
 - **fd scrub** — every fd `> 2` is closed before user code, then the child's stdio
   socketpair ends are `dup2`'d onto 0/1/2.
 
@@ -322,9 +325,46 @@ with three signals:
 
 Note also the one-time **`WARN`** the worker emits when the pool host can't delegate
 cgroups (`per-child cgroup enforcement unavailable ... expected on Docker Desktop;
-enforced on Fly/Linux`). On Fly/Linux with `--cgroupns=host` this should **not** appear;
-seeing it on Fly means per-child `memory.max`/`pids.max`/`cpu.stat` are not being
-enforced.
+enforced on Fly/Linux`). Seeing it on Fly means per-child limits are not being enforced.
+The agent's own startup line says which layout it found: `cgroup v2: delegated subtree
+at ...` or, on Fly, `cgroup v1: bases {...}`.
+
+### cgroup v1 hosts (Fly)
+
+Fly Machines boot a **cgroup-v1 hybrid** kernel layout: the unified (v2) hierarchy is
+mounted with no controllers, and `memory`, `pids`, `cpu,cpuacct`, ... are separate v1
+mounts. Inside the pool container, `/sys/fs/cgroup` is a **tmpfs** holding those v1 mounts.
+
+Until 2026-09 the agent assumed v2 and derived its base from `/proc/self/cgroup` +
+`/sys/fs/cgroup/<path>`. On Fly that path is a plain directory on the tmpfs, so
+`makedirs` of a leaf and every write to `memory.max`, `cgroup.procs` and `cgroup.kill`
+*succeeded* — as ordinary files. The agent logged `cgroup=yes` while enforcing nothing:
+
+- no memory or pids limit per child (only the pool container's own cap applied);
+- `cgroup.kill` killed nobody, so when the worker closed the relay (warmup timeout, idle,
+  wall, kill) a child blocked in `input()` stayed alive, and its relay thread spun at 100 %
+  on the EOF'd socket;
+- orphans accumulated (~93 for 9 live sandboxes within minutes), filled the 1 GB pool,
+  the pool OOM'd, every in-flight job fell back to the Docker tier, and the cycle repeated.
+
+The agent now:
+
+1. detects the layout from the mount table (`/proc/self/mountinfo`: a `cgroup2` mount at
+   `/sys/fs/cgroup`, or `cgroup` mounts for the `memory`/`pids` controllers for v1), refuses
+   to build leaves on anything else, and resolves its base relative to each mount's **root**
+   (Docker mounts the v1 controllers with the container's own cgroup as the root, so the base
+   is `<mount>/zygote`, not `<mount>/docker/<id>/zygote`);
+2. on v1 creates one leaf per controller (`memory.limit_in_bytes`, `memory.memsw.limit_in_bytes`
+   when swap accounting is on, `pids.max`; CPU time from `cpuacct.usage` when that
+   controller is present, else from `/proc/<pid>/stat`);
+3. **always `SIGKILL`s the session pid** on KILL / relay EOF / teardown — it is PID 1 of
+   its own pid namespace, so the kernel takes every descendant down with it, cgroup or not;
+4. stops `select()`ing on the worker socket once it hits EOF, so a job whose worker side is
+   gone waits on the child fds (or sleeps) instead of spinning.
+
+To check on a worker: `pgrep -f zygote_agent | wc -l` should track `code_runner_slots_used`
+(plus the agent itself), `grep Threads /proc/<agent>/status` should not grow unbounded,
+and `docker logs <pool>` must not repeat `cgroup leaf ... not removable`.
 
 ---
 

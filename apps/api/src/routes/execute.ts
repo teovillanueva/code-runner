@@ -183,11 +183,14 @@ export function registerExecuteRoutes(app: Hono): void {
               updatedAtMs: enqueuedAtMs,
             };
 
-            // Atomically write spec, status, and enqueue the job via pipeline
+            // Atomically write spec, status, and enqueue the job via pipeline.
+            // Both keys expire (JOB_TTL): a job that is never claimed, or whose
+            // status nobody pulls, must not live in Redis forever. The worker
+            // refreshes the status TTL on every status write.
             const redis = getRedis();
             const pipeline = redis.pipeline();
-            pipeline.set(keys.jobSpec(jobId), JSON.stringify(spec));
-            pipeline.set(keys.jobStatus(jobId), JSON.stringify(status));
+            pipeline.set(keys.jobSpec(jobId), JSON.stringify(spec), "EX", config.jobTtlSeconds);
+            pipeline.set(keys.jobStatus(jobId), JSON.stringify(status), "EX", config.jobTtlSeconds);
             pipeline.lpush(keys.jobQueue, jobId);
             await pipeline.exec();
 

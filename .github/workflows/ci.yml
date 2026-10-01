@@ -45,6 +45,11 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # The zygote agent is pure-stdlib Python baked into the executor image;
+      # its cgroup layout detection is unit-tested here without a container.
+      - name: Zygote agent unit tests
+        run: python3 -m unittest discover -s languages/python-3.12 -p 'test_*.py' -v
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
