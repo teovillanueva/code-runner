@@ -163,7 +163,8 @@ and any zygote failure transparently falls back to Docker, so the tier can't bre
 Full design, security posture, and operations: [`docs/zygote.md`](zygote.md).
 
 - **No extra Machine flag needed.** The pool container runs **privileged with host
-  cgroups** (it manages per-child namespaces + cgroup-v2 leaves itself). That's safe here
+  cgroups** (it manages per-child namespaces + cgroup leaves itself — v1 controllers on
+  Fly's hybrid hosts, see `docs/zygote.md` "cgroup v1 hosts"). That's safe here
   and only here because the worker runs its own dockerd **inside a Firecracker microVM** —
   the microVM is the real host boundary (threat model = host-escape-only). The worker's
   inner dockerd is already privileged (it *is* the dind daemon), so launching a privileged
