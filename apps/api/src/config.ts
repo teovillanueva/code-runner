@@ -23,6 +23,13 @@ export interface Config {
   // input files in a single /v1/execute request. POST returns 413 when the sum
   // of decoded file bytes exceeds this. Set via MAX_FILES_BYTES. Default: 8 MiB.
   maxFilesBytes: number;
+  // Lifetime (seconds) of the per-job spec/status keys written by /v1/execute.
+  // Without it every job leaves two keys behind forever; Redis eventually hits
+  // maxmemory and, under `noeviction`, every write fails (prod, 2026-09-05:
+  // ~339k job:* keys). Must outlive the longest queue wait + run + status-pull
+  // window; the worker refreshes the status key's TTL on every status write.
+  // Set via JOB_TTL. Default: 3600.
+  jobTtlSeconds: number;
 
   // ── Content-addressed blob store presign (Phase 16, BLOB-02/03/04) ─────────
   // The API PRESIGNS PUT URLs for blob uploads — pure LOCAL crypto, NO S3
@@ -120,6 +127,7 @@ function loadConfig(): Config {
       process.env["MAX_FILES_BYTES"] ?? String(8 * 1024 * 1024),
       10,
     ),
+    jobTtlSeconds: parseInt(process.env["JOB_TTL"] ?? "3600", 10),
     blobStoreConfigured,
     blobS3Endpoint,
     blobS3Bucket,

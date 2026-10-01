@@ -136,7 +136,7 @@ func run(ctx context.Context) error {
 	slog.Info("redis connected", "url", cfg.RedisURL)
 
 	// ── Jobstore + transport ──────────────────────────────────────────────────
-	store := jobstore.New(redisClient)
+	store := jobstore.New(redisClient).WithStatusTTL(cfg.JobTTL)
 	transport := stdintransport.NewRedis(redisClient)
 
 	// ── Docker runner ─────────────────────────────────────────────────────────
@@ -479,6 +479,11 @@ func configFromEnv() config.Config {
 	if v := os.Getenv("RUN_RESULT_TTL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.RunResultTTL = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("JOB_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.JobTTL = time.Duration(n) * time.Second
 		}
 	}
 	if v := os.Getenv("PRESIGNED_URL_TTL"); v != "" {
