@@ -69,6 +69,10 @@ kill_timeout = "300s"
   # MUST be >= the presigned-URL TTL or the worker fails fast at boot (R15). S3
   # lifecycle granularity is whole DAYS (sub-day cleanup is not achievable).
   RUN_RESULT_TTL = "600"
+  # Expiry (seconds) the worker re-applies to job:<id>:status on every write; the
+  # API applies the same to job:<id>:spec. Keep both apps in sync. Without it the
+  # job keys never expired and Redis filled up (2026-09-05).
+  JOB_TTL = "3600"
   PRESIGNED_URL_TTL = "86400"
   ARTIFACT_S3_OBJECT_TTL = "3"
   # ── Zygote warm-pool tier (Phase 13, ZDEP-01..03) ──

@@ -20,6 +20,9 @@ primary_region = "gru"
   SOKETI_APP_ID = "code-runner"
   SOKETI_APP_KEY = "code-runner-key"
   MAX_QUEUE_DEPTH = "256"
+  # Expiry (seconds) on job:<id>:spec and the initial job:<id>:status. The worker
+  # re-applies the same JOB_TTL on every status write — keep both apps in sync.
+  JOB_TTL = "3600"
   ENABLE_CHANNEL_AUTH = "true"
   # Secrets (fly secrets set -a code-runner-api):
   #   EXECUTOR_API_TOKEN, SOKETI_APP_SECRET
@@ -29,6 +32,11 @@ primary_region = "gru"
 # long-lived Redis TCP socket, so on resume the first ops hit ECONNRESET and the
 # job `start` publish to ctrl:<id> was lost — workers warmup-timed-out and batch
 # runs 45s-PollTimeout'd to 500. Always-on keeps the Redis connection alive.
+#
+# Run TWO Machines (`fly scale count 2 -a code-runner-api`, once; deploys keep
+# the count). The API is stateless — queue, job state, rate limits and the
+# start flag all live in Redis — so any replica serves any request, and a
+# second one survives a Machine restart or a saturated sibling.
 [http_service]
   internal_port = 8080
   force_https = true
@@ -46,6 +54,10 @@ primary_region = "gru"
   port = 8080
   path = "/metrics"
 
+# shared-cpu-1x is plenty: the gateway only moves JSON to/from Redis. Measured
+# on 2026-09-29 (84 students in an exam): 2-6 % of one core in normal operation,
+# peaking at ~30 % only while the worker fleet was saturated and clients were
+# polling a 256-deep queue. 256 MB left ~40 MB free; 512 MB gives headroom.
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "256mb"
+  memory = "512mb"
