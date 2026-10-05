@@ -5,7 +5,7 @@
   "image": "executor/cpp:14",
   "entrypoint": "main.cpp",
   "compile": ["g++", "-O2", "-std=gnu++20", "-pipe", "-o", "/workspace/prog", "main.cpp"],
-  "run": ["stdbuf", "-oL", "/workspace/prog"],
+  "run": ["stdbuf", "-i0", "-oL", "/workspace/prog"],
   "interactive": true,
   "defaultLimits": {
     "wallTimeMs": 60000,

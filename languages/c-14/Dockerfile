@@ -9,9 +9,12 @@
 #     containers run with --network=none, so no package fetch is possible.
 #   - No CMD/ENTRYPOINT: the runner supplies argv from the manifest fields
 #     (compile writes /workspace/prog, run executes it).
-#   - The run step wraps the binary in `stdbuf -oL` so stdout is line-buffered
-#     on the attach pipe: interactive prompts (printf/cout without an explicit
-#     flush) reach the client before the program blocks on stdin.
+#   - The run step wraps the binary in `stdbuf -i0 -oL`: stdout line-buffered
+#     on the attach pipe AND stdin unbuffered. Line-buffering alone delivers a
+#     prompt that ends in a newline; one WITHOUT a newline (printf("n: ");
+#     scanf(...)) would stay in the buffer until after the user typed. With an
+#     unbuffered stdin, glibc flushes line-buffered stdout before each read, so
+#     the prompt reaches the client before the program blocks on stdin.
 #   - /tmp is a noexec tmpfs at run time; the compiler only writes
 #     intermediates there, the binary itself goes to /workspace.
 
@@ -28,7 +31,7 @@ RUN apt-get update \
 RUN set -eu; \
     printf '#include <stdio.h>\nint main(void){ printf("cr: c compile+run smoke ok\\n"); return 0; }\n' > /tmp/smoke.c; \
     gcc -O2 -std=gnu17 -pipe -o /tmp/smoke /tmp/smoke.c -lm; \
-    stdbuf -oL /tmp/smoke; \
+    stdbuf -i0 -oL /tmp/smoke; \
     rm -f /tmp/smoke.c /tmp/smoke
 
 # ── Workspace directory ────────────────────────────────────────────────────────
