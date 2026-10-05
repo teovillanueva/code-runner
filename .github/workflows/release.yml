@@ -40,9 +40,11 @@ jobs:
       - name: Enable Corepack (pnpm)
         run: corepack enable
 
-      # OIDC Trusted Publishing requires a recent npm CLI (>= 11.5.1).
+      # OIDC Trusted Publishing requires a recent npm CLI (>= 11.5.1). Pinned to
+      # 11: npm 12 wraps `npm info --json` output in an array, which changesets
+      # 2.x reads as "not published" and then fails re-publishing every package.
       - name: Update npm (OIDC trusted publishing)
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
