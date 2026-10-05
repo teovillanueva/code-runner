@@ -289,7 +289,8 @@ fn main() {
 // TestLangFanout_Rust_CompileError
 //
 // Case B: submit a Rust main.rs with a deliberate compile error.
-// Expected: compiling stage published, compiler stderr forwarded (contains "error"),
+// Expected: compiling stage published, compiler diagnostics forwarded as
+// compile_output (contains "error"),
 // terminal result has NON-ZERO exitCode, "running" stage NEVER published.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -425,18 +426,19 @@ func TestLangFanout_Rust_CompileError(t *testing.T) {
 		}
 	}
 
-	// Assert: compiler stderr was forwarded (at least one stderr event containing "error").
-	foundStderr := false
+	// Assert: compiler diagnostics were forwarded on the compile_output event
+	// (the live build log; compile errors never go out as stderr).
+	foundDiag := false
 	for _, ev := range it.allEvents() {
-		if ev.event == "stderr" {
+		if ev.event == "compile_output" {
 			var oe wire.OutputChunkEvent
 			if json.Unmarshal(ev.data, &oe) == nil && strings.Contains(oe.Chunk, "error") {
-				foundStderr = true
+				foundDiag = true
 				break
 			}
 		}
 	}
-	require.True(t, foundStderr, "compiler stderr containing 'error' must be forwarded to the client")
+	require.True(t, foundDiag, "compiler diagnostics containing 'error' must be forwarded as compile_output")
 
 	// Cancel the worker loop.
 	cancel()
