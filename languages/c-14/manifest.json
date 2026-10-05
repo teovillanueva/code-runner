@@ -1,0 +1,18 @@
+{
+  "language": "c",
+  "version": "14",
+  "aliases": ["gcc"],
+  "image": "executor/c:14",
+  "entrypoint": "main.c",
+  "compile": ["gcc", "-O2", "-std=gnu17", "-pipe", "-o", "/workspace/prog", "main.c", "-lm"],
+  "run": ["stdbuf", "-oL", "/workspace/prog"],
+  "interactive": true,
+  "defaultLimits": {
+    "wallTimeMs": 60000,
+    "idleMs": 15000,
+    "cpuMs": 30000,
+    "memoryMb": 512,
+    "pids": 128,
+    "outputKb": 1024
+  }
+}

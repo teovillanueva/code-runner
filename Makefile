@@ -81,6 +81,14 @@ python-image: ## Build the Python 3.12 sandbox image on the host Docker daemon
 rust-image: ## Build the Rust 1.83 sandbox image on the host Docker daemon (Wave 2)
 	docker build -t executor/rust:1.83 languages/rust-1.83
 
+.PHONY: c-image
+c-image: ## Build the C (GCC 14) sandbox image on the host Docker daemon
+	docker build -t executor/c:14 languages/c-14
+
+.PHONY: cpp-image
+cpp-image: ## Build the C++ (G++ 14) sandbox image on the host Docker daemon
+	docker build -t executor/cpp:14 languages/cpp-14
+
 .PHONY: r-image
 r-image: ## Build the R 4.4 sandbox image on the host Docker daemon (Wave 2)
 	docker build -t executor/r:4.4 languages/r-4.4
@@ -90,7 +98,7 @@ sqlite-image: ## Build the SQLite 3 sandbox image on the host Docker daemon (Wav
 	docker build -t executor/sqlite:3 languages/sqlite-3
 
 .PHONY: build-images
-build-images: python-image rust-image r-image sqlite-image ## Build all language sandbox images on the host daemon
+build-images: python-image rust-image c-image cpp-image r-image sqlite-image ## Build all language sandbox images on the host daemon
 	@echo "All language images built."
 
 .PHONY: langfanout

@@ -63,6 +63,8 @@ else
   }
   pull "executor/python:3.12" "${REGISTRY}/executor-python:3.12"
   pull "executor/rust:1.83"   "${REGISTRY}/executor-rust:1.83"
+  pull "executor/c:14"      "${REGISTRY}/executor-c:14"
+  pull "executor/cpp:14"    "${REGISTRY}/executor-cpp:14"
   pull "executor/r:4.4"       "${REGISTRY}/executor-r:4.4"
   pull "executor/sqlite:3"    "${REGISTRY}/executor-sqlite:3"
   touch "$LOADED_MARKER" 2>/dev/null || true

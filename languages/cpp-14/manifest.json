@@ -1,0 +1,18 @@
+{
+  "language": "cpp",
+  "version": "14",
+  "aliases": ["c++", "cxx", "g++"],
+  "image": "executor/cpp:14",
+  "entrypoint": "main.cpp",
+  "compile": ["g++", "-O2", "-std=gnu++20", "-pipe", "-o", "/workspace/prog", "main.cpp"],
+  "run": ["stdbuf", "-oL", "/workspace/prog"],
+  "interactive": true,
+  "defaultLimits": {
+    "wallTimeMs": 60000,
+    "idleMs": 15000,
+    "cpuMs": 30000,
+    "memoryMb": 512,
+    "pids": 128,
+    "outputKb": 1024
+  }
+}

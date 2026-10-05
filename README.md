@@ -120,7 +120,7 @@ flowchart TD
 cp .env.example .env
 
 # 2. Build the language sandbox images on the host daemon (no Docker-in-Docker)
-make build-images       # executor/python:3.12  rust:1.83  r:4.4  sqlite:3
+make build-images       # executor/python:3.12  rust:1.83  c:14  cpp:14  r:4.4  sqlite:3
 
 # 3. Bring up the stack: redis + soketi + api + worker
 docker compose up       # or: make up
@@ -224,7 +224,7 @@ is the only unauthenticated route.
 ```jsonc
 // Request body
 {
-  "language": "python",            // name or alias: "py", "rust", "rs", "sqlite", "sql", …
+  "language": "python",            // name or alias: "py", "rust", "rs", "c", "cpp", "c++", "sqlite", "sql", …
   "version": "3.12",               // optional; omit to use the only/most-recent match
   "files": [
     { "name": "main.py", "content": "name = input('name? ')\nprint(f'hello {name}')\n" },
@@ -368,7 +368,7 @@ docker compose up --build  # the manifest loader auto-discovers the new folder a
 curl localhost:8080/v1/languages -H "Authorization: Bearer $EXECUTOR_API_TOKEN"  # verify
 ```
 
-Bundled languages: **Python 3.12**, **Rust 1.83**, **R 4.4**, **SQLite 3** — the last two
+Bundled languages: **Python 3.12**, **Rust 1.83**, **C** and **C++** (GCC 14), **R 4.4**, **SQLite 3** — the last two
 prove the abstraction holds for a non-interactive language and a non-general-purpose tool.
 
 > [!WARNING]

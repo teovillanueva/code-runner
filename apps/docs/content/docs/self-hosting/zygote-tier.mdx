@@ -58,13 +58,14 @@ A job goes to the zygote tier only when **both**:
    `preimport`** array.
 
 When the zygote runner is nil (the default) every job goes to Docker, so an unset
-`ZYGOTE_ENABLED` worker is byte-for-byte the old behaviour for all four languages.
+`ZYGOTE_ENABLED` worker is byte-for-byte the old behaviour for every language.
 
 | Language | Tier | Why |
 |---|---|---|
 | **Python 3.12** | **zygote** | Interpreted, heavy imports (`numpy, pandas, scipy, sklearn, matplotlib.pyplot`) → big CoW win. |
 | R 4.4 | Docker | Docker-tier for now (see [R status](#r-status)). |
 | Rust | Docker | Compiled, no import base → zero CoW benefit. |
+| C / C++ | Docker | Compiled, no import base → zero CoW benefit. |
 | SQLite | Docker | No import base → zero CoW benefit. |
 
 ### Opting a language in

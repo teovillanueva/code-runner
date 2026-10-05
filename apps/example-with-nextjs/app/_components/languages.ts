@@ -85,6 +85,43 @@ fn main() {
 `,
   },
   {
+    id: "c-14",
+    label: "C (GCC 14)",
+    language: "c",
+    version: "14",
+    file: "main.c",
+    monaco: "c",
+    snippet: `#include <stdio.h>
+
+int main(void) {
+    char name[128];
+    printf("what is your name?\\n");
+    if (scanf("%127s", name) == 1) {
+        printf("hello, %s!\\n", name);
+    }
+    return 0;
+}
+`,
+  },
+  {
+    id: "cpp-14",
+    label: "C++ (G++ 14)",
+    language: "cpp",
+    version: "14",
+    file: "main.cpp",
+    monaco: "cpp",
+    snippet: `#include <iostream>
+#include <string>
+
+int main() {
+    std::cout << "what is your name?" << std::endl;
+    std::string name;
+    std::getline(std::cin, name);
+    std::cout << "hello, " << name << "!" << std::endl;
+}
+`,
+  },
+  {
     id: "sqlite-3",
     label: "SQLite 3",
     language: "sqlite",

@@ -6,7 +6,7 @@
 #     - every push to main  → :latest + :sha-<short>   (continuous, immutable sha)
 #     - on a vX.Y.Z git tag → :1, :1.2, :1.2.3          (stable, pinnable releases)
 #
-#   language sandbox images (executor-python, -rust, -r, -sqlite)
+#   language sandbox images (executor-python, -rust, -c, -cpp, -r, -sqlite)
 #     - only when languages/** changes (or on a tag / manual run)
 #     - tagged by language version + an immutable <version>-<sha>
 #
@@ -116,6 +116,12 @@ jobs:
           - name: executor-rust
             version: "1.83"
             context: languages/rust-1.83
+          - name: executor-c
+            version: "14"
+            context: languages/c-14
+          - name: executor-cpp
+            version: "14"
+            context: languages/cpp-14
           - name: executor-r
             version: "4.4"
             context: languages/r-4.4
