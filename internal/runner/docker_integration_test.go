@@ -125,6 +125,18 @@ func TestIntegrationHardeningFlags(t *testing.T) {
 	assert.Greater(t, hc.NanoCPUs, int64(0),
 		"HARD-04: NanoCPUs must be > 0")
 
+	// HARD-04: no core dumps (a crashing C/C++ program must not write a core
+	// file into /workspace).
+	var coreLimit *container.Ulimit
+	for _, u := range hc.Ulimits {
+		if u.Name == "core" {
+			coreLimit = u
+		}
+	}
+	require.NotNil(t, coreLimit, "HARD-04: a 'core' ulimit must be set")
+	assert.Equal(t, int64(0), coreLimit.Soft, "HARD-04: core ulimit soft must be 0")
+	assert.Equal(t, int64(0), coreLimit.Hard, "HARD-04: core ulimit hard must be 0")
+
 	// HARD-05: CapDrop contains "ALL"
 	capDropStr := strings.Join([]string(hc.CapDrop), ",")
 	assert.Contains(t, strings.ToUpper(capDropStr), "ALL",
