@@ -835,6 +835,13 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, onOutput fun
 	}
 	defer execResp.Close()
 
+	// The hijacked attach connection is not tied to ctx once established, so a
+	// cancelled ctx (wall-time deadline, kill) would leave StdCopy blocked until
+	// the compiler exits on its own. Closing the connection unblocks it; the
+	// compiler process is killed with the container by the caller's teardown.
+	stopOnCancel := context.AfterFunc(ctx, func() { execResp.Close() })
+	defer stopOnCancel()
+
 	// Demux the exec output stream. We capture stdout AND stderr (so the
 	// persisted RunResult.compile mirrors Piston's compile.stdout/stderr), plus
 	// an interleaved `output` buffer. stdcopy.StdCopy reads frames sequentially
@@ -863,6 +870,11 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, onOutput fun
 		Output:     outputBuf.String(),
 	}
 
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// Stopped from outside: the exec is still running, so there is no exit
+		// code to inspect. Return what was captured so far.
+		return captured, fmt.Errorf("docker: Compile stopped: %w", ctxErr)
+	}
 	if copyErr != nil && copyErr != io.EOF {
 		return captured, fmt.Errorf("docker: Compile demux: %w", copyErr)
 	}

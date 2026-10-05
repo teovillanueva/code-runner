@@ -145,6 +145,37 @@ func TestIntegrationHardeningFlags(t *testing.T) {
 		"T-02-12: Container user must be non-root (65534:65534)")
 }
 
+// TestIntegrationCompileStopsOnContextCancel: a compile step that never ends
+// returns as soon as its context is done (wall-time deadline or kill) instead of
+// blocking on the exec stream until the compiler exits on its own.
+func TestIntegrationCompileStopsOnContextCancel(t *testing.T) {
+	cli := requireDocker(t)
+	r := newTestRunner(t)
+
+	jobID := fmt.Sprintf("test-compile-cancel-%d", time.Now().UnixNano())
+	spec := buildSpec(jobID, []string{"sleep", "30"}, testLimitsDefault())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sb, err := r.Create(ctx, spec)
+	require.NoError(t, err, "Create must not error")
+	defer func() {
+		_ = sb.Cleanup()
+		assertNoLeak(t, cli, jobID)
+	}()
+
+	compileCtx, compileCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer compileCancel()
+	start := time.Now()
+	_, err = sb.Compile(compileCtx, []string{"sleep", "30"}, nil)
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "a compile stopped by its context must return an error")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, elapsed, 5*time.Second, "Compile must return promptly after the context is done, took %s", elapsed)
+}
+
 // ── Task 2: stdin round-trip ──────────────────────────────────────────────────
 
 // TestIntegrationStdinRoundtrip writes a known line to Stdin() and reads it
