@@ -4,20 +4,14 @@
 #
 # The data-root /var/lib/docker is a mounted ext4 VOLUME (overlay2 cannot run on
 # the Machine's overlay rootfs — see the Dockerfile header). Cold-start speed
-# comes from the volume already being populated:
+# comes from the volume already being populated: new volumes are forked from a
+# golden snapshot (provision-pool.sh), and a warm restart reuses its own volume.
 #
-#   Fast path (normal): the volume was forked from the golden snapshot, so it
-#   already holds the images AND the .cr-images-loaded marker. We skip loading
-#   entirely and dockerd is up in seconds. Warm restarts of an existing machine
-#   hit this path too (the marker persists on the volume).
-#
-#   Bootstrap path (one-time): an EMPTY volume (used to build the golden snapshot,
-#   or any unforked volume) has no marker, so we pull the images from GHCR once
-#   and write the marker. Subsequent boots take the fast path.
+# Images: ensure-images.sh checks every image pinned in images.lock on its own
+# and pulls only what the volume is missing (a language added after the golden
+# snapshot was taken, or an image whose pinned tag changed). A pull that keeps
+# failing does not stop the node: the worker starts with what it has.
 set -eu
-
-REGISTRY="${SANDBOX_IMAGE_REGISTRY:-ghcr.io/teovillanueva}"
-LOADED_MARKER="/var/lib/docker/.cr-images-loaded"
 
 log() { echo "[cr-entrypoint] $*"; }
 
@@ -42,35 +36,9 @@ done
 log "dockerd is up"
 
 # ── 3. Ensure the language images are present ─────────────────────────────────
-# Fast path: marker present (volume forked from the golden snapshot or a warm
-# restart) → nothing to do. Bootstrap path: pull from GHCR once, then mark.
-if [ -f "$LOADED_MARKER" ]; then
-  log "language images already present (marker) — skipping pull"
-else
-  log "no marker — bootstrap: pulling language images from GHCR (one-time, builds the golden volume)"
-  if [ -n "${GHCR_TOKEN:-}" ]; then
-    log "authenticating to ghcr.io"
-    echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER:-teovillanueva}" --password-stdin
-  fi
-  pull() {
-    local_ref="$1"; remote_ref="$2"
-    if docker image inspect "$local_ref" >/dev/null 2>&1; then
-      log "present: $local_ref"; return 0
-    fi
-    log "pulling $remote_ref -> $local_ref"
-    docker pull "$remote_ref"
-    docker tag "$remote_ref" "$local_ref"
-  }
-  pull "executor/python:3.12" "${REGISTRY}/executor-python:3.12"
-  pull "executor/rust:1.83"   "${REGISTRY}/executor-rust:1.83"
-  pull "executor/c:14"      "${REGISTRY}/executor-c:14"
-  pull "executor/cpp:14"    "${REGISTRY}/executor-cpp:14"
-  pull "executor/r:4.4"       "${REGISTRY}/executor-r:4.4"
-  pull "executor/sqlite:3"    "${REGISTRY}/executor-sqlite:3"
-  touch "$LOADED_MARKER" 2>/dev/null || true
-  log "bootstrap complete — snapshot this volume to seed the pool (provision-pool.sh)"
-fi
-log "language images ready"
+# Never fatal: a missing image only fails that language's jobs until the next
+# boot, so the node keeps serving the rest instead of crash-looping.
+/usr/local/bin/cr-ensure-images.sh || log "WARN: starting the worker with an incomplete image set"
 
 # ── 4. Hand off to the worker (PID replacement for clean signals) ─────────────
 log "starting worker"

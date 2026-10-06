@@ -94,13 +94,18 @@ lifecycles — don't couple their versions. Images are published to GHCR by
 |---|---|---|
 | `code-runner-api`, `code-runner-worker` | every push to `main` | `latest` + `sha-<short>` (immutable) |
 | `code-runner-api`, `code-runner-worker` | a `vX.Y.Z` git tag | `1`, `1.2`, `1.2.3` |
-| `executor-python` / `-rust` / `-r` / `-sqlite` | `languages/**` changed, a tag, or manual run | `<version>` + `<version>-<sha>` |
+| `executor-python` / `-rust` / `-c` / `-cpp` / `-r` / `-sqlite` | `languages/**` changed, a tag, or manual run | `<version>` + `<version>-<sha>` |
 
 - `latest` tracks `main` HEAD (continuous). For reproducible deploys, pin a `sha-<short>` tag.
 - **Cut a stable release** with a git tag — no extra tooling:
   ```bash
   git tag v1.2.3 && git push origin v1.2.3
   ```
+- **Rolling a language image out to the Fly pool**: the worker only uses the images pinned
+  in `deploy/fly/worker/images.lock`. After the `languages/**` change lands on `main` and the
+  `release-images` run has published `<version>-<sha>`, bump those tags in `images.lock`, deploy
+  the worker, then boot every pool machine once outside peak hours (autoscaler paused) so each
+  one pulls what changed before it takes jobs. A new language is the same plus a new line.
 - Auth uses the workflow's automatic `GITHUB_TOKEN` (`packages: write`) — no secrets.
 - One-time: set the GHCR packages to **public** (each package → Settings → Change visibility)
   so self-hosters can pull without authenticating.

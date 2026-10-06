@@ -50,6 +50,10 @@ jobs:
       - name: Zygote agent unit tests
         run: python3 -m unittest discover -s languages/python-3.12 -p 'test_*.py' -v
 
+      # The Fly worker's per-image check (images.lock) against a fake docker.
+      - name: Worker image-check script tests
+        run: sh deploy/fly/worker/ensure-images_test.sh
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:

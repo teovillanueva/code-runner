@@ -127,8 +127,16 @@ depends on the worker's filesystem:
 Since the volume is required, make a *fresh* one boot fast by **forking it from a
 golden snapshot** of an already-populated volume. Fly attaches an existing
 **unattached** `docker_data` volume before creating an empty one, so a
-snapshot-forked volume (which carries the images **and** the `.cr-images-loaded`
-marker) lets the entrypoint skip the populate step — dockerd is up in seconds.
+snapshot-forked volume (which already carries the images) skips the populate
+step — dockerd is up in seconds.
+
+At every boot `deploy/fly/worker/ensure-images.sh` checks each image pinned in
+`deploy/fly/worker/images.lock` on its own: present → a local inspect, no
+registry call; missing (a language added after the snapshot, or a re-pinned
+tag) → pulled, with retries. A pull that keeps failing is logged and skipped —
+the worker still starts and serves the languages it has. So adding a language or
+shipping a rebuilt image is: bump `images.lock`, redeploy the worker, boot every
+machine once outside peak hours so the pull does not land on a scale-up.
 
 `deploy/fly/worker/provision-pool.sh` automates it:
 
@@ -144,7 +152,7 @@ GOLDEN_SNAPSHOT=vs_xxxx deploy/fly/worker/provision-pool.sh grow 6
 ```
 
 The autoscaler only **start/stops** this pre-created pool (`FAS_STARTED_MACHINE_COUNT`),
-and a stopped→started machine reuses its already-populated volume (marker hit) — so on
+and a stopped→started machine reuses its already-populated volume (images already there) — so on
 the hot path every boot is already near-instant. Machine *creation* (the only
 slow-without-a-snapshot step) happens in `provision-pool.sh grow`, a pre-warm action,
 never during a burst.
