@@ -65,6 +65,10 @@ ENV MPLCONFIGDIR=/tmp/mplconfig
 # University-exam scientific stack (all manylinux wheels, verified compatible
 # with numpy 2.2.6 / matplotlib 3.10.3 / pandas 2.2.3, no conflicts):
 #   scipy, statsmodels, scikit-learn, seaborn, cvxopt, swiglpk, PICOS.
+# scipy >= 1.16 is what returns the KKT/Lagrange multipliers of SLSQP
+# (`minimize(..., method="SLSQP").multipliers`, used in operations-research
+# courses); it needs statsmodels >= 0.14.5, which fixed the import that scipy
+# 1.16 broke (`_lazywhere` was removed from scipy).
 # swiglpk BUNDLES GLPK, so PICOS solves LPs with solver='glpk' out of the box —
 # NO apt libglpk package is needed and the image requires ZERO new apt deps.
 # NOTE for the executor: network IS available during `docker build`; if any single
@@ -75,8 +79,8 @@ RUN set -eu; \
       pandas==2.2.3 \
       requests==2.32.3 \
       matplotlib==3.10.3 \
-      scipy==1.15.3 \
-      statsmodels==0.14.4 \
+      scipy==1.18.1 \
+      statsmodels==0.14.6 \
       scikit-learn==1.6.1 \
       seaborn==0.13.2 \
       cvxopt==1.3.2 \
@@ -97,7 +101,8 @@ RUN set -eu; \
     rm -rf /root/.cache; \
     # Build-time import smoke test (LOCKED): a broken prune MUST fail the build,
     # never ship a sandbox image where the advertised sci stack crashes at import.
-    python -c "import numpy, numpy.testing, scipy, sklearn, statsmodels.api, seaborn, matplotlib; matplotlib.use('Agg'); from matplotlib import pyplot; print('cr: scientific-stack import smoke ok')"
+    python -c "import numpy, numpy.testing, scipy, sklearn, statsmodels.api, seaborn, matplotlib; matplotlib.use('Agg'); from matplotlib import pyplot; print('cr: scientific-stack import smoke ok')"; \
+    python -c "from scipy.optimize import minimize; r = minimize(lambda x: x[0]**2 + x[1]**2, [1, 1], method='SLSQP', constraints=[{'type': 'eq', 'fun': lambda x: x[0] + x[1] - 1}]); assert r.success and abs(r.multipliers[0] - 1) < 1e-4, r; print('cr: SLSQP multipliers smoke ok')"
 
 # ── Auto-capture matplotlib figures as workspace artifacts ────────────────────
 # COPY (after the pip install so site-packages exists) the sitecustomize.py hook
