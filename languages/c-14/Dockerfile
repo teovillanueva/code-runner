@@ -30,7 +30,7 @@ RUN apt-get update \
 # then execute the binary under stdbuf). A broken toolchain fails the build.
 RUN set -eu; \
     printf '#include <stdio.h>\nint main(void){ printf("cr: c compile+run smoke ok\\n"); return 0; }\n' > /tmp/smoke.c; \
-    gcc -O2 -std=gnu17 -pipe -o /tmp/smoke /tmp/smoke.c -lm; \
+    gcc -Wall -O0 -std=gnu17 -pipe -o /tmp/smoke /tmp/smoke.c -lm; \
     stdbuf -i0 -oL /tmp/smoke; \
     rm -f /tmp/smoke.c /tmp/smoke
 

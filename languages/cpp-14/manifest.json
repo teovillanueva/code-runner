@@ -4,7 +4,7 @@
   "aliases": ["c++", "cxx", "g++"],
   "image": "executor/cpp:14",
   "entrypoint": "main.cpp",
-  "compile": ["g++", "-O2", "-std=gnu++20", "-pipe", "-o", "/workspace/prog", "main.cpp"],
+  "compile": ["g++", "-Wall", "-O0", "-std=gnu++20", "-pipe", "-o", "/workspace/prog", "main.cpp"],
   "run": ["stdbuf", "-i0", "-oL", "/workspace/prog"],
   "interactive": true,
   "defaultLimits": {
