@@ -11,7 +11,7 @@
 # main and release-images has published <version>-<sha>, bump the tags here,
 # redeploy the worker, and warm the pool (boot every machine once, outside peak
 # hours) — each machine pulls only the images whose tag changed.
-executor/python:3.12  executor-python:3.12-9cb2e9e
+executor/python:3.12  executor-python:3.12-9f9e42e
 executor/rust:1.83    executor-rust:1.83-9cb2e9e
 executor/c:14         executor-c:14-9cb2e9e
 executor/cpp:14       executor-cpp:14-9cb2e9e
