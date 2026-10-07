@@ -1019,51 +1019,31 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	}
 
 	// 8. Feed stdin chunks and handle kill/stdin_close in a goroutine while
-	//    session.RunInteractive runs in this goroutine.
+	//    session.RunInteractive runs in this goroutine. A stdin_close is applied
+	//    only after every chunk already queued is written (stdinPump).
 	sessionDone := make(chan struct{})
 
 	// stdinActivity signals the session's idle clock that interactive input
 	// arrived. A process blocked on input() produces no output, so without this
 	// the idle clock (driven solely by stdout/stderr) would kill it while the
-	// user is typing. Buffered + non-blocking sends below so feeding stdin never
+	// user is typing. Buffered + non-blocking sends so feeding stdin never
 	// blocks on a slow idle-clock consumer.
 	stdinActivity := make(chan struct{}, 64)
 
-	go func() {
-		for {
-			select {
-			case <-sessionDone:
-				return
-			case chunk, ok := <-stdinCh:
-				if !ok {
-					return
-				}
-				// Full-write loop — never a bare Write (PITFALLS §6 partial-write).
-				if _, err := writeAll(sb.Stdin(), chunk); err != nil {
-					// Stdin pipe closed (process exited) — stop forwarding.
-					return
-				}
-				// Count this input as idle-clock activity (see stdinActivity).
-				select {
-				case stdinActivity <- struct{}{}:
-				default:
-				}
-			case msg := <-ctrlCh:
-				switch msg.Type {
-				case wire.ControlTypeStdinClose:
-					// Deliver EOF exactly once (STDIN-02).
-					closeStdin()
-				case wire.ControlTypeKill:
-					// Kill the container; session.RunInteractive will return.
-					if err := sb.Kill(ctx); err != nil {
-						log.Warn("worker: Kill failed", "err", err)
-					}
-				default:
-					// Duplicate start or unknown — ignore.
-				}
+	pump := &stdinPump{
+		stdinCh:    stdinCh,
+		ctrlCh:     ctrlCh,
+		done:       sessionDone,
+		stdin:      sb.Stdin(),
+		closeStdin: closeStdin,
+		kill: func() {
+			if err := sb.Kill(ctx); err != nil {
+				log.Warn("worker: Kill failed", "err", err)
 			}
-		}
-	}()
+		},
+		activity: stdinActivity,
+	}
+	go pump.run()
 
 	// 9. Run the session. This blocks until the process terminates (normal,
 	//     kill, wall clock, idle clock, CPU clock, or context cancel).
