@@ -876,15 +876,30 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	// 5a. Generic compile pre-step (manifest-argv-driven, no language branching).
 	//     Runs only when spec.Compile is non-nil. Must execute BEFORE the
 	//     StagePhaseRunning publish so the client sees: compiling → running.
-	//     The compile step runs under the same wall/CPU/idle clocks and tree-kill
-	//     as the run step: we call sb.Compile with the live session context (ctx),
-	//     which is cancelled by Kill/Cleanup on clock expiry — a compile-bomb is
-	//     tree-killed exactly like a run-bomb.
+	//
+	//     Clocks: Limits.WallTimeMs is the max total lifetime of the session, so
+	//     the compile step is cut at that deadline and the run step gets what is
+	//     left of it (runLimits below). CPU is already shared: the compiler runs
+	//     in the same container, so its CPU counts toward the run's CpuMs clock.
+	//     The idle clock does not apply while compiling (a compiler can be silent
+	//     for seconds). A "kill" sent while compiling cancels the compile at once
+	//     (compileCtrlWatch); the run-phase ctrl consumer only starts after this.
+	//     Cancelling the context unblocks sb.Compile; the compiler process itself
+	//     dies with the container in teardown → Cleanup.
+	runLimits := spec.Limits
 	if spec.Compile != nil {
+		compileStart := time.Now()
 		compileCtx, compileSpan := tracer().Start(ctx, "compile")
+		var cancelCompile context.CancelFunc
+		if spec.Limits.WallTimeMs > 0 {
+			compileCtx, cancelCompile = context.WithTimeout(compileCtx, time.Duration(spec.Limits.WallTimeMs)*time.Millisecond)
+		} else {
+			compileCtx, cancelCompile = context.WithCancel(compileCtx)
+		}
 		if err := w.pub.Stage(jobID, wire.StagePhaseCompiling); err != nil {
 			log.Warn("worker: publish compiling stage failed", "err", err)
 		}
+		watch := watchCompileCtrl(ctrlCh, cancelCompile)
 
 		compileResult, compileErr := sb.Compile(compileCtx, []string(*spec.Compile), func(b []byte) {
 			// Live real-time build log on its OWN event (compile_output), kept
@@ -893,6 +908,13 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 				log.Warn("worker: publish compile output failed", "err", pubErr)
 			}
 		})
+
+		killedWhileCompiling, dropped := watch.Stop()
+		if dropped > 0 {
+			log.Warn("worker: ctrl channel full after compile, dropped held messages", "count", dropped)
+		}
+		compileTimedOut := !killedWhileCompiling && errors.Is(compileCtx.Err(), context.DeadlineExceeded)
+		cancelCompile()
 
 		// Infrastructure failure (Docker exec error, context cancelled): treat as
 		// a non-zero exit so the client receives a correct failure.
@@ -914,6 +936,25 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 			DurationMs: compileResult.DurationMs,
 		}
 
+		// Stopped from outside (wall-clock deadline or kill): the compiler did
+		// not exit on its own, so report it like a killed process — no exit
+		// code, SIGKILL — and mark the timeout so the client can tell it apart
+		// from a compile error.
+		if compileTimedOut || killedWhileCompiling {
+			sig := "SIGKILL"
+			compileBlock.ExitCode = nil
+			compileBlock.Signal = &sig
+			compileSpan.End()
+			if killedWhileCompiling {
+				log.Info("worker: kill received while compiling")
+				teardown(runner.Result{Signal: &sig, DurationMs: compileResult.DurationMs}, wire.JobStateKilled)
+				return
+			}
+			log.Info("worker: compile exceeded the wall-time limit", "wallTimeMs", spec.Limits.WallTimeMs)
+			teardown(runner.Result{Signal: &sig, TimedOut: true, DurationMs: compileResult.DurationMs}, wire.JobStateError)
+			return
+		}
+
 		// On compile failure (non-zero exit OR infrastructure error), publish a
 		// terminal result and return — the run argv MUST NOT execute.
 		if compileErr != nil || compileResult.ExitCode != 0 {
@@ -929,6 +970,15 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 		}
 		// Compile succeeded (exit 0) — fall through to StagePhaseRunning.
 		compileSpan.End()
+
+		// The run step gets the rest of the session's wall-time budget.
+		if runLimits.WallTimeMs > 0 {
+			remaining := runLimits.WallTimeMs - int(time.Since(compileStart).Milliseconds())
+			if remaining < 1 {
+				remaining = 1
+			}
+			runLimits.WallTimeMs = remaining
+		}
 	}
 
 	// 5b. On start (or after successful compile): publish "running" stage + write running status.
@@ -1070,7 +1120,7 @@ func (w *Worker) runJobFromSpec(ctx context.Context, spec wire.JobSpec, releaseS
 	}
 
 	runCtx, runSpan := tracer().Start(ctx, "run")
-	result, _ := session.RunInteractive(runCtx, sb, spec.Limits, cpuFn, sinks)
+	result, _ := session.RunInteractive(runCtx, sb, runLimits, cpuFn, sinks)
 	runSpan.End()
 
 	// Signal the stdin goroutine to stop.

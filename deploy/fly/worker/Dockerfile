@@ -20,10 +20,11 @@
 #   path). To avoid that on every new pool machine, new volumes are forked from a
 #   GOLDEN SNAPSHOT (a volume pre-populated once) — see deploy/fly/worker/
 #   provision-pool.sh and docs/self-hosting/scaling. A snapshot-restored volume
-#   already contains the images + the /var/lib/docker/.cr-images-loaded marker, so
-#   the entrypoint skips loading entirely and dockerd is up in seconds. The
-#   entrypoint's GHCR pull is the ONE-TIME bootstrap used only to build the golden
-#   volume (or if a truly empty volume is ever booted).
+#   already contains the images, so dockerd is up in seconds. At every boot
+#   ensure-images.sh checks each image pinned in images.lock on its own (a local
+#   inspect, no registry call when present) and pulls only what the volume lacks:
+#   a language added after the snapshot was taken, or an image whose pinned tag
+#   changed. On an empty volume that is the one-time bootstrap pull.
 #
 # DEPLOY = PULL (no Fly build). This image is built in GitHub CI
 # (.github/workflows/release-images.yml, job `worker-fly`) and published to
@@ -50,10 +51,13 @@ WORKDIR /app
 COPY languages/ /app/languages/
 COPY profiles/seccomp/runner.json /app/profiles/seccomp/runner.json
 COPY --from=build /out/worker /usr/local/bin/worker
+COPY deploy/fly/worker/images.lock /app/images.lock
 COPY deploy/fly/worker/entrypoint.sh /usr/local/bin/cr-entrypoint.sh
-RUN chmod +x /usr/local/bin/cr-entrypoint.sh
+COPY deploy/fly/worker/ensure-images.sh /usr/local/bin/cr-ensure-images.sh
+RUN chmod +x /usr/local/bin/cr-entrypoint.sh /usr/local/bin/cr-ensure-images.sh
 
 ENV LANGUAGES_DIR=/app/languages \
+    IMAGES_LOCK=/app/images.lock \
     SECCOMP_PROFILE_PATH=/app/profiles/seccomp/runner.json \
     DOCKER_HOST=unix:///var/run/docker.sock \
     SANDBOX_IMAGE_REGISTRY=ghcr.io/teovillanueva

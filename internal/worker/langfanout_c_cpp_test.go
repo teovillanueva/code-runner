@@ -52,6 +52,12 @@ type cFamilyCase struct {
 	echoSrc string
 	// brokenSrc fails to compile.
 	brokenSrc string
+	// promptSrc prints a prompt with NO trailing newline via printf, then reads
+	// with scanf (the classic exam pattern). Line-buffered stdout alone holds
+	// such a prompt until the next newline — i.e. until AFTER the user typed —
+	// so this needs stdin unbuffered too (stdbuf -i0), which flushes stdout
+	// before each read.
+	promptSrc string
 }
 
 var cFamilyCases = []cFamilyCase{
@@ -68,6 +74,15 @@ int main(void) {
 `,
 		brokenSrc: `int main(void) { return this_function_does_not_exist(); }
 `,
+		promptSrc: `#include <stdio.h>
+int main(void) {
+    int n;
+    printf("n: ");
+    if (scanf("%d", &n) != 1) return 1;
+    printf("double: %d\n", 2 * n);
+    return 0;
+}
+`,
 	},
 	{
 		language: "cpp",
@@ -82,8 +97,38 @@ int main() {
 `,
 		brokenSrc: `int main() { return this_function_does_not_exist(); }
 `,
+		// iostream is safe (cin is tied to cout); printf/scanf in C++ is not.
+		promptSrc: `#include <cstdio>
+int main() {
+    int n;
+    std::printf("n: ");
+    if (std::scanf("%d", &n) != 1) return 1;
+    std::printf("double: %d\n", 2 * n);
+    return 0;
+}
+`,
 	},
 }
+
+// cppSlowCompileSrc takes seconds to compile (bits/stdc++.h pulls in the whole
+// standard library: ~3 s on a laptop, never under a second), far past the
+// 500 ms wall-time budget the test gives it. A constexpr spin loop would not
+// do: GCC aborts it fast with a compile error (-fconstexpr-loop-limit).
+const cppSlowCompileSrc = `#include <bits/stdc++.h>
+int main() {
+    std::vector<int> v{3, 1, 2};
+    std::sort(v.begin(), v.end());
+    return v[0] - 1;
+}
+`
+
+// cSegfaultSrc dereferences a null pointer.
+const cSegfaultSrc = `int main(void) {
+    volatile int *p = 0;
+    *p = 1;
+    return 0;
+}
+`
 
 func cFamilyRedisURL() string {
 	if u := os.Getenv("TEST_REDIS_URL"); u != "" {
@@ -304,4 +349,76 @@ func TestLangFanout_CFamily_CompileError(t *testing.T) {
 			}
 		})
 	}
+}
+
+// waitResultEvent waits for a result event matching pred.
+func waitResultEvent(it *integrationTriggerer, timeout time.Duration, pred func(re wire.ResultEvent) bool) bool {
+	return it.waitFor(timeout, func(evs []integrationEvent) bool {
+		for _, ev := range evs {
+			var re wire.ResultEvent
+			if ev.event == "result" && json.Unmarshal(ev.data, &re) == nil && pred(re) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// TestLangFanout_CFamily_PromptWithoutNewline: printf("n: ") + scanf — the
+// prompt must reach the client BEFORE stdin is sent, even with no newline.
+func TestLangFanout_CFamily_PromptWithoutNewline(t *testing.T) {
+	for _, tc := range cFamilyCases {
+		t.Run(tc.language, func(t *testing.T) {
+			jobID := fmt.Sprintf("langfanout-%s-prompt-%d", tc.language, time.Now().UnixNano())
+			spec := cFamilySpec(t, tc.language, jobID, tc.promptSrc)
+			it, redisClient, stop := startCFamilyJob(t, spec)
+			defer stop()
+
+			require.True(t, waitStage(it, 120*time.Second, wire.StagePhaseRunning), "timed out waiting for 'running' stage")
+			require.True(t, waitOutput(it, 10*time.Second, "stdout", "n: "),
+				"prompt without a trailing newline not delivered before stdin — stdin/stdout buffering holds it")
+
+			publishStdinRaw(t, context.Background(), redisClient, jobID, "21\n")
+
+			require.True(t, waitOutput(it, 15*time.Second, "stdout", "double: 42"), "timed out waiting for stdout 'double: 42'")
+			require.True(t, waitResult(it, 15*time.Second, func(code int) bool { return code == 0 }), "timed out waiting for result exitCode=0")
+		})
+	}
+}
+
+// TestLangFanout_CFamily_CompileStoppedAtWallTime: a compile that outlives the
+// wall-time budget is stopped at the deadline; the run never starts.
+func TestLangFanout_CFamily_CompileStoppedAtWallTime(t *testing.T) {
+	jobID := fmt.Sprintf("langfanout-cpp-slowcompile-%d", time.Now().UnixNano())
+	spec := cFamilySpec(t, "cpp", jobID, cppSlowCompileSrc)
+	spec.Limits.WallTimeMs = 500
+	it, _, stop := startCFamilyJob(t, spec)
+	defer stop()
+
+	require.True(t, waitStage(it, 30*time.Second, wire.StagePhaseCompiling), "timed out waiting for 'compiling' stage")
+	compilingAt := time.Now()
+	require.True(t, waitResultEvent(it, 20*time.Second, func(re wire.ResultEvent) bool { return re.TimedOut }),
+		"a compile past the wall-time limit must end with timedOut=true")
+	require.Less(t, time.Since(compilingAt), 2500*time.Millisecond, "the compile must be stopped near the 500 ms wall-time limit, not when g++ finishes")
+	for _, ev := range it.allEvents() {
+		var se wire.StageEvent
+		if ev.event == "stage" && json.Unmarshal(ev.data, &se) == nil && se.Phase == wire.StagePhaseRunning {
+			t.Errorf("running stage must NOT be published after a compile timeout")
+		}
+	}
+}
+
+// TestLangFanout_CFamily_Segfault: a null-pointer write ends with SIGSEGV
+// (exit 139 from the container's PID 1) — and, with the core ulimit at 0, no
+// core file is written into /workspace.
+func TestLangFanout_CFamily_Segfault(t *testing.T) {
+	jobID := fmt.Sprintf("langfanout-c-segv-%d", time.Now().UnixNano())
+	spec := cFamilySpec(t, "c", jobID, cSegfaultSrc)
+	it, _, stop := startCFamilyJob(t, spec)
+	defer stop()
+
+	require.True(t, waitStage(it, 120*time.Second, wire.StagePhaseRunning), "timed out waiting for 'running' stage")
+	require.True(t, waitResultEvent(it, 20*time.Second, func(re wire.ResultEvent) bool {
+		return (re.ExitCode != nil && int(*re.ExitCode) == 139) || (re.Signal != nil && *re.Signal == "SIGSEGV")
+	}), "a segfault must end with exit 139 / SIGSEGV")
 }

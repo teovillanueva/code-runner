@@ -6,7 +6,7 @@
 # Verified on Fly 2026-06-04. So the worker is NOT volume-less.
 #
 # NEAR-INSTANT COLD START: new pool machines get their docker_data volume FORKED
-# from a golden snapshot (already holds the images + the load marker), so boot
+# from a golden snapshot (already holds the language images), so boot
 # skips the slow store-populate and dockerd is up in seconds. Build/refresh the
 # golden snapshot and pre-create snapshot-backed volumes with
 # deploy/fly/worker/provision-pool.sh. The autoscaler only start/stops this

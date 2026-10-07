@@ -18,9 +18,10 @@
 # SUBCOMMANDS
 #   bake        Build/refresh the golden snapshot from the CURRENT image: boot a
 #               throwaway machine on a fresh volume, let it pull the language
-#               images + write the load marker, snapshot that volume, clean up,
-#               and print the snapshot id. Run this whenever the language images
-#               (or the worker image) change.
+#               images pinned in images.lock, snapshot that volume, clean up,
+#               and print the snapshot id. Optional after an images.lock change:
+#               existing volumes pull only what changed on their next boot; a
+#               fresh snapshot just saves that pull for machines created later.
 #   grow N      Ensure the pool has N machines that boot fast: pre-create enough
 #               snapshot-forked `docker_data` volumes, then `fly scale count N`.
 #   status      Show the pool machines, volumes, and golden snapshots.
@@ -76,21 +77,21 @@ bake)
   log "bake volume: $vol_id"
 
   # Boot a throwaway machine on it with the real entrypoint (so it runs the exact
-  # bootstrap path: dockerd → GHCR pull → write .cr-images-loaded marker). We
+  # bootstrap path: dockerd → ensure-images.sh pulls every pinned image). We
   # don't need the worker loop; --restart=no keeps it from looping on a missing
-  # Redis after the marker is written.
-  log "booting bake machine (will pull language images + write marker)..."
+  # Redis once the images are in place.
+  log "booting bake machine (will pull the language images pinned in images.lock)..."
   # REDIS_URL is pointed at a dead address on purpose: the bootstrap (dockerd →
-  # pull images → write marker) runs BEFORE the entrypoint execs the worker, and
+  # pull images) runs BEFORE the entrypoint execs the worker, and
   # we must NOT let the bake worker connect to the real Redis and claim prod jobs
   # (`*.internal` resolves org-wide). The worker simply fails to connect after the
-  # marker is already written — which is all we need.
+  # images are already in place — which is all we need.
   # NOTE: `flyctl machine run` has no --json (unlike `volumes create`), so parse
   # the "Machine ID: <id>" line from its human output.
   # -d (detach): without it, newer flyctl keeps `machine run` attached and STOPS
   # the machine when the command returns — killing it ~10s in, before the
   # language-image pull completes (verified on flyctl v0.4.57). Detached, the
-  # machine runs the entrypoint to completion (pull + marker), then the worker
+  # machine runs the entrypoint to completion (pull), then the worker
   # fails its Redis ping and exits (restart=no) — exactly what we want to snapshot.
   m_out="$(flyctl machine run "$IMAGE" \
     -a "$APP" -r "$REGION" --detach \
@@ -192,7 +193,7 @@ grow)
 
   log "scaling pool to $want (machines attach the pre-populated, restored volumes → seconds, no load)..."
   flyctl scale count "$want" -a "$APP" -r "$REGION" -y
-  log "done. New machines should boot fast (entrypoint hits the marker, skips the pull)."
+  log "done. New machines should boot fast (their images are already on the restored volume)."
   ;;
 
 status)

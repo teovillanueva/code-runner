@@ -125,6 +125,18 @@ func TestIntegrationHardeningFlags(t *testing.T) {
 	assert.Greater(t, hc.NanoCPUs, int64(0),
 		"HARD-04: NanoCPUs must be > 0")
 
+	// HARD-04: no core dumps (a crashing C/C++ program must not write a core
+	// file into /workspace).
+	var coreLimit *container.Ulimit
+	for _, u := range hc.Ulimits {
+		if u.Name == "core" {
+			coreLimit = u
+		}
+	}
+	require.NotNil(t, coreLimit, "HARD-04: a 'core' ulimit must be set")
+	assert.Equal(t, int64(0), coreLimit.Soft, "HARD-04: core ulimit soft must be 0")
+	assert.Equal(t, int64(0), coreLimit.Hard, "HARD-04: core ulimit hard must be 0")
+
 	// HARD-05: CapDrop contains "ALL"
 	capDropStr := strings.Join([]string(hc.CapDrop), ",")
 	assert.Contains(t, strings.ToUpper(capDropStr), "ALL",
@@ -143,6 +155,37 @@ func TestIntegrationHardeningFlags(t *testing.T) {
 	user := info.Config.User
 	assert.Equal(t, "65534:65534", user,
 		"T-02-12: Container user must be non-root (65534:65534)")
+}
+
+// TestIntegrationCompileStopsOnContextCancel: a compile step that never ends
+// returns as soon as its context is done (wall-time deadline or kill) instead of
+// blocking on the exec stream until the compiler exits on its own.
+func TestIntegrationCompileStopsOnContextCancel(t *testing.T) {
+	cli := requireDocker(t)
+	r := newTestRunner(t)
+
+	jobID := fmt.Sprintf("test-compile-cancel-%d", time.Now().UnixNano())
+	spec := buildSpec(jobID, []string{"sleep", "30"}, testLimitsDefault())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sb, err := r.Create(ctx, spec)
+	require.NoError(t, err, "Create must not error")
+	defer func() {
+		_ = sb.Cleanup()
+		assertNoLeak(t, cli, jobID)
+	}()
+
+	compileCtx, compileCancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer compileCancel()
+	start := time.Now()
+	_, err = sb.Compile(compileCtx, []string{"sleep", "30"}, nil)
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "a compile stopped by its context must return an error")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, elapsed, 5*time.Second, "Compile must return promptly after the context is done, took %s", elapsed)
 }
 
 // ── Task 2: stdin round-trip ──────────────────────────────────────────────────

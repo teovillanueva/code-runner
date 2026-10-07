@@ -134,7 +134,7 @@ new machines empty volumes that pay the one-time GHCR pull. The worker needs a
 per-machine ext4 volume (overlay2 can't run on the overlay rootfs), so prefer start/stop
 of a pre-warmed pool over `FAS_CREATED_MACHINE_COUNT` create/destroy.
 
-Start/stop of an existing pool machine reuses its populated volume (marker hit) and is
+Start/stop of an existing pool machine reuses its populated volume (images already there) and is
 near-instant; scale-up reacts in ~15s; keep the floor (`max(1, …)`) ≥ 1 so the first job
 of a burst never waits. Pair with a generous `MAX_QUEUE_DEPTH` (below) so a burst
 *queues* — giving the autoscaler something to react to — instead of returning `429`.

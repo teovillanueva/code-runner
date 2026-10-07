@@ -4,8 +4,8 @@
   "aliases": ["gcc"],
   "image": "executor/c:14",
   "entrypoint": "main.c",
-  "compile": ["gcc", "-O2", "-std=gnu17", "-pipe", "-o", "/workspace/prog", "main.c", "-lm"],
-  "run": ["stdbuf", "-oL", "/workspace/prog"],
+  "compile": ["gcc", "-Wall", "-O0", "-std=gnu17", "-pipe", "-o", "/workspace/prog", "main.c", "-lm"],
+  "run": ["stdbuf", "-i0", "-oL", "/workspace/prog"],
   "interactive": true,
   "defaultLimits": {
     "wallTimeMs": 60000,

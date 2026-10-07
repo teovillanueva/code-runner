@@ -1,0 +1,19 @@
+# Language images the Fly worker makes sure are on its volume at every boot
+# (deploy/fly/worker/ensure-images.sh, called by entrypoint.sh).
+#
+#   <local name the manifests use>   <image:tag under $SANDBOX_IMAGE_REGISTRY>
+#
+# Pin the immutable <version>-<sha> tags that .github/workflows/release-images.yml
+# publishes (never the floating <version> tag: a republished image would then roll
+# out on whatever machine happens to boot next, mid-exam included).
+#
+# Rolling out a language image change: after the languages/** change lands on
+# main and release-images has published <version>-<sha>, bump the tags here,
+# redeploy the worker, and warm the pool (boot every machine once, outside peak
+# hours) — each machine pulls only the images whose tag changed.
+executor/python:3.12  executor-python:3.12-9cb2e9e
+executor/rust:1.83    executor-rust:1.83-9cb2e9e
+executor/c:14         executor-c:14-9cb2e9e
+executor/cpp:14       executor-cpp:14-9cb2e9e
+executor/r:4.4        executor-r:4.4-9cb2e9e
+executor/sqlite:3     executor-sqlite:3-9cb2e9e

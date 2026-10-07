@@ -205,7 +205,7 @@ func NewDockerSocketRunner(cfg config.Config, seccompProfilePath string) (*Docke
 //   - NetworkMode="none"                           (HARD-01, T-02-09)
 //   - ReadonlyRootfs=true + tmpfs /tmp             (HARD-02)
 //   - Memory==MemorySwap (no swap)                 (HARD-03, T-02-10)
-//   - PidsLimit, NanoCPUs                          (HARD-04, T-02-10)
+//   - PidsLimit, NanoCPUs, core ulimit 0           (HARD-04, T-02-10)
 //   - CapDrop=ALL, no-new-privileges, seccomp      (HARD-05, T-02-08)
 //   - non-root user, no docker socket in mounts    (T-02-12)
 func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (Sandbox, error) {
@@ -340,6 +340,10 @@ func (r *DockerSocketRunner) Create(ctx context.Context, spec wire.JobSpec) (San
 			MemorySwap: memBytes, // equal → no swap (Pitfall 5, HARD-03)
 			NanoCPUs:   nanoCPUs,
 			PidsLimit:  &pidsLimit,
+			// No core dumps: a crashing C/C++ program (SIGSEGV, SIGABRT) must
+			// not write a core file into /workspace, where artifact capture
+			// would pick it up and it would eat the workspace volume.
+			Ulimits: []*container.Ulimit{{Name: "core", Soft: 0, Hard: 0}},
 		},
 
 		// HARD-05: drop all capabilities, restrict syscalls
@@ -835,6 +839,13 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, onOutput fun
 	}
 	defer execResp.Close()
 
+	// The hijacked attach connection is not tied to ctx once established, so a
+	// cancelled ctx (wall-time deadline, kill) would leave StdCopy blocked until
+	// the compiler exits on its own. Closing the connection unblocks it; the
+	// compiler process is killed with the container by the caller's teardown.
+	stopOnCancel := context.AfterFunc(ctx, func() { execResp.Close() })
+	defer stopOnCancel()
+
 	// Demux the exec output stream. We capture stdout AND stderr (so the
 	// persisted RunResult.compile mirrors Piston's compile.stdout/stderr), plus
 	// an interleaved `output` buffer. stdcopy.StdCopy reads frames sequentially
@@ -863,6 +874,11 @@ func (s *dockerSandbox) Compile(ctx context.Context, argv []string, onOutput fun
 		Output:     outputBuf.String(),
 	}
 
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// Stopped from outside: the exec is still running, so there is no exit
+		// code to inspect. Return what was captured so far.
+		return captured, fmt.Errorf("docker: Compile stopped: %w", ctxErr)
+	}
 	if copyErr != nil && copyErr != io.EOF {
 		return captured, fmt.Errorf("docker: Compile demux: %w", copyErr)
 	}
